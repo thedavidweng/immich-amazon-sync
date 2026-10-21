@@ -103,6 +103,46 @@ func TestOperationalCommandsReturnSafeConfigurationErrors(t *testing.T) {
 	}
 }
 
+func TestServeSetupIsExplicitRequiresMountedAdminSecretAndNewConfigPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("IMMICH_URL", "")
+	t.Setenv("DATA_DIR", filepath.Join(dir, "state"))
+	t.Setenv("LISTEN", "127.0.0.1:0")
+	t.Setenv("ADMIN_PASSWORD_FILE", "")
+	path := filepath.Join(dir, "config.json")
+	existing := filepath.Join(dir, "existing.json")
+	if err := os.WriteFile(existing, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	check := func(args []string, want int, code string) {
+		t.Helper()
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		var out, errOut bytes.Buffer
+		got := cli.Execute(ctx, append(args, "--json"), &out, &errOut, "dev")
+		if got != want || (code != "" && !strings.Contains(errOut.String(), `"`+code+`"`)) {
+			t.Fatalf("%v: exit=%d stderr=%q", args, got, errOut.String())
+		}
+	}
+	check([]string{"serve", "--config", path}, 2, "config_unreadable")
+	check([]string{"serve", "--setup"}, 2, "invalid_options")
+	check([]string{"serve", "--setup", "--config", existing}, 2, "invalid_options")
+	check([]string{"serve", "--setup", "--config", path}, 3, "credentials_required")
+	adminFile := filepath.Join(dir, "admin")
+	if err := os.WriteFile(adminFile, []byte("mounted-admin-passphrase"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ADMIN_PASSWORD_FILE", adminFile)
+	check([]string{"serve", "--setup", "--config", path, "--account", "family"}, 2, "invalid_options")
+	t.Setenv("IMMICH_URL", "http://127.0.0.1:1")
+	check([]string{"serve", "--setup", "--config", path}, 2, "invalid_options")
+	t.Setenv("IMMICH_URL", "")
+	check([]string{"serve", "--setup", "--config", path}, 0, "")
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("setup wrote configuration before UI submission")
+	}
+}
+
 type transportFunc func(*http.Request) (*http.Response, error)
 
 func (f transportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
