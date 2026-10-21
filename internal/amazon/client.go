@@ -102,7 +102,7 @@ func classify(err error) error {
 	case errors.As(err, &partial):
 		code = bridge.Unconfirmed
 	case errors.As(err, &transient):
-		code = bridge.Unavailable
+		return &bridge.Error{Code: bridge.Unavailable, RetryAfter: transient.RetryAfter}
 	}
 	return &bridge.Error{Code: code}
 }

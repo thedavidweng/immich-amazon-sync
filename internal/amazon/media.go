@@ -177,7 +177,7 @@ func uncertainWrite(err error, albumCreate bool) error {
 	var remote *bridge.Error
 	if errors.As(mapped, &remote) && (remote.Code == bridge.Unavailable || remote.Code == bridge.Protocol ||
 		(albumCreate && remote.Code == bridge.Conflict)) {
-		return &bridge.Error{Code: bridge.Unconfirmed}
+		return &bridge.Error{Code: bridge.Unconfirmed, RetryAfter: remote.RetryAfter}
 	}
 	return mapped
 }

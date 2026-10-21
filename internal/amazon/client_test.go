@@ -71,7 +71,7 @@ func TestGetNodePreservesAuthenticationPermissionAndRetryAfter(t *testing.T) {
 			if !errors.As(err, &remote) || remote.Code != code || err.Error() != code || lookups.Load() != 1 {
 				t.Fatalf("read error: %v, calls %d", err, lookups.Load())
 			}
-			if status == 429 && remote.RetryAfter != 7*time.Second {
+			if (status == 429 || status == 503) && remote.RetryAfter != 7*time.Second {
 				t.Fatalf("lost RetryAfter: %v", remote.RetryAfter)
 			}
 		})
@@ -84,6 +84,7 @@ func TestAmbiguousUploadNeverRepostsOrTrustsSuccessBodyAlone(t *testing.T) {
 		upload, remote string
 	}{
 		"server-error-after-body": {503, `{"message":"secret"}`, nodeJSON},
+		"non-success-with-node":   {300, nodeJSON, nodeJSON},
 		"malformed-response":      {200, `{`, nodeJSON},
 		"missing-id":              {200, `{}`, nodeJSON},
 		"remote-missing-size":     {200, nodeJSON, strings.ReplaceAll(nodeJSON, `,"size":3`, "")},
@@ -103,6 +104,7 @@ func TestAmbiguousUploadNeverRepostsOrTrustsSuccessBodyAlone(t *testing.T) {
 					if string(b) != "abc" {
 						t.Errorf("body = %q", b)
 					}
+					w.Header().Set("Retry-After", "7")
 					w.WriteHeader(tt.status)
 					_, _ = fmt.Fprint(w, tt.upload)
 				default:
@@ -114,12 +116,15 @@ func TestAmbiguousUploadNeverRepostsOrTrustsSuccessBodyAlone(t *testing.T) {
 			if n.ID != "" || !errors.As(err, &remote) || remote.Code != bridge.Unconfirmed || posts.Load() != 1 {
 				t.Fatalf("uncertain upload confirmed/replayed: %+v %v (%d)", n, err, posts.Load())
 			}
+			if tt.status == 503 && remote.RetryAfter != 7*time.Second {
+				t.Fatalf("lost uncertain upload RetryAfter: %v", remote.RetryAfter)
+			}
 		})
 	}
 }
 
 func TestPostUploadVerificationFailureCannotAuthorizeAnotherUpload(t *testing.T) {
-	for _, status := range []int{401, 403, 404, 429} {
+	for _, status := range []int{401, 403, 404, 429, 503} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			c := newClient(t, aphotos.RegionUS, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
@@ -140,7 +145,7 @@ func TestPostUploadVerificationFailureCannotAuthorizeAnotherUpload(t *testing.T)
 			if !errors.As(err, &remote) || remote.Code != bridge.Unconfirmed {
 				t.Fatalf("verification failure could cause re-upload: %v", err)
 			}
-			if status == 429 && remote.RetryAfter != 7*time.Second {
+			if (status == 429 || status == 503) && remote.RetryAfter != 7*time.Second {
 				t.Fatal("lost verification RetryAfter")
 			}
 		})
