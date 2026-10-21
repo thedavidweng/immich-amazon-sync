@@ -39,11 +39,12 @@ through `doctor` with absent credential files,
 starts isolated zero-account and explicit `serve --setup` services with
 `--network none`, checks Docker health and both probes, persists a volume marker
 across restart and checks clean SIGTERM. At the container HTTP seam it obtains a
-pre-auth CSRF token, signs in, reads the authenticated dashboard, rejects login
-and logout without CSRF, and verifies logout revokes the session. Setup does not
-create a config until an account is saved. It uses a disposable synthetic admin
-secret and removes its test
-containers/volumes. It leaves the built smoke images for inspection.
+pre-auth CSRF token, rejects dashboard access before authentication, checks
+cookie/security headers, signs in, reads the authenticated dashboard, rejects
+login and logout without CSRF, and verifies logout revokes the session. Setup
+does not create a config until an account is saved. It uses a disposable
+synthetic admin secret and removes its test containers/volumes. It leaves the
+built smoke images for inspection.
 Cross-architecture execution needs host emulation; CI uses native amd64 and
 arm64 runners. This checks local lifecycle, not a live cloud transfer.
 

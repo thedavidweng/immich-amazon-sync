@@ -39,6 +39,9 @@ csrf() {
     sed -n 's/.*name="csrf" value="\([^"]*\)".*/\1/p' /tmp/admin-response
 }
 credential=$(cat /run/secrets/admin)
+request GET / "" ""
+status 303
+grep -q '^Location: /login' /tmp/admin-response
 request POST /login "" "password=$credential"
 status 403
 grep -q csrf_invalid /tmp/admin-response
@@ -50,6 +53,12 @@ test -n "$preauth_cookie"
 test -n "$preauth_csrf"
 grep -q 'HttpOnly' /tmp/admin-response
 grep -q 'SameSite=Strict' /tmp/admin-response
+grep -q 'Path=/' /tmp/admin-response
+grep -q '^Cache-Control: no-store' /tmp/admin-response
+grep -q '^Content-Security-Policy:' /tmp/admin-response
+request GET / "$preauth_cookie" ""
+status 303
+grep -q '^Location: /login' /tmp/admin-response
 request POST /login "$preauth_cookie" "password=$credential"
 status 403
 request POST /login "$preauth_cookie" "csrf=$preauth_csrf&password=$credential"
