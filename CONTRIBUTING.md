@@ -53,6 +53,8 @@ jactionlint action. Maintainers publish only by deliberately pushing a new
 `vMAJOR.MINOR.PATCH` tag. The publication workflow reruns CI, refuses existing
 version/commit image tags, then publishes `ghcr.io/thedavidweng/immich-amazon-sync`
 for both Linux architectures, tagged with that version and `sha-<full commit>`.
+Publication jobs are serialized so two release tags cannot race to write the
+same commit image tag.
 It creates neither a Git tag nor a GitHub Release, and publishes no `latest` tag.
 Registry tags rely on maintainer policy; use the resulting image digest for
 deployment immutability. Configure package visibility in GHCR before announcing
