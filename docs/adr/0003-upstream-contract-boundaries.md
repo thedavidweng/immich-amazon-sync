@@ -18,14 +18,14 @@ cursors imply a snapshot. Do not retry errors using a different request shape.
 v2 shared-album discovery is not a completeness guarantee.
 
 Pin the public aphotos SDK to revision
-`6a7dc3ea2ff7c971adbfae3ea72f7b33a9c0b501`, Go pseudo-version
-`v0.1.3-0.20261021004957-6a7dc3ea2ff7`, published through
+`563dc061fffca89df49022227cc6b995e3f890a9`, Go pseudo-version
+`v0.1.3-0.20261021010657-563dc061fffc`, published through
 [SDK PR #13](https://github.com/thedavidweng/amazon-photos/pull/13).
 This is a public commit pin, not a released tag. It retains the GetNode
 auth/rate-error preservation missing from the divergent published v0.1.3 tag.
 Use the fixed SDK revision, not a duplicate HTTP client or local workaround.
 This pseudo-version orders below the tag; future dependency updates must
-preserve both error propagation and strict list validation.
+preserve error propagation, strict list validation and final-status checks.
 
 Strict SDK list decoding accepts `{"count":0,"data":[]}` and rejects missing or
 null fields, invalid counts and items without IDs. Valid empty searches and
@@ -35,9 +35,11 @@ and progress, not only a single page's `Complete` flag. An empty search after
 an uncertain upload still cannot prove noncommit because indexing may lag.
 Do not implement a second Amazon HTTP parser in this service.
 
-Read JSON requests now require a final HTTP 2xx status. Mutation/upload
-acceptance of some final non-2xx statuses below 400 and HTTP 503 Retry-After
-propagation remain upstream limitations.
+JSON reads, mutations and uploads require a final HTTP 2xx status. Transient
+errors now retain server Retry-After, including HTTP 503 and response-body
+failures. The adapter preserves that delay through unconfirmed upload and
+post-verification results. A failed status or a retry delay still cannot prove
+an upload did not commit; reconcile uncertain writes before any replay.
 
 Source checksums are not universally byte checksums: external libraries can
 use SHA1 of a normalized path. The public response does not reliably expose

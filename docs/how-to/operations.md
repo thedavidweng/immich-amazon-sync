@@ -24,8 +24,11 @@ docker compose up -d sync
 ```
 
 Check tar's exit status and inspect the archive before relying on it. Protect
-and separately back up `config.json` plus both secret files with encryption
-and restricted access; the data archive does not include those bind mounts.
+and separately back up `config.json` plus all configured secret files with
+encryption and restricted access; the data archive does not include those bind
+mounts. The [editable UI deployment](local-management.md) instead keeps its
+config under `/data/config.json`, so that file is included in its data archive;
+its mounted admin/source/destination secrets still need a separate backup.
 Keep the image version/digest with each backup. Staged originals are private
 media. Restrict access to the archive and the entire volume.
 
@@ -65,4 +68,6 @@ restore the matching backup/image together rather than editing SQLite by hand.
 When migrating hosts, move the stopped complete data archive, config and secrets.
 Ensure the old writer remains stopped before the new one starts. Keep host port
 binding on `127.0.0.1`; use authenticated access through a trusted network or
-reverse proxy for remote administration.
+protected tunnel for remote administration. The dashboard does not trust
+forwarded headers; do not assume proxy TLS sets its backend cookie Secure.
+Review the [session/exposure limits](local-management.md#sessions-and-exposure).

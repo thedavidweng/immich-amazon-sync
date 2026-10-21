@@ -36,9 +36,13 @@ The smoke script builds and loads each architecture separately, asserts the
 image architecture and nonroot UID, checks credential-free help/version,
 checks that the build version reaches the CLI, parses the documented config
 through `doctor` with absent credential files,
-starts an isolated local bootstrap service with `--network none`, checks Docker
-health and both probes, persists a volume marker across restart and checks clean
-SIGTERM. It uses a disposable synthetic admin secret and removes its test
+starts isolated zero-account and explicit `serve --setup` services with
+`--network none`, checks Docker health and both probes, persists a volume marker
+across restart and checks clean SIGTERM. At the container HTTP seam it obtains a
+pre-auth CSRF token, signs in, reads the authenticated dashboard, rejects login
+and logout without CSRF, and verifies logout revokes the session. Setup does not
+create a config until an account is saved. It uses a disposable synthetic admin
+secret and removes its test
 containers/volumes. It leaves the built smoke images for inspection.
 Cross-architecture execution needs host emulation; CI uses native amd64 and
 arm64 runners. This checks local lifecycle, not a live cloud transfer.
