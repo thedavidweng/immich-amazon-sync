@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/thedavidweng/immich-amazon-sync/internal/amazon"
+	"github.com/thedavidweng/immich-amazon-sync/internal/bridge"
 	"github.com/thedavidweng/immich-amazon-sync/internal/config"
 	"github.com/thedavidweng/immich-amazon-sync/internal/immich"
 	"github.com/thedavidweng/immich-amazon-sync/internal/syncer"
@@ -34,9 +35,14 @@ type Service struct {
 }
 
 type accountState struct {
-	cycle  sync.Mutex
-	digest [32]byte
-	cancel context.CancelFunc
+	cycle         sync.Mutex
+	digest        [32]byte
+	cancel        context.CancelFunc
+	nextReconcile time.Time
+	reconcile     bool
+	pending       bool
+	continuation  bool
+	nextWork      *time.Time
 }
 
 type AccountResult struct {
@@ -75,11 +81,12 @@ func Open(cfg config.Config, logOut io.Writer) (*Service, error) {
 		}
 		writeHealth(w, http.StatusOK, "ok")
 	})
+	s.mux.HandleFunc("POST /events/{account}", s.event)
 	return s, nil
 }
 
 // Handler is the extension seam for webhook and authenticated management routes.
-// Register routes before Run; this release registers only the two health probes.
+// Register routes before Run.
 func (s *Service) Handler() *http.ServeMux { return s.mux }
 
 func writeHealth(w http.ResponseWriter, status int, value string) {
@@ -108,6 +115,7 @@ func (s *Service) Reload(cfg config.Config) error {
 		if state.cancel != nil {
 			state.cancel()
 		}
+		state.pending = true
 	}
 	s.cfg = cfg
 	select {
@@ -137,15 +145,31 @@ func (s *Service) Run(ctx context.Context) error {
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- server.Serve(listener) }()
 	var jobs sync.WaitGroup
-	start := func() time.Duration {
+	start := func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		cfg := s.cfg
 		for _, account := range cfg.Accounts {
 			state := s.stateLocked(account.ID)
+			if !time.Now().Before(state.nextReconcile) {
+				state.reconcile = true
+				state.nextReconcile = time.Now().Add(cfg.Interval())
+			}
+			if state.nextWork != nil && !time.Now().Before(*state.nextWork) {
+				state.continuation = true
+			}
+			if !state.pending && !state.reconcile && !state.continuation {
+				continue
+			}
 			if !state.cycle.TryLock() {
 				continue
 			}
+			mode := "step"
+			if state.reconcile {
+				mode = "reconcile"
+			}
+			state.pending, state.reconcile, state.continuation = false, false, false
+			state.nextWork = nil
 			cycleCtx, stop := context.WithCancel(runCtx)
 			state.cancel = stop
 			jobs.Add(1)
@@ -153,12 +177,17 @@ func (s *Service) Run(ctx context.Context) error {
 				defer jobs.Done()
 				defer stop()
 				defer state.cycle.Unlock()
-				_, _ = s.cycle(cycleCtx, cfg, account, state)
+				result, _ := s.cycle(cycleCtx, cfg, account, state, mode)
+				s.mu.Lock()
+				state.continuation = result.Status.WorkRemaining
+				state.nextWork = result.Status.NextAttempt
+				s.mu.Unlock()
+				s.notify()
 			}()
 		}
-		return cfg.Interval()
 	}
-	timer := time.NewTimer(start())
+	start()
+	timer := time.NewTicker(time.Second)
 	defer timer.Stop()
 	var serveErr error
 running:
@@ -169,9 +198,9 @@ running:
 		case serveErr = <-serverDone:
 			break running
 		case <-timer.C:
-			timer.Reset(start())
+			start()
 		case <-s.wake:
-			timer.Reset(start())
+			start()
 		}
 	}
 	cancel()
@@ -191,7 +220,7 @@ running:
 func (s *Service) stateLocked(id string) *accountState {
 	state := s.accounts[id]
 	if state == nil {
-		state = &accountState{}
+		state = &accountState{pending: true}
 		s.accounts[id] = state
 	}
 	return state
@@ -221,7 +250,7 @@ func Accounts(cfg config.Config, id string) ([]config.Account, error) {
 	return matches, nil
 }
 
-func newEngine(store *syncer.Store, cfg config.Config, account config.Account) (*syncer.Engine, [32]byte, error) {
+func newEngine(store *syncer.Store, cfg config.Config, account config.Account, logger *slog.Logger) (*syncer.Engine, [32]byte, error) {
 	secrets, err := account.Secrets()
 	if err != nil {
 		return nil, [32]byte{}, err
@@ -239,15 +268,16 @@ func newEngine(store *syncer.Store, cfg config.Config, account config.Account) (
 		IncludeVideos: account.IncludeVideos, MirrorAlbums: account.MirrorAlbums,
 		Workers: cfg.Workers, MaxStagingBytes: cfg.MaxStagingBytes,
 		MaxStagingFiles: cfg.MaxStagingFiles, BytesPerSecond: cfg.BytesPerSecond,
+		Logger: logger,
 	})
 	digest := sha256.Sum256([]byte(secrets.APIKey + "\x00" + secrets.Cookie))
 	return engine, digest, err
 }
 
-func (s *Service) cycle(ctx context.Context, cfg config.Config, account config.Account, state *accountState) (AccountResult, error) {
+func (s *Service) cycle(ctx context.Context, cfg config.Config, account config.Account, state *accountState, mode string) (AccountResult, error) {
 	started := time.Now()
 	result := AccountResult{Account: AccountHash(account.ID)}
-	engine, digest, err := newEngine(s.store, cfg, account)
+	engine, digest, err := newEngine(s.store, cfg, account, s.log)
 	if err == nil {
 		result.Status, err = engine.Status(ctx)
 	}
@@ -259,7 +289,19 @@ func (s *Service) cycle(ctx context.Context, cfg config.Config, account config.A
 			err = errors.New("account_paused")
 		default:
 			state.digest = digest
-			err = engine.Once(ctx)
+			if result.Status.PauseReason == "auth" {
+				err = engine.Retry(ctx)
+			}
+			if err == nil {
+				switch mode {
+				case "step":
+					err = engine.Step(ctx)
+				case "reconcile":
+					err = engine.Reconcile(ctx)
+				default:
+					err = engine.Once(ctx)
+				}
+			}
 		}
 		if status, statusErr := engine.Status(ctx); statusErr == nil {
 			result.Status = status
@@ -279,7 +321,7 @@ func (s *Service) cycle(ctx context.Context, cfg config.Config, account config.A
 		err = errors.Join(err, errors.New(code))
 	}
 	if result.Status.Unconfirmed > 0 {
-		err = errors.Join(err, errors.New("unconfirmed"))
+		err = errors.Join(err, errors.New(bridge.Unconfirmed))
 	}
 	result.Code = Code(err)
 	s.log.Info("account_cycle", "account", result.Account, "stage", "reconcile",
@@ -314,7 +356,7 @@ func (s *Service) Once(ctx context.Context, id string) (Report, error) {
 				return
 			}
 			defer state.cycle.Unlock()
-			report.Accounts[i], errs[i] = s.cycle(ctx, cfg, account, state)
+			report.Accounts[i], errs[i] = s.cycle(ctx, cfg, account, state, "once")
 		}()
 	}
 	jobs.Wait()
@@ -332,7 +374,7 @@ func (s *Service) engine(id string) (*syncer.Engine, error) {
 	if id == "" || len(accounts) != 1 {
 		return nil, errors.New("account_required")
 	}
-	engine, _, err := newEngine(s.store, cfg, accounts[0])
+	engine, _, err := newEngine(s.store, cfg, accounts[0], s.log)
 	return engine, err
 }
 
@@ -349,7 +391,11 @@ func (s *Service) Pause(ctx context.Context, id string, paused bool) error {
 	if err != nil {
 		return err
 	}
-	return engine.Pause(ctx, paused)
+	if err := engine.Pause(ctx, paused); err != nil {
+		return err
+	}
+	s.signal()
+	return nil
 }
 
 func (s *Service) Retry(ctx context.Context, id string) error {
@@ -357,5 +403,9 @@ func (s *Service) Retry(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	return engine.Retry(ctx)
+	if err := engine.Retry(ctx); err != nil {
+		return err
+	}
+	s.signal()
+	return nil
 }

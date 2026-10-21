@@ -389,11 +389,12 @@ func TestExplicitRateLimitRespectsRetryAfterAndCanResume(t *testing.T) {
 	s := &sourceFake{identity: "source", pages: map[string]bridge.Page{"": {Assets: []bridge.Asset{photo("one")}}},
 		data: map[string]string{"one": "hello"}}
 	d := &targetFake{identity: "target"}
-	attempts := 0
+	var attempts []time.Time
+	const delay = 150 * time.Millisecond
 	d.upload = func(ctx context.Context, c bridge.Content, r io.Reader) (bridge.Node, error) {
-		attempts++
-		if attempts == 1 {
-			return bridge.Node{}, &bridge.Error{Code: bridge.RateLimit, RetryAfter: 150 * time.Millisecond}
+		attempts = append(attempts, time.Now())
+		if len(attempts) == 1 {
+			return bridge.Node{}, &bridge.Error{Code: bridge.RateLimit, RetryAfter: delay}
 		}
 		d.upload = nil
 		return d.Upload(ctx, c, r)
@@ -405,15 +406,20 @@ func TestExplicitRateLimitRespectsRetryAfterAndCanResume(t *testing.T) {
 	if err := e.Once(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if attempts != 1 || status(t, e).Confirmed != 0 {
+	if st := status(t, e); st.Confirmed == 0 {
+		if st.NextAttempt == nil {
+			t.Fatal("rate limit omitted retry deadline")
+		}
+		time.Sleep(max(0, time.Until(*st.NextAttempt)) + time.Millisecond)
+		if err := e.Once(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(attempts) == 2 && attempts[1].Sub(attempts[0]) < delay {
 		t.Fatal("Retry-After was ignored")
 	}
-	time.Sleep(175 * time.Millisecond)
-	if err := e.Once(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if attempts != 2 || status(t, e).Confirmed != 1 {
-		t.Fatalf("explicitly rejected write could not resume: %d %+v", attempts, status(t, e))
+	if len(attempts) != 2 || status(t, e).Confirmed != 1 {
+		t.Fatalf("explicitly rejected write could not resume: %d %+v", len(attempts), status(t, e))
 	}
 }
 
@@ -450,7 +456,9 @@ func TestAuthenticationRotationResumesButRetryPreservesManualPause(t *testing.T)
 	if st := status(t, e); st.Confirmed != 1 || st.Paused {
 		t.Fatalf("rotated credentials did not resume: %+v", st)
 	}
-	e.Pause(context.Background(), true)
+	if err := e.Pause(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
 	if err := e.Retry(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -555,7 +563,7 @@ func TestRemovedPendingScopeAssetIsNotUploaded(t *testing.T) {
 }
 
 func TestIncompleteOrLoopingScanNeverAdvancesLastSuccess(t *testing.T) {
-	for _, problem := range []string{"self loop", "page cycle", "duplicate assets", "empty middle page", "missing album assets", "malformed asset", "missing album", "source unavailable"} {
+	for _, problem := range []string{"self loop", "page cycle", "duplicate assets", "empty middle page", "empty final page", "missing album assets", "malformed asset", "missing album", "source unavailable"} {
 		t.Run(problem, func(t *testing.T) {
 			store, err := syncer.Open(t.TempDir())
 			if err != nil {
@@ -583,6 +591,8 @@ func TestIncompleteOrLoopingScanNeverAdvancesLastSuccess(t *testing.T) {
 					"x": {Assets: []bridge.Asset{photo("one")}}}
 			case "empty middle page":
 				s.pages = map[string]bridge.Page{"": {Next: "x"}}
+			case "empty final page":
+				s.pages = map[string]bridge.Page{"": {Assets: []bridge.Asset{photo("one")}, Next: "x"}, "x": {}}
 			case "missing album assets":
 				s.pages = map[string]bridge.Page{"": {}}
 				s.album = func(_ context.Context, id string) (bridge.Album, error) {
@@ -618,7 +628,9 @@ func TestDiscoveryYieldsAndResumesItsPageCursorAfterRestart(t *testing.T) {
 		visited = append(visited, token)
 		n := 0
 		if token != "" {
-			fmt.Sscan(token, &n)
+			if _, err := fmt.Sscan(token, &n); err != nil {
+				t.Fatal(err)
+			}
 		}
 		a := photo(fmt.Sprint(n))
 		a.ExcludedReason = "hidden"
@@ -820,7 +832,9 @@ func TestChangedStagingAfterRestartCannotUploadCorruptOriginal(t *testing.T) {
 	defer store.Close()
 	d.upload = nil
 	e := engine(t, store, s, d, options())
-	e.Retry(context.Background())
+	if err := e.Retry(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	if err := e.Once(context.Background()); err == nil || err.Error() != "staging_corrupt" {
 		t.Fatalf("corrupt staged original reached upload: %v", err)
 	}
@@ -852,7 +866,9 @@ func TestKnownUnconfirmedNodeCanRecoverWithoutSearchIndexVisibility(t *testing.T
 	}
 	defer store.Close()
 	e := engine(t, store, s, d, options())
-	e.Retry(context.Background())
+	if err := e.Retry(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	if err := e.Once(context.Background()); err != nil {
 		t.Fatal(err)
 	}

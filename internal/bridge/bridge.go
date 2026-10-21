@@ -28,6 +28,7 @@ type Asset struct {
 
 type Scope struct {
 	AlbumID      string
+	AssetID      string
 	Library      bool
 	UpdatedAfter time.Time
 }

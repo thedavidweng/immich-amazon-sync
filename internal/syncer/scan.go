@@ -16,15 +16,61 @@ type rule struct {
 	cursor     string
 	generation int
 	expected   int
+	name       string
 }
 
-func (e *Engine) configureRules(ctx context.Context) error {
+func (e *Engine) validateScopes(ctx context.Context) error {
+	for _, id := range e.opts.AlbumIDs {
+		scope := "album:" + id
+		a, err := readRetry(ctx, func() (bridge.Album, error) { return e.source.Album(ctx, id) })
+		if err == nil && (a.ID != id || a.Count < 0) {
+			err = errors.New(bridge.Protocol)
+		}
+		if err != nil {
+			return e.scanError(ctx, rule{scope: scope}, err)
+		}
+		tx, err := e.store.db.BeginTx(ctx, nil)
+		if err != nil {
+			return errors.New("storage_unavailable")
+		}
+		var expected int
+		var complete bool
+		err = tx.QueryRowContext(ctx, "SELECT expected,complete FROM rules WHERE account_id=? AND scope=?",
+			e.opts.AccountID, scope).Scan(&expected, &complete)
+		if err == nil && !complete && expected >= 0 && expected != a.Count {
+			_, err = tx.ExecContext(ctx, `UPDATE rules SET generation=generation+1,cursor='',started_at=?
+				WHERE account_id=? AND scope=?`, time.Now().UTC().Format(time.RFC3339Nano), e.opts.AccountID, scope)
+			if err == nil {
+				_, err = tx.ExecContext(ctx, "DELETE FROM scan_cursors WHERE account_id=? AND scope=?", e.opts.AccountID, scope)
+			}
+		}
+		if err == nil {
+			_, err = tx.ExecContext(ctx, `UPDATE rules SET name=?,expected=? WHERE account_id=? AND scope=?`,
+				a.Name, a.Count, e.opts.AccountID, scope)
+		}
+		if err == nil {
+			err = tx.Commit()
+		}
+		_ = tx.Rollback()
+		if err != nil {
+			return errors.New("storage_unavailable")
+		}
+	}
+	return nil
+}
+
+func (e *Engine) configureRules(ctx context.Context, restart bool) error {
 	tx, err := e.store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	id := e.opts.AccountID
+	if !e.opts.Library {
+		if _, err = tx.ExecContext(ctx, "UPDATE incremental SET active=0,error_code='' WHERE account_id=?", id); err != nil {
+			return err
+		}
+	}
 	if _, err = tx.ExecContext(ctx, "UPDATE rules SET active=0 WHERE account_id=?", id); err != nil {
 		return err
 	}
@@ -47,25 +93,36 @@ func (e *Engine) configureRules(ctx context.Context) error {
 	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM rules WHERE account_id=? AND active=1 AND complete=0", id).Scan(&incomplete); err != nil {
 		return err
 	}
-	if incomplete == 0 {
+	if incomplete == 0 && restart {
 		_, err = tx.ExecContext(ctx, `UPDATE rules SET complete=0,generation=generation+1,cursor='',expected=-1,error_code=''
 			WHERE account_id=? AND active=1`, id)
 		if err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, "UPDATE rules SET started_at=? WHERE account_id=? AND active=1",
+			time.Now().UTC().Format(time.RFC3339Nano), id); err != nil {
 			return err
 		}
 		_, err = tx.ExecContext(ctx, "DELETE FROM scan_cursors WHERE account_id=?", id)
 		if err != nil {
 			return err
 		}
+		if _, err = tx.ExecContext(ctx, "DELETE FROM signals WHERE account_id=?", id); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.ExecContext(ctx, "UPDATE rules SET started_at=? WHERE account_id=? AND active=1 AND started_at=''",
+		time.Now().UTC().Format(time.RFC3339Nano), id); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
 
 func (e *Engine) scanPage(ctx context.Context) (bool, error) {
 	var r rule
-	err := e.store.db.QueryRowContext(ctx, `SELECT scope,album_id,cursor,generation,expected FROM rules
+	err := e.store.db.QueryRowContext(ctx, `SELECT scope,album_id,cursor,generation,expected,name FROM rules
 		WHERE account_id=? AND active=1 AND complete=0 AND error_code='' ORDER BY scope LIMIT 1`,
-		e.opts.AccountID).Scan(&r.scope, &r.album, &r.cursor, &r.generation, &r.expected)
+		e.opts.AccountID).Scan(&r.scope, &r.album, &r.cursor, &r.generation, &r.expected, &r.name)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -81,6 +138,7 @@ func (e *Engine) scanPage(ctx context.Context) (bool, error) {
 			return false, e.scanError(ctx, r, errors.New(bridge.Protocol))
 		}
 		r.expected = album.Count
+		r.name = album.Name
 	}
 	p, err := readRetry(ctx, func() (bridge.Page, error) {
 		return e.source.Assets(ctx, bridge.Scope{AlbumID: r.album, Library: r.album == ""}, r.cursor)
@@ -88,7 +146,7 @@ func (e *Engine) scanPage(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, e.scanError(ctx, r, err)
 	}
-	if len(p.Assets) > 1000 || len(p.Next) > 4096 || (len(p.Assets) == 0 && p.Next != "") ||
+	if len(p.Assets) > 1000 || len(p.Next) > 4096 || (len(p.Assets) == 0 && (p.Next != "" || r.cursor != "")) ||
 		(p.Next != "" && p.Next == r.cursor) {
 		return false, e.scanError(ctx, r, errors.New(bridge.Protocol))
 	}
@@ -96,10 +154,10 @@ func (e *Engine) scanPage(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	for _, a := range p.Assets {
 		if a.ID == "" || a.Name == "" || a.Size < -1 {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return false, e.scanError(ctx, r, errors.New(bridge.Protocol))
 		}
 		var seen int
@@ -110,7 +168,7 @@ func (e *Engine) scanPage(ctx context.Context) (bool, error) {
 			return false, err
 		}
 		if seen != 0 {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return false, e.scanError(ctx, r, errors.New(bridge.Protocol))
 		}
 		metadata, err := json.Marshal(a)
@@ -130,7 +188,7 @@ func (e *Engine) scanPage(ctx context.Context) (bool, error) {
 	if p.Next != "" {
 		if _, err = tx.ExecContext(ctx, "INSERT INTO scan_cursors(account_id,scope,token) VALUES(?,?,?)",
 			e.opts.AccountID, r.scope, p.Next); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return false, e.scanError(ctx, r, errors.New(bridge.Protocol))
 		}
 	} else if r.expected >= 0 {
@@ -141,12 +199,23 @@ func (e *Engine) scanPage(ctx context.Context) (bool, error) {
 			return false, err
 		}
 		if total != r.expected {
-			tx.Rollback()
+			_ = tx.Rollback()
+			return false, e.scanError(ctx, r, errors.New(bridge.Protocol))
+		}
+	} else if r.album == "" && p.Next == "" && len(p.Assets) == 0 && r.cursor == "" {
+		var prior int
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM scope_assets WHERE account_id=? AND scope=?",
+			e.opts.AccountID, r.scope).Scan(&prior); err != nil {
+			return false, err
+		}
+		if prior > 0 {
+			_ = tx.Rollback()
 			return false, e.scanError(ctx, r, errors.New(bridge.Protocol))
 		}
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE rules SET cursor=?,expected=?,complete=? WHERE account_id=? AND scope=?`,
-		p.Next, r.expected, p.Next == "", e.opts.AccountID, r.scope)
+	_, err = tx.ExecContext(ctx, `UPDATE rules SET cursor=?,expected=?,complete=?,name=?,
+		completed_at=CASE WHEN ? THEN ? ELSE completed_at END WHERE account_id=? AND scope=?`,
+		p.Next, r.expected, p.Next == "", r.name, p.Next == "", time.Now().UTC().Format(time.RFC3339Nano), e.opts.AccountID, r.scope)
 	if err != nil {
 		return false, err
 	}
@@ -154,10 +223,10 @@ func (e *Engine) scanPage(ctx context.Context) (bool, error) {
 }
 
 func (e *Engine) discover(ctx context.Context, tx *sql.Tx, a bridge.Asset, metadata string) error {
-	var oldMetadata, digest, checksum string
+	var oldMetadata, digest, checksum, state string
 	var size int64
-	err := tx.QueryRowContext(ctx, "SELECT metadata,md5,sha1,size FROM assets WHERE account_id=? AND id=?",
-		e.opts.AccountID, a.ID).Scan(&oldMetadata, &digest, &checksum, &size)
+	err := tx.QueryRowContext(ctx, "SELECT metadata,md5,sha1,size,state FROM assets WHERE account_id=? AND id=?",
+		e.opts.AccountID, a.ID).Scan(&oldMetadata, &digest, &checksum, &size, &state)
 	if errors.Is(err, sql.ErrNoRows) {
 		_, err = tx.ExecContext(ctx, "INSERT INTO assets(account_id,id,metadata) VALUES(?,?,?)", e.opts.AccountID, a.ID, metadata)
 		return err
@@ -172,7 +241,8 @@ func (e *Engine) discover(ctx context.Context, tx *sql.Tx, a bridge.Asset, metad
 	changed := digest != "" && ((a.SHA1 != "" && checksum != a.SHA1) ||
 		(a.Size >= 0 && a.Size != size) ||
 		(a.SHA1 == "" && !old.UpdatedAt.Equal(a.UpdatedAt)))
-	if changed {
+	safeSkip := a.ExcludedReason != "" && state != "confirmed" && state != "running" && state != "unconfirmed"
+	if changed && !safeSkip {
 		// Preserve the original metadata and confirmed/uncertain content evidence.
 		_, err = tx.ExecContext(ctx, "UPDATE assets SET error_code='source_changed' WHERE account_id=? AND id=?",
 			e.opts.AccountID, a.ID)
@@ -188,8 +258,9 @@ func (e *Engine) discover(ctx context.Context, tx *sql.Tx, a bridge.Asset, metad
 
 func (e *Engine) scanError(ctx context.Context, r rule, err error) error {
 	code := errorCode(err)
-	_, dbErr := e.store.db.ExecContext(ctx, "UPDATE rules SET error_code=? WHERE account_id=? AND scope=?",
-		code, e.opts.AccountID, r.scope)
+	_, dbErr := e.store.db.ExecContext(context.WithoutCancel(ctx), `UPDATE rules SET error_code=?,attempts=attempts+1,
+		next_at=? WHERE account_id=? AND scope=?`, code,
+		time.Now().Add(retryDelay(4, err)).UnixMilli(), e.opts.AccountID, r.scope)
 	if dbErr != nil {
 		return dbErr
 	}
@@ -204,11 +275,25 @@ func (e *Engine) finishScan(ctx context.Context) error {
 		return err
 	}
 	err = e.store.db.QueryRowContext(ctx, `SELECT count(*) FROM assets a WHERE account_id=?
-		AND (state NOT IN ('confirmed','skipped') OR error_code='source_changed') AND EXISTS(SELECT 1 FROM scope_assets m JOIN rules r
-		ON r.account_id=m.account_id AND r.scope=m.scope WHERE m.account_id=a.account_id AND m.asset_id=a.id AND r.active=1 AND m.generation=r.generation)`,
+		AND (state NOT IN ('confirmed','skipped') OR error_code='source_changed') AND `+eligibleSQL,
 		e.opts.AccountID).Scan(&outstanding)
 	if err != nil || unfinished != 0 || outstanding != 0 {
 		return err
+	}
+	if err = e.store.db.QueryRowContext(ctx, `SELECT
+		(SELECT count(*) FROM hints WHERE account_id=?)+
+		(SELECT count(*) FROM incremental WHERE account_id=? AND (active=1 OR error_code!=''))`,
+		e.opts.AccountID, e.opts.AccountID).Scan(&outstanding); err != nil || outstanding != 0 {
+		return err
+	}
+	if e.opts.MirrorAlbums {
+		err = e.store.db.QueryRowContext(ctx, `SELECT count(*) FROM rules r LEFT JOIN albums a
+			ON a.account_id=r.account_id AND a.scope=r.scope WHERE r.account_id=? AND r.active=1 AND r.album_id!=''
+			AND (a.target_id IS NULL OR a.target_id='' OR a.complete_generation!=r.generation OR a.error_code!='')`,
+			e.opts.AccountID).Scan(&outstanding)
+		if err != nil || outstanding != 0 {
+			return err
+		}
 	}
 	_, err = e.store.db.ExecContext(ctx, "UPDATE accounts SET last_success=?,error_code='' WHERE id=?",
 		time.Now().UTC().Format(time.RFC3339Nano), e.opts.AccountID)
