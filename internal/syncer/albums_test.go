@@ -14,12 +14,15 @@ import (
 
 type albumTarget struct {
 	*targetFake
-	albums  map[string][]string
-	names   map[string]string
-	creates int
-	addErr  error
-	makeErr error
-	removed []string
+	albums     map[string][]string
+	names      map[string]string
+	creates    int
+	addErr     error
+	makeErr    error
+	removed    []string
+	memberLag  int
+	stale      []string
+	staleReads int
 }
 
 func TestAlbumMirroringRequiresExplicitAlbumRules(t *testing.T) {
@@ -158,12 +161,18 @@ func (d *albumTarget) AlbumMembers(_ context.Context, id string) ([]string, erro
 	if !ok {
 		return nil, &bridge.Error{Code: bridge.NotFound}
 	}
+	if d.staleReads > 0 {
+		d.staleReads--
+		return slices.Clone(d.stale), nil
+	}
 	return slices.Clone(members), nil
 }
 func (d *albumTarget) AddMembers(_ context.Context, id string, nodes []string) error {
 	if d.addErr != nil {
 		return d.addErr
 	}
+	d.stale = slices.Clone(d.albums[id])
+	d.staleReads = d.memberLag
 	for _, n := range nodes {
 		if !slices.Contains(d.albums[id], n) {
 			d.albums[id] = append(d.albums[id], n)
@@ -177,6 +186,33 @@ func (d *albumTarget) RemoveMembers(_ context.Context, id string, nodes []string
 		d.removed = append(d.removed, id+":"+n)
 	}
 	return nil
+}
+
+func TestAlbumMembershipSettlesThroughReadLag(t *testing.T) {
+	store, err := syncer.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	a, b, c := photo("one"), photo("two"), photo("three")
+	b.SHA1, c.SHA1 = "", ""
+	s := &sourceFake{identity: "source", pages: map[string]bridge.Page{"": {Assets: []bridge.Asset{a, b, c}}},
+		data: map[string]string{"one": "hello", "two": "world", "three": "three"}}
+	d := newAlbumTarget()
+	d.memberLag = 3
+	opts := options()
+	opts.MirrorAlbums = true
+	e := engine(t, store, s, d, opts)
+	if err := e.Once(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	st := status(t, e)
+	if st.Confirmed != 3 || st.AlbumsFailed != 0 || st.AssociationsPending != 0 || st.LastSuccess == nil {
+		t.Fatalf("membership did not settle in one run: %+v", st)
+	}
+	if len(d.albums["album-1"]) != 3 || len(d.nodes) != 3 {
+		t.Fatalf("memberships=%v nodes=%d", d.albums["album-1"], len(d.nodes))
+	}
 }
 
 func TestAlbumAssociationRetriesWithoutUploadingAgainAndRenameKeepsOwnedID(t *testing.T) {

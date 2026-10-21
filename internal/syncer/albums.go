@@ -271,25 +271,33 @@ func (e *Engine) applyMembers(ctx context.Context, j *albumJob, actual map[strin
 				intent, e.opts.AccountID, j.scope, m.id); err != nil {
 				return errors.New("storage_unavailable")
 			}
+			var mutationErr error
 			if remove {
-				err = e.target.RemoveMembers(ctx, j.target, []string{m.id})
+				mutationErr = e.target.RemoveMembers(ctx, j.target, []string{m.id})
 			} else {
-				err = e.target.AddMembers(ctx, j.target, []string{m.id})
+				mutationErr = e.target.AddMembers(ctx, j.target, []string{m.id})
 			}
-			if err != nil {
+			if mutationErr != nil {
 				_, dbErr := e.store.db.ExecContext(context.WithoutCancel(ctx), `UPDATE memberships SET error_code=?
-					WHERE account_id=? AND scope=? AND node_id=?`, errorCode(err), e.opts.AccountID, j.scope, m.id)
+					WHERE account_id=? AND scope=? AND node_id=?`, errorCode(mutationErr), e.opts.AccountID, j.scope, m.id)
 				if dbErr != nil {
 					return errors.New("storage_unavailable")
 				}
-				return err
+				if mutationErrCode := errorCode(mutationErr); mutationErrCode == bridge.Authentication ||
+					mutationErrCode == bridge.Permission {
+					return mutationErr
+				}
 			}
-			verified, err := readRetry(ctx, func() ([]string, error) { return e.target.AlbumMembers(ctx, j.target) })
-			if err != nil {
-				return err
-			}
-			if slices.Contains(verified, m.id) == remove {
-				return errors.New(bridge.Unconfirmed)
+			if settleErr := e.membershipSettled(ctx, j.target, m.id, !remove); settleErr != nil {
+				if mutationErr != nil {
+					return mutationErr
+				}
+				_, dbErr := e.store.db.ExecContext(context.WithoutCancel(ctx), `UPDATE memberships SET error_code=?
+					WHERE account_id=? AND scope=? AND node_id=?`, errorCode(settleErr), e.opts.AccountID, j.scope, m.id)
+				if dbErr != nil {
+					return errors.New("storage_unavailable")
+				}
+				return settleErr
 			}
 		}
 		if _, err = e.store.db.ExecContext(ctx, `UPDATE memberships SET state=?,error_code=''
@@ -298,4 +306,42 @@ func (e *Engine) applyMembers(ctx context.Context, j *albumJob, actual map[strin
 		}
 	}
 	return nil
+}
+
+// Album membership reads can lag the accepted mutation. Verify with a bounded
+// poll so one accepted member does not take one whole sync run to settle.
+func (e *Engine) membershipSettled(ctx context.Context, album, node string, want bool) error {
+	var last error
+	for attempt := 0; attempt < 5; attempt++ {
+		members, err := e.target.AlbumMembers(ctx, album)
+		if err == nil && slices.Contains(members, node) == want {
+			return nil
+		}
+		last = err
+		if err != nil {
+			code := errorCode(err)
+			if code != bridge.Unconfirmed && code != bridge.Unavailable && code != bridge.RateLimit {
+				return err
+			}
+		}
+		if attempt == 4 {
+			break
+		}
+		delay := 100 * time.Millisecond << attempt
+		var remote *bridge.Error
+		if errors.As(err, &remote) && remote.RetryAfter > delay {
+			delay = remote.RetryAfter
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	if last != nil {
+		return last
+	}
+	return errors.New(bridge.Unconfirmed)
 }
