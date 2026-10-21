@@ -30,6 +30,20 @@ incomplete responses. An empty lookup before a first upload is no longer blocked
 by envelope ambiguity; it does not clear uncertainty from an earlier write.
 See [SDK list semantics and remaining limits](../reference/compatibility.md#sdk-list-semantics-and-remaining-limits).
 
+Metadata operations expire after 30 seconds, including time spent waiting for
+headers or decoding JSON, unless the caller cancels or expires sooner. A read
+expiry reports `remote_unavailable`; expiry after a mutation or during
+post-upload verification reports `upload_unconfirmed`. Preserve uncertain state
+and reconcile instead of replaying the write. This is not a whole-media timeout:
+original downloads and uploads retain the caller context, and post-upload
+metadata verification gets its own fresh deadline.
+
+On Immich v2.0.0, whole-library and owned-album discovery now includes both
+timeline and archived originals. Previously completed history requires a new
+full scan; continuing an old completed scan cannot discover the omitted archive.
+v2 shared albums remain unsupported rather than returning an incomplete backup.
+See [Immich compatibility](../reference/compatibility.md#immich-contract).
+
 ## Local management
 
 No login page is expected without a configured admin file. A passphrase shorter
