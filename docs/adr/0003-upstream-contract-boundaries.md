@@ -15,7 +15,12 @@ The initial adapter may deliberately use the flat metadata-search contract
 shared by those pins, accepting its deprecation since v3.2. Search each album
 separately and validate explicit pagination; neither flat pages nor current
 cursors imply a snapshot. Do not retry errors using a different request shape.
-v2 shared-album discovery is not a completeness guarantee.
+For v2.0.0, explicitly enumerate both timeline and archive streams for library
+and owned-album scopes; completion requires both. Archived originals remain
+eligible. Reject v2 shared albums as unsupported because their search can omit
+other contributors. v3.3.4 keeps the existing flat request; other v2/v3 releases
+are not individually verified. Previously completed history needs a new full
+scan to discover archived originals omitted before this correction.
 
 Pin the public aphotos SDK to revision
 `563dc061fffca89df49022227cc6b995e3f890a9`, Go pseudo-version
@@ -40,6 +45,14 @@ errors now retain server Retry-After, including HTTP 503 and response-body
 failures. The adapter preserves that delay through unconfirmed upload and
 post-verification results. A failed status or a retry delay still cannot prove
 an upload did not commit; reconcile uncertain writes before any replay.
+
+Bound each adapter metadata operation, including album mutations, to 30 seconds
+through response headers and JSON decoding; earlier caller cancellation or
+deadlines take precedence. Read expiry is `remote_unavailable`; expiry after
+mutation or during post-upload verification is `upload_unconfirmed`. Keep
+original downloads and SDK uploads on the caller context without a fixed
+whole-media deadline. Give post-upload metadata verification its own fresh
+deadline rather than limiting media transfer duration.
 
 Source checksums are not universally byte checksums: external libraries can
 use SHA1 of a normalized path. The public response does not reliably expose

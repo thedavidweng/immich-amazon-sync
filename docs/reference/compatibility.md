@@ -7,7 +7,7 @@ live-account success.
 | Boundary | Pin/evidence | Limit |
 | --- | --- | --- |
 | Immich stable | `v3.3.4`, `69e0cb8606137c4f8dc0e7207a672ff8be39f358`, released October 20, 2026 | Official contract/source inspection and offline adapter fixtures; no real server tested for this delivery. |
-| Immich comparison | `v2.0.0`, `e4234af3b3bd32f5dd12a2b0808158339deded43` | Older owned-media contract comparison; no complete shared-album guarantee. |
+| Immich comparison | `v2.0.0`, `e4234af3b3bd32f5dd12a2b0808158339deded43` | Offline owned-album/library contracts include timeline and archive; v2 shared albums are unsupported. Other v2/v3 releases are not individually verified. |
 | Immich main | `166e93559f123313cf9cb4e7324c4ee30e21c618`, OpenAPI says `3.3.0-rc.0` | Stale development metadata, not the stable release number or minimum supported version. |
 | aphotos SDK | `v0.1.3-0.20261021010657-563dc061fffc` | Public revision `563dc061fffca89df49022227cc6b995e3f890a9` from SDK PR #13; strict list/final-status validation and typed transient Retry-After, retaining GetNode auth/rate-error preservation. |
 | Local runtime | Offline Go, CLI and container contracts | No real Amazon upload, album mutation, format playback or credential renewal verified. |
@@ -48,6 +48,19 @@ hint, not permission to repeat an uncertain write. The service rejects
 credentialed redirects. Keep this delivery experimental;
 offline SDK/adapter and local packaging tests do not establish real cloud success.
 
+## Metadata deadlines
+
+Each adapter metadata operation has a 30-second deadline covering response
+headers and JSON decoding, including Amazon album mutations. An earlier caller
+deadline or cancellation takes precedence. Metadata read expiry reports
+`remote_unavailable`; expiry after a mutation or during post-upload verification
+reports `upload_unconfirmed`, because the write may have committed. Existing
+retry and uncertain-write policies still apply.
+
+Original downloads and SDK uploads retain the caller context without a fixed
+whole-media deadline. Each post-upload metadata verification gets a fresh
+30-second deadline; a long media transfer does not consume that allowance.
+
 ## Immich contract
 
 Polling uses `/api/server/version`, `/api/users/me`, `/api/albums`,
@@ -61,8 +74,15 @@ multiple flat `albumIds` mean intersection. Require the assets envelope and an
 explicit nullable `nextPage`; a short page or a guessed total is not completion.
 Current structured search has different `filter`/`cursor` semantics; do not
 mix shapes or retry arbitrary errors with another contract. Neither pagination
-contract guarantees a database snapshot. v2 shared albums can omit other
-contributors' assets.
+contract guarantees a database snapshot.
+
+For v2.0.0, the adapter explicitly enumerates separate `timeline` and `archive`
+streams for whole-library and owned-album scopes. Both streams must finish;
+archived originals remain eligible. v3.3.4 retains the existing flat search
+request. v2 shared albums are rejected as unsupported because their search can
+omit other contributors' assets. Other v2/v3 releases are not individually
+verified. A previously completed scan needs a new full scan to discover
+archive history omitted by the earlier implementation.
 
 Immich Workflows begin at v3.0; v2 has none. Discovery uses the plugin methods
 and workflow triggers endpoints, not deprecated `/server/features`.
