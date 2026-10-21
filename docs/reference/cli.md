@@ -7,6 +7,7 @@ immich-amazon-sync [--config PATH] [--account ID] [--json] COMMAND
 | Command | Behavior |
 | --- | --- |
 | `serve` | Run the local service and scheduled backups; stop with SIGTERM. |
+| `serve --setup --config PATH` | Explicit first UI setup with a mounted admin secret and a new writable config path. |
 | `sync once` | Perform a controlled discovery/transfer pass; this can write media and managed membership. |
 | `albums list` | Read accessible source album IDs, names and counts. |
 | `doctor` | Read-only remote diagnostics and local storage checks; no upload or album creation. |
@@ -31,6 +32,19 @@ The command's `--help` is authoritative for additional management operations.
 Every process accessing a state volume must respect the single-writer boundary.
 Stop `serve` before running a separate stateful CLI invocation.
 
+`--setup` is never inferred from a missing file. It rejects an existing config
+(including a symlink), missing `--config`, `--account`, missing admin secret or
+accounts supplied through `IMMICH_URL`. The parent directory must already exist
+and be writable. No config is created until the first valid account is saved.
+Then restart with `serve --config PATH`, without `--setup`. Normal
+`serve --config /missing` remains `config_unreadable`, exit 2.
+
+With an admin secret, `serve` also supports zero accounts without an explicit
+config path. Its dashboard is read-only for configuration, as is
+`serve --account ID`; account controls remain available. An unfiltered explicit
+config path enables saving only when its directory is writable. The stock
+Compose config bind is read-only. See [local management](../how-to/local-management.md).
+
 | HTTP route | Meaning |
 | --- | --- |
 | `GET /healthz` | Process is running. |
@@ -41,3 +55,6 @@ The Docker healthcheck uses BusyBox `wget` against both fixed loopback endpoints
 with no secrets or external network dependency. The image listens on
 `0.0.0.0:8080`; native config defaults to `127.0.0.1:8080`. Compose publishes
 host loopback only.
+
+Optional HTML routes and form fields are documented in
+[management HTTP reference](management.md); they are not a JSON management API.

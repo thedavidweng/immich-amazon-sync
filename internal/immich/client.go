@@ -127,14 +127,22 @@ func (c *Client) request(ctx context.Context, method, path string, payload any) 
 }
 
 func (c *Client) json(ctx context.Context, method, path string, payload, out any) error {
-	resp, err := c.request(ctx, method, path, payload)
+	metadataCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	resp, err := c.request(metadataCtx, method, path, payload)
 	if err != nil {
+		if ctx.Err() == nil && metadataCtx.Err() != nil {
+			return &bridge.Error{Code: bridge.Unavailable}
+		}
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if metadataCtx.Err() != nil {
+			return &bridge.Error{Code: bridge.Unavailable}
 		}
 		return &bridge.Error{Code: bridge.Protocol}
 	}

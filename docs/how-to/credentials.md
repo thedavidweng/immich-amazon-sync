@@ -69,3 +69,14 @@ Use a new ID for a different identity.
 A 403 can mean missing permission rather than session expiry. A 429 requires
 waiting for the reported retry interval. Amazon credentials are browser sessions,
 not OAuth refresh tokens; this service does not automate login challenges.
+
+## Local admin passphrase
+
+The optional dashboard uses a separate mounted file with a unique passphrase
+of at least 12 characters. Set `ADMIN_PASSWORD_FILE` or the exact JSON key
+`admin_password_file` to its container path. Do not put the value in
+JSON or reuse an Amazon credential. Keep the same restricted file permissions
+as other secrets. Rotate it by stopping the service, replacing the file and
+recreating the container so a renamed file is remounted. Sessions are revoked;
+the data volume and account identities remain intact. See
+[local management](local-management.md) for explicit setup and security limits.

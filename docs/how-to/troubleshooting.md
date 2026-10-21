@@ -30,6 +30,24 @@ incomplete responses. An empty lookup before a first upload is no longer blocked
 by envelope ambiguity; it does not clear uncertainty from an earlier write.
 See [SDK list semantics and remaining limits](../reference/compatibility.md#sdk-list-semantics-and-remaining-limits).
 
+## Local management
+
+No login page is expected without a configured admin file. A passphrase shorter
+than 12 characters or an unreadable mount prevents management startup. For
+`csrf_invalid`, load the login form again in the same browser session; do not
+disable CSRF or paste a stale token. Logout, restart and admin-secret rotation
+invalidate sessions. Wait for the login throttle after repeated failures.
+
+Missing config is not setup: use explicit `serve --setup --config NEW_PATH`
+only for a new path. Omit `--setup` after the first valid save. The normal
+read-only Compose config mount cannot accept an atomic UI save; use the
+[writable-directory deployment](local-management.md). No-path and `--account`
+runs deliberately disable configuration editing, and every saved account needs
+mounted credential paths. Do not loosen file permissions or erase the database
+to bypass these errors.
+
+## Health and support
+
 Healthy/readiness responses describe the process and local services, not
 successful remote backup. A remote outage should remain diagnosable without
 turning into a container restart loop. Docker's `unless-stopped` policy restarts
