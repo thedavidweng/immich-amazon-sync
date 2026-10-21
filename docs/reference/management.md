@@ -21,6 +21,9 @@ when an admin passphrase file is configured. They share the normal listener;
 separation; repeated `album_id` values come from discovery checkboxes. Boolean
 checkboxes are `on` or absent. Scope must be explicit: album IDs or whole library.
 All credentials are mounted file paths, never form secret values.
+The overview's durable progress fields are described in the
+[status reference](status.md), including separate media, album and association
+completion. Album mirroring requires explicit album rules with library mode off.
 
 Login without a valid pre-auth cookie/token and authenticated mutations without
 CSRF are rejected. See [local management](../how-to/local-management.md) for

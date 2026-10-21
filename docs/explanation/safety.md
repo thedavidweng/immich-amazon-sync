@@ -23,6 +23,11 @@ album operation fails keeps its Node mapping; only the relationship needs
 repair. Removing a membership from one managed album must not remove the shared
 Node or another album's membership. Incomplete scans and uncertain target album
 ownership cannot authorize removals.
+Only returned IDs from this service's own album creation establish ownership.
+An unknown-ID create remains uncertain; a same-name album is insufficient.
+Safe additions can proceed during backfill, but removals require a completed
+baseline, nonempty desired set and the
+[fixed membership guard](../how-to/managed-albums.md#understand-removal-guards).
 
 The Amazon boundary has no media deletion operation. Empty source results,
 source outages, old source snapshots, rule removal and account removal cannot
@@ -32,6 +37,12 @@ require separate policy, confirmation and audit tests.
 Events improve latency; periodic source reads repair missed events. Neither an
 unreliable webhook nor offset-like pagination is a completeness proof. A failed
 scan must keep its previous completed boundary and avoid absence-based changes.
+Native Workflow metadata is untrusted: the service durably retains only an asset
+ID and re-reads Immich to validate scope. Event acknowledgment precedes remote
+work and cannot mean upload success. Overlapping library deltas and periodic
+full scans repair missed hints; they retain durable boundaries without claiming
+a source snapshot. See [progress and scheduling](../reference/status.md) and
+the [event/membership decision](../adr/0005-durable-hints-and-owned-membership.md).
 Read [contract decisions](../adr/0003-upstream-contract-boundaries.md) for the
 researched checksum, media-pair and pagination limits.
 

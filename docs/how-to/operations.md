@@ -65,6 +65,13 @@ There is no `latest` release contract. Do not create a Git tag merely to deploy 
 local build. Downgrading a binary across a database schema change may fail;
 restore the matching backup/image together rather than editing SQLite by hand.
 
+The P1 upgrade migrates SQLite schema 1 to 2 in place, preserving confirmed media
+and account history while adding durable hints, incremental progress and album
+relationships. Take the stopped complete-volume backup before first startup
+with the new binary. To roll back, restore that pre-upgrade volume together with
+its matching binary/config; an older binary cannot read the newer schema.
+Do not delete migration state, queues or album intents to force a downgrade.
+
 When migrating hosts, move the stopped complete data archive, config and secrets.
 Ensure the old writer remains stopped before the new one starts. Keep host port
 binding on `127.0.0.1`; use authenticated access through a trusted network or
