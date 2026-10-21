@@ -86,3 +86,24 @@ func TestInvalidVideoEnvironmentIsAnError(t *testing.T) {
 		t.Fatalf("invalid video setting accepted: %v", err)
 	}
 }
+
+func TestAdminSecretFileConfiguration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"admin_password_file":"/run/secrets/admin"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AdminPasswordFile != "/run/secrets/admin" {
+		t.Fatalf("admin secret path lost: %q", cfg.AdminPasswordFile)
+	}
+	if err := cfg.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := config.Load(path)
+	if err != nil || saved.AdminPasswordFile != cfg.AdminPasswordFile {
+		t.Fatalf("admin configuration round trip: %v", err)
+	}
+}
