@@ -162,6 +162,13 @@ func (c *Client) Assets(ctx context.Context, scope bridge.Scope, cursor string) 
 	} else if !strings.HasPrefix(version, "2.") && !strings.HasPrefix(version, "3.") {
 		return bridge.Page{}, &bridge.Error{Code: bridge.Unsupported}
 	}
+	if strings.HasPrefix(version, "2.") {
+		return c.assetsV2(ctx, scope, cursor)
+	}
+	return c.assetsPage(ctx, scope, cursor, "")
+}
+
+func (c *Client) assetsPage(ctx context.Context, scope bridge.Scope, cursor, visibility string) (bridge.Page, error) {
 	page := 1
 	if cursor != "" {
 		n, err := strconv.Atoi(cursor)
@@ -171,6 +178,9 @@ func (c *Client) Assets(ctx context.Context, scope bridge.Scope, cursor string) 
 		page = n
 	}
 	payload := map[string]any{"page": page, "size": 250, "withExif": true, "order": "asc"}
+	if visibility != "" {
+		payload["visibility"] = visibility
+	}
 	if scope.AlbumID != "" {
 		payload["albumIds"] = []string{scope.AlbumID}
 	}
