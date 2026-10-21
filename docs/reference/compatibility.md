@@ -9,13 +9,13 @@ live-account success.
 | Immich stable | `v3.3.4`, `69e0cb8606137c4f8dc0e7207a672ff8be39f358`, released October 20, 2026 | Official contract/source inspection and offline adapter fixtures; no real server tested for this delivery. |
 | Immich comparison | `v2.0.0`, `e4234af3b3bd32f5dd12a2b0808158339deded43` | Older owned-media contract comparison; no complete shared-album guarantee. |
 | Immich main | `166e93559f123313cf9cb4e7324c4ee30e21c618`, OpenAPI says `3.3.0-rc.0` | Stale development metadata, not the stable release number or minimum supported version. |
-| aphotos SDK | `v0.1.3-0.20261021004957-6a7dc3ea2ff7` | Public revision `6a7dc3ea2ff7c971adbfae3ea72f7b33a9c0b501` from SDK PR #13; validates list envelopes and retains GetNode auth/rate-error preservation. |
+| aphotos SDK | `v0.1.3-0.20261021010657-563dc061fffc` | Public revision `563dc061fffca89df49022227cc6b995e3f890a9` from SDK PR #13; strict list/final-status validation and typed transient Retry-After, retaining GetNode auth/rate-error preservation. |
 | Local runtime | Offline Go, CLI and container contracts | No real Amazon upload, album mutation, format playback or credential renewal verified. |
 
 Primary sources: [stable release](https://github.com/immich-app/immich/releases/tag/v3.3.4),
 [stable OpenAPI](https://github.com/immich-app/immich/blob/69e0cb8606137c4f8dc0e7207a672ff8be39f358/open-api/immich-openapi-specs.json),
 [v2 OpenAPI](https://github.com/immich-app/immich/blob/e4234af3b3bd32f5dd12a2b0808158339deded43/open-api/immich-openapi-specs.json),
-[SDK GetNode](https://github.com/thedavidweng/amazon-photos/blob/6a7dc3ea2ff7c971adbfae3ea72f7b33a9c0b501/pkg/aphotos/account.go),
+[SDK GetNode](https://github.com/thedavidweng/amazon-photos/blob/563dc061fffca89df49022227cc6b995e3f890a9/pkg/aphotos/account.go),
 [SDK PR #13](https://github.com/thedavidweng/amazon-photos/pull/13).
 The SDK pin is a public commit, not a released tag.
 The adapter owns the pinned offline contract check; CI runs it through
@@ -36,11 +36,17 @@ observed count and stop repeated pages without progress. `SearchIter` semantics
 are unchanged. An empty search after an uncertain upload still cannot prove
 noncommit because remote indexing may lag.
 
-Read JSON requests require a final HTTP 2xx status. Mutation/upload handling
-still accepts some final non-2xx statuses below 400, and HTTP 503 Retry-After
-propagation remains unfixed. The service rejects credentialed redirects, but
-these remain upstream protocol limitations. Keep this delivery experimental;
-offline SDK tests and local packaging tests do not establish real cloud success.
+JSON reads, mutations and uploads require a final HTTP 2xx status; final
+1xx/3xx responses are protocol errors, not successful writes or absence.
+Typed transient errors retain parsed Retry-After for HTTP 503/other 5xx and
+response-body failures. The adapter carries that delay through uncertainty and
+post-verification errors. The earlier generic final-status/503 propagation gaps
+are resolved. A non-2xx upload result still does not prove remote noncommit.
+
+SDK automatic retry scheduling is unchanged. A positive delay is a scheduling
+hint, not permission to repeat an uncertain write. The service rejects
+credentialed redirects. Keep this delivery experimental;
+offline SDK/adapter and local packaging tests do not establish real cloud success.
 
 ## Immich contract
 
@@ -80,7 +86,7 @@ controls accepted region codes.
 | `at be bg ch cy cz de dk ee es fi fr gr hr hu ie is it li lt lu lv mt nl no pl pt ro se si sk` | Individual supported European marketplaces | `experimental` | untested |
 | `au`, `com.au`, `tr`, `eu` | Unsupported by the pinned implementation | rejected | no support claim |
 
-See [pinned regional implementation](https://github.com/thedavidweng/amazon-photos/blob/6a7dc3ea2ff7c971adbfae3ea72f7b33a9c0b501/pkg/aphotos/region.go).
+See [pinned regional implementation](https://github.com/thedavidweng/amazon-photos/blob/563dc061fffca89df49022227cc6b995e3f890a9/pkg/aphotos/region.go).
 Successful `doctor` reads do not upgrade a region's write evidence.
 Validate each marketplace/media/album operation with disposable data before
 relying on it. Record service and upstream versions, date, operation and result
@@ -113,4 +119,4 @@ an error.
 
 Sources: [library checksum assignment](https://github.com/immich-app/immich/blob/69e0cb8606137c4f8dc0e7207a672ff8be39f358/server/src/services/library.service.ts),
 [Live/Motion linking](https://github.com/immich-app/immich/blob/69e0cb8606137c4f8dc0e7207a672ff8be39f358/server/src/services/metadata.service.ts),
-[SDK upload fields](https://github.com/thedavidweng/amazon-photos/blob/6a7dc3ea2ff7c971adbfae3ea72f7b33a9c0b501/pkg/aphotos/upload.go).
+[SDK upload fields](https://github.com/thedavidweng/amazon-photos/blob/563dc061fffca89df49022227cc6b995e3f890a9/pkg/aphotos/upload.go).

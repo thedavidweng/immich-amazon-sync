@@ -15,7 +15,7 @@ See [config.example.json](config.example.json) for the minimal deployment shape.
 | `max_staging_files` | `2` | Positive staging file count limit. |
 | `bytes_per_second` | `0` | Nonnegative configured transfer limit; zero disables the cap. |
 | `log_level` | `info` | `debug`, `info`, `warn`, `error`. |
-| `admin_password_file` | unset | Optional local management/bootstrap credential file. |
+| `admin_password_file` | unset | Optional mounted admin passphrase file, at least 12 characters; enables the local UI. |
 | `webhook_secret_file` | unset | Optional shared-secret file for authenticated event hints. |
 | `accounts` | empty | Explicit, isolated account configurations. |
 
@@ -38,7 +38,17 @@ nonempty and at most 64 KiB; the JSON config limit is 1 MiB.
 
 The admin credential JSON key is exactly `admin_password_file`; its
 environment counterpart is `ADMIN_PASSWORD_FILE`. Store a file path in JSON,
-never the credential value.
+never the credential value. Without this setting the management routes are
+absent; health/readiness remain public. Zero-account `serve` with this secret is
+supported, but a missing config file still needs explicit `--setup`.
+
+UI editing requires an unfiltered explicit config path and a writable parent
+directory. Saves validate the entire config and atomically replace it with mode
+`0600` before reloading. Every account must use mounted credential file paths;
+environment-value-only credentials cannot be serialized through the UI. Failed
+validation or persistence does not reload. Changes to `data_dir`, `listen`, the
+admin-secret path or webhook-secret path require restart. See
+[local management](../how-to/local-management.md) for deployment modes.
 
 Without `--config`, the single-account environment mode uses `IMMICH_URL`,
 `IMMICH_API_KEY_FILE`, `AMAZON_REGION`, `AMAZON_COOKIE_FILE`, comma-separated

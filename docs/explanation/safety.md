@@ -40,3 +40,11 @@ Restarting a healthy local database because Amazon is offline does not fix
 credentials or uncertain writes. Credential files remain outside the image,
 mounted read-only; logs use allowed diagnostic fields rather than raw remote
 errors or SDK objects.
+
+Local management is opt-in and isolated by loopback publication. Login and all
+mutations use session CSRF; in-memory sessions end on logout, restart or secret
+rotation. The editor stores credential paths, never values. Config validation
+and atomic persistence precede reload; failed saves leave the runtime unchanged.
+Saving a valid account enables scheduled work, not merely a read-only preview.
+See [local management](../how-to/local-management.md) for writable modes and why
+proxy TLS/forwarded headers are not an assumed security boundary.

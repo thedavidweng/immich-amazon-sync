@@ -53,12 +53,26 @@ the named volume for nonroot UID 10001. It publishes port 8080 only on
 `127.0.0.1`; the process listens on all container interfaces. Do not run `sync once`
 against the live daemon's data volume.
 
+## Local management
+
+The dashboard is optional; without `ADMIN_PASSWORD_FILE` (or the JSON
+`admin_password_file` path), its routes are absent. Keep the existing
+Compose quickstart for headless operation. For browser-based first setup, use
+explicit `serve --setup --config /data/config.json` with a mounted admin
+passphrase file and a writable config directory. Saving an account activates
+its scheduled work; no source scope is selected implicitly.
+
+See [local setup and management](docs/how-to/local-management.md) for the
+container commands, read-only versus editable modes and session security.
+Do not expose the dashboard publicly; publish only on host loopback.
+
 ## Documentation
 
 | Need | Read |
 | --- | --- |
 | Learn the first backup workflow | [Tutorial](docs/tutorials/first-backup.md) |
 | Obtain or renew credentials | [Credentials](docs/how-to/credentials.md) |
+| Set up or use the optional dashboard | [Local management](docs/how-to/local-management.md) |
 | Back up, restore, upgrade or fix permissions | [Operations](docs/how-to/operations.md) |
 | Diagnose a blocked or uncertain transfer | [Troubleshooting](docs/how-to/troubleshooting.md) |
 | Look up JSON fields and environment variables | [Configuration](docs/reference/configuration.md) |
