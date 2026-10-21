@@ -4,11 +4,10 @@ Start with a small album containing disposable test originals. This tutorial
 uses a local image and a named volume; it needs no published image or release.
 It makes real Amazon writes only at the explicitly marked sync step.
 
-The pinned SDK currently blocks first uploads when Amazon returns an empty
-content lookup. This tutorial describes the deployment and intended workflow;
-`upload_unconfirmed` must remain blocked until the
-[SDK contract limitation](../reference/compatibility.md#current-blocking-sdk-limits)
-is fixed. Do not erase state or force an upload to bypass it.
+Review [SDK list semantics and remaining limits](../reference/compatibility.md#sdk-list-semantics-and-remaining-limits)
+before writing. Valid empty lookup envelopes are supported, but an
+`upload_unconfirmed` result still requires reconciliation. Do not erase state
+or force an upload to bypass uncertainty.
 
 1. Clone the repository, enter it, and run `docker compose build`. Copy
    `docs/reference/config.example.json` to `config.json`. Keep this deployment

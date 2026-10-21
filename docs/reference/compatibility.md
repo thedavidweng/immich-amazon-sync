@@ -9,29 +9,38 @@ live-account success.
 | Immich stable | `v3.3.4`, `69e0cb8606137c4f8dc0e7207a672ff8be39f358`, released October 20, 2026 | Official contract/source inspection and offline adapter fixtures; no real server tested for this delivery. |
 | Immich comparison | `v2.0.0`, `e4234af3b3bd32f5dd12a2b0808158339deded43` | Older owned-media contract comparison; no complete shared-album guarantee. |
 | Immich main | `166e93559f123313cf9cb4e7324c4ee30e21c618`, OpenAPI says `3.3.0-rc.0` | Stale development metadata, not the stable release number or minimum supported version. |
-| aphotos SDK | `v0.1.3-0.20261019091212-71d21d31336d` | Pins main revision `71d21d31336d24990145f93cd0c2b164fbb30941`; preserves GetNode auth/rate errors masked by the divergent `v0.1.3` tag. |
+| aphotos SDK | `v0.1.3-0.20261021004957-6a7dc3ea2ff7` | Public revision `6a7dc3ea2ff7c971adbfae3ea72f7b33a9c0b501` from SDK PR #13; validates list envelopes and retains GetNode auth/rate-error preservation. |
 | Local runtime | Offline Go, CLI and container contracts | No real Amazon upload, album mutation, format playback or credential renewal verified. |
 
 Primary sources: [stable release](https://github.com/immich-app/immich/releases/tag/v3.3.4),
 [stable OpenAPI](https://github.com/immich-app/immich/blob/69e0cb8606137c4f8dc0e7207a672ff8be39f358/open-api/immich-openapi-specs.json),
 [v2 OpenAPI](https://github.com/immich-app/immich/blob/e4234af3b3bd32f5dd12a2b0808158339deded43/open-api/immich-openapi-specs.json),
-[SDK GetNode](https://github.com/thedavidweng/amazon-photos/blob/71d21d31336d24990145f93cd0c2b164fbb30941/pkg/aphotos/account.go).
+[SDK GetNode](https://github.com/thedavidweng/amazon-photos/blob/6a7dc3ea2ff7c971adbfae3ea72f7b33a9c0b501/pkg/aphotos/account.go),
+[SDK PR #13](https://github.com/thedavidweng/amazon-photos/pull/13).
+The SDK pin is a public commit, not a released tag.
 The adapter owns the pinned offline contract check; CI runs it through
 `go test ./...`, without a second mutable upstream download.
 
-## Current blocking SDK limits
+## SDK list semantics and remaining limits
 
-The pinned SDK loses the distinction between a valid empty list and a malformed
-response without a list envelope. The adapter therefore rejects empty/ambiguous
-searches as `upload_unconfirmed`. This blocks the normal first upload of new
-content; an empty search is not permission to POST. Empty album member lists
-also remain unconfirmed and cannot authorize membership changes. A generic SDK
-envelope-validation fix and new pin are needed before these paths can proceed.
+The pinned SDK distinguishes valid empty list envelopes from malformed
+responses. `{"count":0,"data":[]}` succeeds for empty lookups and member lists;
+the previous first-upload and empty-album blocker is resolved. Missing/null
+`count` or `data`, negative/impossible counts and items without IDs produce a
+protocol error. An empty page before its advertised count is also an error.
 
-The SDK also accepts some final non-2xx statuses below 400 and does not preserve
-Retry-After for every transient error. The service rejects credentialed
-redirects, but these remain upstream protocol limitations. Keep this delivery
-experimental; local packaging tests do not resolve them.
+A single page's `Complete=true` establishes that request's success, not that all
+results were enumerated. Callers must check `HasMore`, count and page progress.
+All-pages helpers report partial results when unique nodes do not cover the
+observed count and stop repeated pages without progress. `SearchIter` semantics
+are unchanged. An empty search after an uncertain upload still cannot prove
+noncommit because remote indexing may lag.
+
+Read JSON requests require a final HTTP 2xx status. Mutation/upload handling
+still accepts some final non-2xx statuses below 400, and HTTP 503 Retry-After
+propagation remains unfixed. The service rejects credentialed redirects, but
+these remain upstream protocol limitations. Keep this delivery experimental;
+offline SDK tests and local packaging tests do not establish real cloud success.
 
 ## Immich contract
 
@@ -71,7 +80,7 @@ controls accepted region codes.
 | `at be bg ch cy cz de dk ee es fi fr gr hr hu ie is it li lt lu lv mt nl no pl pt ro se si sk` | Individual supported European marketplaces | `experimental` | untested |
 | `au`, `com.au`, `tr`, `eu` | Unsupported by the pinned implementation | rejected | no support claim |
 
-See [pinned regional implementation](https://github.com/thedavidweng/amazon-photos/blob/71d21d31336d24990145f93cd0c2b164fbb30941/pkg/aphotos/region.go).
+See [pinned regional implementation](https://github.com/thedavidweng/amazon-photos/blob/6a7dc3ea2ff7c971adbfae3ea72f7b33a9c0b501/pkg/aphotos/region.go).
 Successful `doctor` reads do not upgrade a region's write evidence.
 Validate each marketplace/media/album operation with disposable data before
 relying on it. Record service and upstream versions, date, operation and result
@@ -95,12 +104,13 @@ external-library imports may use `SHA1("path:" + normalizedPath)`; the public
 asset DTO does not reliably identify the checksum algorithm. Do not claim an
 external source checksum verifies original bytes. Compute actual MD5 and byte
 size from the staged stream; compare source SHA-1 only when its byte semantics
-are established. This adapter excludes known external-library assets as
-`external_library_checksum` and missing `libraryId` provenance as
-`unknown_checksum_provenance`; an explicitly null `libraryId` establishes the
-uploaded-original byte-checksum contract. These exclusions are reported as
-skipped, not backed up. A known byte-checksum mismatch remains an error.
+are established. Otherwise eligible external-library originals and assets with
+unknown checksum provenance are backed up with an empty source SHA1 value and
+actual computed MD5/size. An explicitly null `libraryId` establishes the
+uploaded-original byte-checksum contract for source SHA1 validation. Unknown
+provenance alone does not cause a skip; a known byte-checksum mismatch remains
+an error.
 
 Sources: [library checksum assignment](https://github.com/immich-app/immich/blob/69e0cb8606137c4f8dc0e7207a672ff8be39f358/server/src/services/library.service.ts),
 [Live/Motion linking](https://github.com/immich-app/immich/blob/69e0cb8606137c4f8dc0e7207a672ff8be39f358/server/src/services/metadata.service.ts),
-[SDK upload fields](https://github.com/thedavidweng/amazon-photos/blob/71d21d31336d24990145f93cd0c2b164fbb30941/pkg/aphotos/upload.go).
+[SDK upload fields](https://github.com/thedavidweng/amazon-photos/blob/6a7dc3ea2ff7c971adbfae3ea72f7b33a9c0b501/pkg/aphotos/upload.go).
