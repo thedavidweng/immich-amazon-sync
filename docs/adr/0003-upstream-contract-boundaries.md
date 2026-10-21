@@ -25,15 +25,13 @@ Both v2 album metadata reads must request `withoutAssets=true`; v2 otherwise
 embeds all assets and defeats bounded discovery. The pinned v3 metadata
 response omits embedded assets and has no such query parameter.
 
-Pin the public aphotos SDK to revision
-`563dc061fffca89df49022227cc6b995e3f890a9`, Go pseudo-version
-`v0.1.3-0.20261021010657-563dc061fffc`, published through
+Pin the public aphotos SDK to released tag `v0.1.4`, published through
 [SDK PR #13](https://github.com/thedavidweng/amazon-photos/pull/13).
-This is a public commit pin, not a released tag. It retains the GetNode
-auth/rate-error preservation missing from the divergent published v0.1.3 tag.
-Use the fixed SDK revision, not a duplicate HTTP client or local workaround.
-This pseudo-version orders below the tag; future dependency updates must
-preserve error propagation, strict list validation and final-status checks.
+The release includes strict list and final-status validation, preserves
+GetNode auth/rate-error propagation, and retains parsed Retry-After delays.
+Use the released SDK, not a duplicate HTTP client or local workaround.
+Future dependency updates must preserve error propagation, strict list
+validation and final-status checks.
 
 Strict SDK list decoding accepts `{"count":0,"data":[]}` and rejects missing or
 null fields, invalid counts and items without IDs. Valid empty searches and

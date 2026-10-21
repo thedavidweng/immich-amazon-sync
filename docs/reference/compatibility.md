@@ -9,15 +9,15 @@ live-account success.
 | Immich stable | `v3.3.4`, `69e0cb8606137c4f8dc0e7207a672ff8be39f358`, released October 20, 2026 | Official contract/source inspection and offline adapter fixtures; no real server tested for this delivery. |
 | Immich comparison | `v2.0.0`, `e4234af3b3bd32f5dd12a2b0808158339deded43` | Offline owned-album/library contracts include timeline and archive; v2 shared albums are unsupported. Other v2/v3 releases are not individually verified. |
 | Immich main | `166e93559f123313cf9cb4e7324c4ee30e21c618`, OpenAPI says `3.3.0-rc.0` | Stale development metadata, not the stable release number or minimum supported version. |
-| aphotos SDK | `v0.1.3-0.20261021010657-563dc061fffc` | Public revision `563dc061fffca89df49022227cc6b995e3f890a9` from SDK PR #13; strict list/final-status validation and typed transient Retry-After, retaining GetNode auth/rate-error preservation. |
+| aphotos SDK | `v0.1.4` | Released tag containing the corrections from SDK PR #13: strict list/final-status validation and typed transient Retry-After, retaining GetNode auth/rate-error preservation. |
 | Local runtime | Offline Go, CLI and container contracts | No real Amazon upload, album mutation, format playback or credential renewal verified. |
 
 Primary sources: [stable release](https://github.com/immich-app/immich/releases/tag/v3.3.4),
 [stable OpenAPI](https://github.com/immich-app/immich/blob/69e0cb8606137c4f8dc0e7207a672ff8be39f358/open-api/immich-openapi-specs.json),
 [v2 OpenAPI](https://github.com/immich-app/immich/blob/e4234af3b3bd32f5dd12a2b0808158339deded43/open-api/immich-openapi-specs.json),
-[SDK GetNode](https://github.com/thedavidweng/amazon-photos/blob/563dc061fffca89df49022227cc6b995e3f890a9/pkg/aphotos/account.go),
-[SDK PR #13](https://github.com/thedavidweng/amazon-photos/pull/13).
-The SDK pin is a public commit, not a released tag.
+[SDK GetNode](https://github.com/thedavidweng/amazon-photos/blob/v0.1.4/pkg/aphotos/account.go),
+[SDK v0.1.4](https://github.com/thedavidweng/amazon-photos/releases/tag/v0.1.4).
+The SDK pin is a released tag.
 The adapter owns the pinned offline contract check; CI runs it through
 `go test ./...`, without a second mutable upstream download.
 
@@ -115,7 +115,7 @@ controls accepted region codes.
 | `at be bg ch cy cz de dk ee es fi fr gr hr hu ie is it li lt lu lv mt nl no pl pt ro se si sk` | Individual supported European marketplaces | `experimental` | untested |
 | `au`, `com.au`, `tr`, `eu` | Unsupported by the pinned implementation | rejected | no support claim |
 
-See [pinned regional implementation](https://github.com/thedavidweng/amazon-photos/blob/563dc061fffca89df49022227cc6b995e3f890a9/pkg/aphotos/region.go).
+See [pinned regional implementation](https://github.com/thedavidweng/amazon-photos/blob/v0.1.4/pkg/aphotos/region.go).
 Successful `doctor` reads do not upgrade a region's write evidence.
 Validate each marketplace/media/album operation with disposable data before
 relying on it. Record service and upstream versions, date, operation and result
@@ -144,8 +144,10 @@ unknown checksum provenance are backed up with an empty source SHA1 value and
 actual computed MD5/size. An explicitly null `libraryId` establishes the
 uploaded-original byte-checksum contract for source SHA1 validation. Unknown
 provenance alone does not cause a skip; a known byte-checksum mismatch remains
-an error.
+an error. For assets without a byte-checksum, change detection compares the
+reported size and Immich `fileModifiedAt` (filesystem mtime); metadata-only
+edits that move `updatedAt` do not mark the asset as changed.
 
 Sources: [library checksum assignment](https://github.com/immich-app/immich/blob/69e0cb8606137c4f8dc0e7207a672ff8be39f358/server/src/services/library.service.ts),
 [Live/Motion linking](https://github.com/immich-app/immich/blob/69e0cb8606137c4f8dc0e7207a672ff8be39f358/server/src/services/metadata.service.ts),
-[SDK upload fields](https://github.com/thedavidweng/amazon-photos/blob/563dc061fffca89df49022227cc6b995e3f890a9/pkg/aphotos/upload.go).
+[SDK upload fields](https://github.com/thedavidweng/amazon-photos/blob/v0.1.4/pkg/aphotos/upload.go).
