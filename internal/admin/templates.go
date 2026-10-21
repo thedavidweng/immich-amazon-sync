@@ -43,7 +43,7 @@ const pageTemplates = `
 </div></fieldset><fieldset><legend>Destination / Amazon Photos</legend><div class="stack">
 <label>Region code <input name="region" value="{{.Account.AmazonRegion}}" placeholder="us" required aria-describedby="region-note"></label><p class="note" id="region-note">Use your actual account region; no region is selected automatically. Run diagnosis to inspect compatibility evidence.</p>
 <label>Cookie mounted file <input name="cookie_file" value="{{.Account.CookieFile}}" placeholder="/run/secrets/amazon_cookie" required></label>
-<label class="check"><input type="checkbox" name="mirror_albums" {{if .Account.MirrorAlbums}}checked{{end}}><span>Mirror managed album membership (never delete cloud media)</span></label>
+<label class="check"><input type="checkbox" name="mirror_albums" {{if .Account.MirrorAlbums}}checked{{end}}><span>Mirror managed album membership (requires selected albums; never delete cloud media)</span></label>
 </div></fieldset><div class="actions"><button>Save account</button><a href="/">Cancel</a></div></form>
 </main></body></html>{{end}}
 {{define "doctor"}}<!doctype html><html lang="en"><head>{{template "head"}}<title>Diagnosis | Immich to Amazon</title></head><body><main class="editor">{{template "brand"}}<nav><a href="/">Back to overview</a></nav><h1>Account diagnosis</h1><p>{{.ID}} / <code>{{.Code}}</code></p><p class="notice">Read-only probes. Upload and album-write permissions are not tested.</p><dl class="diagnostics">{{range .Checks}}<dt>{{.Name}}</dt><dd><code>{{.Code}}</code></dd>{{end}}</dl></main></body></html>{{end}}

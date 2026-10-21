@@ -73,6 +73,8 @@ docker rm immich-sync-ui
 Do not repeat `--setup` after the file exists. Normal missing-config errors do
 not start setup automatically. Setup also rejects a symlink at the target path,
 `--account`, missing admin secret and accounts supplied through `IMMICH_URL`.
+Before succeeding, setup creates and removes a temporary file to establish that
+the config's parent directory already exists and is writable.
 
 For native use, create a private writable data directory, use native credential
 paths, and keep the default loopback listener:
@@ -103,14 +105,21 @@ does not change the running configuration.
 
 ## Sessions and exposure
 
-- GET `/login` creates a 10-minute pre-auth session and CSRF token. Login needs
-  that cookie and form token, then rotates both for an eight-hour admin session.
+- GET `/login` creates a 10-minute pre-auth session and CSRF token, reuses a
+  valid pre-auth session on refresh, and redirects authenticated users home.
+  Login needs that cookie and form token, then rotates both for an eight-hour
+  admin session.
 - The `immich_admin` cookie is HttpOnly, SameSite=Strict and scoped to `/`;
   it is Secure on a direct TLS request. Logout, process restart and admin-secret
   rotation revoke sessions. A protected tunnel retains the local-only model.
 - Every state-changing form needs the current CSRF token. Mismatched Origin
   and `Sec-Fetch-Site: cross-site` requests are rejected. Login is limited to
   five attempts per minute per client address; forwarded headers are not trusted.
+  New pre-auth issuance has a separate five-per-minute address limit and returns
+  429 with Retry-After. It does not spend credential attempts. At most 128
+  anonymous entries share the 256-session pool; new anonymous entries evict only
+  the oldest anonymous entry, never an authenticated one. An evicted visitor can
+  refresh the login page for a new token.
 - Forms are limited to 64 KiB and five seconds to read. Management responses
   set no-store and a content security policy. Health/readiness stay public and
   do not require sessions or remote credentials.

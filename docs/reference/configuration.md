@@ -35,8 +35,11 @@ At least one album or explicit library mode is required for each account.
 Account IDs must be unique. Zero accounts is only valid when local management
 bootstrap is explicitly enabled with an admin credential. Secret files must be
 nonempty and at most 64 KiB for remote credentials; the JSON config limit is
-1 MiB. The event handler applies the stricter webhook-secret limit above.
-Library mode with `mirror_albums: true` returns `invalid_options`; automatic
+1 MiB on both load and save, including the saved JSON newline. Oversize input
+returns `config_invalid_json`; a rejected save leaves the previous file and
+running configuration intact. The event handler applies the stricter
+webhook-secret limit above.
+Library mode with `mirror_albums: true` returns `source_scope_conflict`; automatic
 discovery/mirroring of all visible albums is not implemented.
 For whole-accessible-library backup, explicitly set `library: true`,
 `album_ids: []` and `mirror_albums: false`. This does not bypass source permissions.

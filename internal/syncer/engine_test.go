@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -233,14 +234,26 @@ func TestFiveGBOriginalStopsAtQuotaAndRemovesPartialStaging(t *testing.T) {
 		original: func(context.Context, string) (io.ReadCloser, error) {
 			return io.NopCloser(io.LimitReader(stream, 5<<30)), nil
 		}}
-	d := &targetFake{identity: "target"}
+	uploads := 0
+	d := &targetFake{identity: "target", upload: func(context.Context, bridge.Content, io.Reader) (bridge.Node, error) {
+		uploads++
+		return bridge.Node{}, errors.New("quota failure must not upload")
+	}}
 	opts := options()
 	opts.MaxStagingBytes = 64 << 10
 	e := engine(t, store, s, d, opts)
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
 	if err := e.Once(context.Background()); err == nil || err.Error() != "staging_quota" {
 		t.Fatalf("expected explicit quota failure, got %v", err)
 	}
-	if stream.read > 96<<10 || len(d.nodes) != 0 {
+	runtime.ReadMemStats(&after)
+	allocated := after.TotalAlloc - before.TotalAlloc
+	t.Logf("quota path allocated %d bytes", allocated)
+	if allocated > 8<<20 {
+		t.Errorf("quota path allocated %d bytes for a bounded partial stream", allocated)
+	}
+	if stream.read > 96<<10 || uploads != 0 {
 		t.Fatalf("unbounded stream read %d or uploaded incomplete content", stream.read)
 	}
 	files, err := os.ReadDir(filepath.Join(dir, "staging"))
@@ -249,6 +262,85 @@ func TestFiveGBOriginalStopsAtQuotaAndRemovesPartialStaging(t *testing.T) {
 	}
 	if st := status(t, e); st.Failed != 1 || st.Errors["staging_quota"] != 1 {
 		t.Fatalf("quota failure was not persisted: %+v", st)
+	}
+}
+
+type zeroStream struct{}
+
+func (zeroStream) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
+func TestSuccessfulOriginalStreamsWithinHeapBudgetAndPersistsConfirmation(t *testing.T) {
+	const size = 32 << 20
+	// Independently precomputed MD5 of 32 MiB of zero bytes.
+	const digest = "58f06dd588d8ffb3beb46ada6309436b"
+	dir := t.TempDir()
+	store, err := syncer.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if store != nil {
+			_ = store.Close()
+		}
+	})
+	asset := photo("large")
+	asset.Size, asset.SHA1 = -1, ""
+	source := &sourceFake{identity: "source",
+		pages: map[string]bridge.Page{"": {Assets: []bridge.Asset{asset}}},
+		original: func(context.Context, string) (io.ReadCloser, error) {
+			return io.NopCloser(io.LimitReader(zeroStream{}, size)), nil
+		}}
+	var uploaded int64
+	var uploads int
+	target := &targetFake{identity: "target", get: func(_ context.Context, id string) (bridge.Node, error) {
+		if id != "large-node" || uploaded != size || uploads != 1 {
+			return bridge.Node{}, &bridge.Error{Code: bridge.NotFound}
+		}
+		return bridge.Node{ID: id, Name: asset.Name, MD5: digest, Size: size}, nil
+	}, upload: func(_ context.Context, c bridge.Content, r io.Reader) (bridge.Node, error) {
+		uploads++
+		hash := md5.New()
+		n, err := io.CopyBuffer(hash, struct{ io.Reader }{r}, make([]byte, 64<<10))
+		uploaded += n
+		actual := hex.EncodeToString(hash.Sum(nil))
+		if err != nil || n != size || actual != digest || c.MD5 != digest || c.Size != size {
+			return bridge.Node{}, fmt.Errorf("stream confirmation: bytes=%d md5=%s content=%+v err=%v", n, actual, c, err)
+		}
+		return bridge.Node{ID: "large-node", Name: c.Name, MD5: actual, Size: n, ParentID: c.ParentID}, nil
+	}}
+	opts := options()
+	opts.MaxStagingBytes = size + (1 << 20)
+	e := engine(t, store, source, target, opts)
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	if err := e.Once(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	runtime.ReadMemStats(&after)
+	allocated := after.TotalAlloc - before.TotalAlloc
+	t.Logf("successful 32 MiB core transfer allocated %d bytes", allocated)
+	if allocated > 16<<20 {
+		t.Errorf("transfer allocated %d bytes; budget must remain below the payload size", allocated)
+	}
+	if uploaded != size || uploads != 1 || status(t, e).Confirmed != 1 {
+		t.Fatalf("original not confirmed once: bytes=%d uploads=%d status=%+v", uploaded, uploads, status(t, e))
+	}
+	files, err := os.ReadDir(filepath.Join(dir, "staging"))
+	if err != nil || len(files) != 0 {
+		t.Fatalf("confirmed staging remains: %v %v", files, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = syncer.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st := status(t, engine(t, store, source, target, opts)); st.Confirmed != 1 {
+		t.Fatalf("confirmation was not durable: %+v", st)
 	}
 }
 

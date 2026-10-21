@@ -22,6 +22,13 @@ Write a failing behavior test before implementation, then the smallest passing
 change. The CLI and container seams are already agreed in ADR 0001. No test needs
 a real API key, Cookie, Immich server or Amazon account.
 
+Streaming memory checks are compositional: a guarded 5 GiB source stops at a
+64 KiB staging quota without uploading, a generated 32 MiB original completes
+the engine's real SQLite/staging flow, and a generated 5 GiB original completes
+SDK upload plus remote verification through an HTTP transport sink. Tests bound
+Go `TotalAlloc`, not RSS, and allocate no whole media payload. This is not a full
+successful 5 GiB engine run. The SDK test still performs O(5 GiB) hashing work.
+
 After the runtime builds, run the container contract:
 
 ```sh

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -49,6 +50,8 @@ type Secrets struct {
 	Cookie string
 }
 
+const maxConfigBytes = 1 << 20
+
 func Load(path string) (Config, error) {
 	cfg := Config{
 		DataDir: "data", Listen: "127.0.0.1:8080", ScanInterval: "15m",
@@ -60,7 +63,11 @@ func Load(path string) (Config, error) {
 			return cfg, errors.New("config_unreadable")
 		}
 		defer f.Close()
-		decoder := json.NewDecoder(io.LimitReader(f, 1<<20))
+		data, err := io.ReadAll(io.LimitReader(f, maxConfigBytes+1))
+		if err != nil || len(data) > maxConfigBytes {
+			return cfg, errors.New("config_invalid_json")
+		}
+		decoder := json.NewDecoder(bytes.NewReader(data))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&cfg); err != nil {
 			return cfg, errors.New("config_invalid_json")
@@ -151,7 +158,7 @@ func (c Config) Validate() error {
 		if len(account.AlbumIDs) == 0 && !account.Library {
 			return errors.New("source_scope_required")
 		}
-		if len(account.AlbumIDs) > 0 && account.Library {
+		if account.Library && (len(account.AlbumIDs) > 0 || account.MirrorAlbums) {
 			return errors.New("source_scope_conflict")
 		}
 		for _, id := range account.AlbumIDs {
@@ -211,13 +218,17 @@ func (c Config) Save(path string) error {
 	if err := c.Validate(); err != nil {
 		return err
 	}
+	var data bytes.Buffer
+	if err := json.NewEncoder(&data).Encode(c); err != nil || data.Len() > maxConfigBytes {
+		return errors.New("config_invalid_json")
+	}
 	f, err := os.CreateTemp(filepath.Dir(path), ".config-*")
 	if err != nil {
 		return errors.New("config_write_failed")
 	}
 	name := f.Name()
 	defer os.Remove(name)
-	if err = json.NewEncoder(f).Encode(c); err == nil {
+	if _, err = f.Write(data.Bytes()); err == nil {
 		err = f.Sync()
 	}
 	closeErr := f.Close()

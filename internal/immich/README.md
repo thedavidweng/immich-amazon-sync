@@ -4,6 +4,7 @@ The offline contract is pinned to official Immich v3.3.4, commit
 `69e0cb8606137c4f8dc0e7207a672ff8be39f358`. The fixture contains only the seven
 consumed operations and their unchanged transitive schema definitions; its
 `x-source` records the upstream URL and full document SHA256.
+A separate minimal v2.0.0 fixture pins the album metadata query parameters.
 
 The source requires `user.read`, `album.read`, `asset.read`, and `asset.download`.
 It makes no source writes. The configured base is fixed, API-key redirects are
@@ -16,6 +17,9 @@ v2.0.0 and v3.3.4 pins and is deprecated since v3.2. There is no request-shape
 fallback. v2 shared albums are rejected because their search can omit other
 contributors. Other v2/v3 releases have not been individually verified. Album
 metadata `assetCount` includes ineligible entries and is not an eligible count.
+Both v2 album metadata paths explicitly request `withoutAssets=true` so the
+server does not embed the whole album. v3 omits this query; its pinned response
+does not embed assets. Membership still comes from bounded search pages.
 Pages require explicit count, items, and nullable next-page evidence. These APIs
 do not provide snapshot isolation; callers must retain incomplete scan state and
 perform periodic full reconciliation.
