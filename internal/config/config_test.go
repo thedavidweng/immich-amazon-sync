@@ -62,3 +62,19 @@ func TestExplicitScopeAndSecretFiles(t *testing.T) {
 		t.Fatalf("empty scope accepted: %v", err)
 	}
 }
+
+func TestLibraryAndAlbumScopesAreMutuallyExclusive(t *testing.T) {
+	t.Setenv("IMMICH_URL", "http://immich:2283")
+	t.Setenv("IMMICH_API_KEY", "source-secret")
+	t.Setenv("AMAZON_REGION", "ca")
+	t.Setenv("AMAZON_COOKIE", "destination-secret")
+	t.Setenv("ALBUM_IDS", "album-one")
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Accounts[0].Library = true
+	if err := cfg.Validate(); err == nil || err.Error() != "source_scope_conflict" {
+		t.Fatalf("ambiguous scope accepted: %v", err)
+	}
+}

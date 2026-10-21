@@ -137,6 +137,9 @@ func (c Config) Validate() error {
 		if len(account.AlbumIDs) == 0 && !account.Library {
 			return errors.New("source_scope_required")
 		}
+		if len(account.AlbumIDs) > 0 && account.Library {
+			return errors.New("source_scope_conflict")
+		}
 		for _, id := range account.AlbumIDs {
 			if !identifier.MatchString(id) {
 				return errors.New("album_id_invalid")
