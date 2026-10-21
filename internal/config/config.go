@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/thedavidweng/amazon-photos/pkg/aphotos"
 )
 
 type Config struct {
@@ -136,6 +138,9 @@ func (c Config) Validate() error {
 		}
 		if account.AmazonRegion == "" {
 			return errors.New("amazon_region_required")
+		}
+		if _, err := aphotos.ResolveRegion(aphotos.Region(account.AmazonRegion)); err != nil {
+			return errors.New("amazon_region_invalid")
 		}
 		if (account.APIKeyFile == "" && account.apiKey == "") || (account.CookieFile == "" && account.cookie == "") {
 			return errors.New("credentials_required")

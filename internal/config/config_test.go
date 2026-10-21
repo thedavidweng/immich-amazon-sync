@@ -87,6 +87,21 @@ func TestInvalidVideoEnvironmentIsAnError(t *testing.T) {
 	}
 }
 
+func TestUnknownAmazonRegionIsAConfigurationError(t *testing.T) {
+	t.Setenv("IMMICH_URL", "http://immich:2283")
+	t.Setenv("IMMICH_API_KEY", "source-secret")
+	t.Setenv("AMAZON_REGION", "unknown-marketplace")
+	t.Setenv("AMAZON_COOKIE", "destination-secret")
+	t.Setenv("ALBUM_IDS", "album-one")
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(); err == nil || err.Error() != "amazon_region_invalid" {
+		t.Fatalf("unknown marketplace accepted: %v", err)
+	}
+}
+
 func TestAdminSecretFileConfiguration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(path, []byte(`{"admin_password_file":"/run/secrets/admin"}`), 0o600); err != nil {
