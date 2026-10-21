@@ -584,3 +584,75 @@ func TestLoginWithoutSessionDoesNotDrainAnUnfinishedBody(t *testing.T) {
 		t.Fatalf("missing preauth session: %d", status)
 	}
 }
+
+func TestDashboardShowsAccountIsolatedBacklogsAndReadyWork(t *testing.T) {
+	d := openDashboard(t)
+	csrf := d.login(t)
+	for _, id := range []string{"first", "second"} {
+		if status, body := d.post(t, "/accounts/save", d.accountForm(t, csrf, id)); status != http.StatusOK {
+			t.Fatalf("save %s: %d %s", id, status, body)
+		}
+	}
+	cfg, err := config.Load(d.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.WebhookSecretFile = filepath.Join(t.TempDir(), "webhook")
+	secret := strings.Repeat("w", 32)
+	if err := os.WriteFile(cfg.WebhookSecretFile, []byte(secret), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.run.Reload(cfg); err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequest("POST", d.server.URL+"/events/first",
+		strings.NewReader(`{"asset_id":"33333333-3333-4333-8333-333333333333"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+secret)
+	response, err := d.client.Do(request)
+	if status, body := page(t, response, err); status != http.StatusAccepted {
+		t.Fatalf("enqueue event: %d %s", status, body)
+	}
+	state, err := d.run.Status(t.Context(), "first")
+	if err != nil || state.EventsPending != 1 || !state.WorkRemaining {
+		t.Fatalf("queued event is not ready: %+v %v", state, err)
+	}
+	check := func(body, id, eventCount, work string) {
+		t.Helper()
+		section := regexp.MustCompile(`(?s)<section class="account" aria-label="Account ` + id + `">.*?</section>`).FindString(body)
+		for _, text := range []string{
+			`aria-label="Media queue"`,
+			`aria-label="Event, album and association backlog"`,
+			"<dt>Events pending</dt><dd>" + eventCount + "</dd>",
+			"<dt>Events failed</dt><dd>0</dd>",
+			"<dt>Albums pending</dt><dd>0</dd>",
+			"<dt>Albums failed</dt><dd>0</dd>",
+			"<dt>Albums unconfirmed</dt><dd>0</dd>",
+			"<dt>Associations pending</dt><dd>0</dd>",
+			"<dt>Associations failed</dt><dd>0</dd>",
+			"<dt>Associations unconfirmed</dt><dd>0</dd>",
+			"Incremental scan: idle.",
+			"Last incremental reconcile: not yet completed.",
+			"Work remaining: " + work + ".",
+		} {
+			if !strings.Contains(section, text) {
+				t.Errorf("account %s missing %q: %s", id, text, section)
+			}
+		}
+	}
+	status, body := d.get(t, "/")
+	if status != http.StatusOK {
+		t.Fatalf("overview: %d %s", status, body)
+	}
+	check(body, "first", "1", "ready to run")
+	check(body, "second", "0", "none ready to run")
+	status, body = d.post(t, "/accounts/first/pause", url.Values{"csrf": {csrf}})
+	if status != http.StatusOK {
+		t.Fatalf("pause: %d %s", status, body)
+	}
+	check(body, "first", "1", "none ready to run")
+	check(body, "second", "0", "none ready to run")
+}
