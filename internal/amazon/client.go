@@ -6,13 +6,78 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/thedavidweng/amazon-photos/pkg/aphotos"
 	"github.com/thedavidweng/immich-amazon-sync/internal/bridge"
 )
 
 type Client struct {
-	sdk *aphotos.Client
+	sdk metadataSDK
+}
+
+// Only metadata calls receive deadlines; the embedded SDK upload keeps its caller context.
+type metadataSDK struct{ *aphotos.Client }
+
+func metadataCall[T any](ctx context.Context, call func(context.Context) (T, error)) (T, error) {
+	metadataCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	result, err := call(metadataCtx)
+	if ctx.Err() != nil {
+		return result, ctx.Err()
+	}
+	if metadataCtx.Err() != nil {
+		return result, &bridge.Error{Code: bridge.Unavailable}
+	}
+	return result, err
+}
+
+func (s metadataSDK) GetRoot(ctx context.Context) (*aphotos.Node, error) {
+	return metadataCall(ctx, s.Client.GetRoot)
+}
+
+func (s metadataSDK) GetNode(ctx context.Context, id string) (*aphotos.Node, error) {
+	return metadataCall(ctx, func(ctx context.Context) (*aphotos.Node, error) {
+		return s.Client.GetNode(ctx, id)
+	})
+}
+
+func (s metadataSDK) Search(ctx context.Context, opts aphotos.SearchOptions) (*aphotos.Page[aphotos.Node], error) {
+	return metadataCall(ctx, func(ctx context.Context) (*aphotos.Page[aphotos.Node], error) {
+		return s.Client.Search(ctx, opts)
+	})
+}
+
+func (s metadataSDK) ListChildren(ctx context.Context, id string, opts aphotos.ChildrenOptions) (*aphotos.Page[aphotos.Node], error) {
+	return metadataCall(ctx, func(ctx context.Context) (*aphotos.Page[aphotos.Node], error) {
+		return s.Client.ListChildren(ctx, id, opts)
+	})
+}
+
+func (s metadataSDK) CreateAlbum(ctx context.Context, name string) (*aphotos.Node, error) {
+	return metadataCall(ctx, func(ctx context.Context) (*aphotos.Node, error) {
+		return s.Client.CreateAlbum(ctx, name)
+	})
+}
+
+func (s metadataSDK) RenameNode(ctx context.Context, id, name string) (*aphotos.Node, error) {
+	return metadataCall(ctx, func(ctx context.Context) (*aphotos.Node, error) {
+		return s.Client.RenameNode(ctx, id, name)
+	})
+}
+
+func (s metadataSDK) AddAlbumMembers(ctx context.Context, id string, members []string) error {
+	_, err := metadataCall(ctx, func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, s.Client.AddAlbumMembers(ctx, id, members)
+	})
+	return err
+}
+
+func (s metadataSDK) RemoveAlbumMembers(ctx context.Context, id string, members []string) error {
+	_, err := metadataCall(ctx, func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, s.Client.RemoveAlbumMembers(ctx, id, members)
+	})
+	return err
 }
 
 func New(region, cookie string) (*Client, error) {
@@ -46,7 +111,7 @@ func NewWithClient(sdk *aphotos.Client) (*Client, error) {
 	if sdk == nil {
 		return nil, &bridge.Error{Code: bridge.Protocol}
 	}
-	return &Client{sdk: sdk}, nil
+	return &Client{sdk: metadataSDK{sdk}}, nil
 }
 
 func (c *Client) Probe(ctx context.Context) (bridge.Capabilities, error) {
@@ -79,6 +144,10 @@ func classify(err error) error {
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return context.DeadlineExceeded
+	}
+	var remote *bridge.Error
+	if errors.As(err, &remote) {
+		return remote
 	}
 	var auth *aphotos.AuthenticationError
 	var permission *aphotos.PermissionError
