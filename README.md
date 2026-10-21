@@ -9,10 +9,9 @@ Amazon Photos has no official public API. This service uses an unofficial SDK;
 sessions expire and upstream behavior can change. Keep an independent backup.
 Offline tests and read-only diagnostics do not prove real cloud uploads.
 
-This initial delivery has a blocking SDK limitation: an empty Amazon lookup
-cannot establish that a file is absent, so new-content uploads stop as
-`upload_unconfirmed`. External-library originals and assets with unknown source
-checksum provenance are excluded. Review the
+Eligible external-library originals and assets with unknown source checksum
+provenance use MD5 and byte size computed from the staged original; their source
+checksum is not treated as a verified byte checksum. Review the
 [compatibility limits](docs/reference/compatibility.md) before deployment.
 
 Media is never deleted from Amazon by this service. Removing a source asset,

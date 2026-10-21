@@ -18,17 +18,25 @@ cursors imply a snapshot. Do not retry errors using a different request shape.
 v2 shared-album discovery is not a completeness guarantee.
 
 Pin the public aphotos SDK to revision
-`71d21d31336d24990145f93cd0c2b164fbb30941`, Go pseudo-version
-`v0.1.3-0.20261019091212-71d21d31336d`. The divergent published v0.1.3 tag masks
-some GetNode auth/rate failures with another lookup. Use the fixed SDK revision,
-not a duplicate HTTP client or local workaround. This pseudo-version orders
-below the tag; future dependency updates must preserve the semantic fix.
+`6a7dc3ea2ff7c971adbfae3ea72f7b33a9c0b501`, Go pseudo-version
+`v0.1.3-0.20261021004957-6a7dc3ea2ff7`, published through
+[SDK PR #13](https://github.com/thedavidweng/amazon-photos/pull/13).
+This is a public commit pin, not a released tag. It retains the GetNode
+auth/rate-error preservation missing from the divergent published v0.1.3 tag.
+Use the fixed SDK revision, not a duplicate HTTP client or local workaround.
+This pseudo-version orders below the tag; future dependency updates must
+preserve both error propagation and strict list validation.
 
-The pinned SDK still loses field-presence evidence when decoding list responses.
-Reject ambiguous/empty searches and empty member lists as unconfirmed, accepting
-that this blocks first uploads and empty-album reconciliation until a generic
-SDK validation fix is pinned. Do not implement a second Amazon HTTP parser in
-this service. Final non-2xx acceptance and incomplete transient Retry-After
+Strict SDK list decoding accepts `{"count":0,"data":[]}` and rejects missing or
+null fields, invalid counts and items without IDs. Valid empty searches and
+member lists no longer block first uploads or empty-album reconciliation.
+An incomplete enumeration still cannot prove absence: check `HasMore`, count
+and progress, not only a single page's `Complete` flag. An empty search after
+an uncertain upload still cannot prove noncommit because indexing may lag.
+Do not implement a second Amazon HTTP parser in this service.
+
+Read JSON requests now require a final HTTP 2xx status. Mutation/upload
+acceptance of some final non-2xx statuses below 400 and HTTP 503 Retry-After
 propagation remain upstream limitations.
 
 Source checksums are not universally byte checksums: external libraries can
@@ -38,10 +46,12 @@ bytes; only assert source byte-SHA1 equality when provenance is established.
 Do not silently waive a known byte mismatch or promise verification of an
 unknown/external source checksum.
 
-The initial adapter excludes nonempty external `libraryId` and missing
-`libraryId` provenance with explicit reasons. Only explicitly null `libraryId`
-establishes the uploaded-original byte-checksum contract. These exclusions are
-not successful backups.
+Otherwise eligible originals with nonempty external `libraryId` or missing
+`libraryId` provenance are backed up with an empty source SHA1 value and MD5/size
+computed from the actual staged bytes. Only explicitly null `libraryId`
+establishes the uploaded-original byte-checksum contract for source SHA1
+validation. Unknown provenance does not exclude an original; a known
+byte-checksum mismatch remains an error.
 
 Preserving an original preserves its embedded EXIF and any embedded motion
 bytes. It does not copy Immich-only timestamp edits: the SDK has no public
