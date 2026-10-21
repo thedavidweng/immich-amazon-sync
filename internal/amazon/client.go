@@ -42,9 +42,9 @@ func (s metadataSDK) GetNode(ctx context.Context, id string) (*aphotos.Node, err
 	})
 }
 
-func (s metadataSDK) Search(ctx context.Context, opts aphotos.SearchOptions) (*aphotos.Page[aphotos.Node], error) {
+func (s metadataSDK) QueryNodes(ctx context.Context, opts aphotos.NodeQueryOptions) (*aphotos.Page[aphotos.Node], error) {
 	return metadataCall(ctx, func(ctx context.Context) (*aphotos.Page[aphotos.Node], error) {
-		return s.Client.Search(ctx, opts)
+		return s.Client.QueryNodes(ctx, opts)
 	})
 }
 
