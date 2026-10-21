@@ -1,0 +1,35 @@
+services:
+  sync:
+    build: .
+    image: immich-amazon-sync:local
+    command: ["serve", "--config", "/etc/immich-amazon-sync/config.json"]
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - data:/data
+      - type: bind
+        source: ./config.json
+        target: /etc/immich-amazon-sync/config.json
+        read_only: true
+        bind:
+          create_host_path: false
+    secrets:
+      - immich_api_key
+      - amazon_cookie
+
+volumes:
+  data:
+
+secrets:
+  immich_api_key:
+    file: ./secrets/immich-api-key
+  amazon_cookie:
+    file: ./secrets/amazon-cookie
