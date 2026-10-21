@@ -97,7 +97,7 @@ func sourceRead(w http.ResponseWriter, r *http.Request) {
 func TestDoctorProbesReadOnlyWithoutClaimingWritePermissions(t *testing.T) {
 	amazonReads(t)
 	cfg := remoteConfig(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && !(r.Method == http.MethodPost && r.URL.Path == "/api/search/metadata") {
+		if r.Method != http.MethodGet && (r.Method != http.MethodPost || r.URL.Path != "/api/search/metadata") {
 			t.Errorf("doctor made a source mutation: %s %s", r.Method, r.URL.Path)
 		}
 		sourceRead(w, r)
@@ -144,7 +144,9 @@ func TestAuthPauseRecoversAfterSecretRotationAndRestartButManualPauseStays(t *te
 	if service.ExitCode(err) != 3 || report.Accounts[0].Status.PauseReason != "auth" {
 		t.Fatalf("expected auth pause: %+v %v", report, err)
 	}
-	s.Once(t.Context(), "")
+	if _, err := s.Once(t.Context(), ""); service.ExitCode(err) != 3 {
+		t.Fatalf("unchanged invalid credentials should remain paused: %v", err)
+	}
 	if probes.Load() != 1 {
 		t.Fatal("unchanged invalid credentials were probed again")
 	}
@@ -164,7 +166,9 @@ func TestAuthPauseRecoversAfterSecretRotationAndRestartButManualPauseStays(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.Once(t.Context(), "")
+	if _, err := s.Once(t.Context(), ""); service.Code(err) != "account_paused" {
+		t.Fatalf("manual pause should survive restart: %v", err)
+	}
 	if probes.Load() != before {
 		t.Fatal("restart resumed a manual pause")
 	}
@@ -172,7 +176,9 @@ func TestAuthPauseRecoversAfterSecretRotationAndRestartButManualPauseStays(t *te
 		t.Fatal(err)
 	}
 	blocked.Store(true)
-	s.Once(t.Context(), "")
+	if _, err := s.Once(t.Context(), ""); service.ExitCode(err) != 3 {
+		t.Fatalf("invalid credentials should pause again: %v", err)
+	}
 	s.Close()
 	if err := os.WriteFile(cfg.Accounts[0].CookieFile, []byte("session-id=restart-rotated; ubid-main=test; at-main=test"), 0600); err != nil {
 		t.Fatal(err)

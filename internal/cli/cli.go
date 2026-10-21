@@ -74,10 +74,20 @@ func Execute(ctx context.Context, args []string, out, errOut io.Writer, version 
 		}
 		return cfg, err
 	}
-	root.AddCommand(&cobra.Command{
+	var setup bool
+	serve := &cobra.Command{
 		Use: "serve", Short: "Run scheduled account backups", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg, err := load()
+			var cfg config.Config
+			var err error
+			if setup {
+				if accountID != "" {
+					return operational(errors.New("invalid_options"))
+				}
+				cfg, err = service.SetupConfig(configPath)
+			} else {
+				cfg, err = load()
+			}
 			if err != nil {
 				return operational(err)
 			}
@@ -85,10 +95,19 @@ func Execute(ctx context.Context, args []string, out, errOut io.Writer, version 
 			if err != nil {
 				return operational(err)
 			}
+			writablePath := configPath
+			if accountID != "" {
+				writablePath = ""
+			}
+			if err := runtime.EnableAdmin(writablePath); err != nil {
+				return operational(errors.Join(err, runtime.Close()))
+			}
 			runErr := runtime.Run(cmd.Context())
 			return operational(errors.Join(runErr, runtime.Close()))
 		},
-	})
+	}
+	serve.Flags().BoolVar(&setup, "setup", false, "Bootstrap dashboard with mounted admin secret and a new explicit --config path")
+	root.AddCommand(serve)
 	root.AddCommand(&cobra.Command{
 		Use: "doctor", Short: "Read-only connection, scope and local storage diagnosis", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -107,7 +126,7 @@ func Execute(ctx context.Context, args []string, out, errOut io.Writer, version 
 	})
 	for name, child := range map[string]string{"sync": "once", "albums": "list"} {
 		parent := &cobra.Command{Use: name, RunE: func(*cobra.Command, []string) error { return usage }}
-		run := func(*cobra.Command, []string) error { return usage }
+		var run func(*cobra.Command, []string) error
 		if name == "albums" {
 			run = func(cmd *cobra.Command, _ []string) error { return listAlbums(cmd, configPath, accountID, asJSON) }
 		} else {
