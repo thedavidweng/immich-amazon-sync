@@ -103,6 +103,37 @@ func (d dashboard) login(t *testing.T) string {
 	return token(t, body)
 }
 
+func TestDashboardReferrerPolicyPreservesSameOriginForms(t *testing.T) {
+	d := openDashboard(t)
+	response, err := d.client.Get(d.server.URL + "/login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := response.Header.Get("Referrer-Policy")
+	page(t, response, nil)
+	if policy != "same-origin" {
+		t.Fatalf("Referrer-Policy=%q, want same-origin for native form POST origins", policy)
+	}
+}
+
+func TestDashboardAcceptsSameOriginNavigationForms(t *testing.T) {
+	d := openDashboard(t)
+	d.client.Transport = transportFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodPost {
+			r.Header.Set("Origin", d.server.URL)
+			r.Header.Set("Sec-Fetch-Site", "same-origin")
+			r.Header.Set("Sec-Fetch-Mode", "navigate")
+			r.Header.Set("Sec-Fetch-Dest", "document")
+		}
+		return http.DefaultTransport.RoundTrip(r)
+	})
+	csrf := d.login(t)
+	status, body := d.post(t, "/logout", url.Values{"csrf": {csrf}})
+	if status != http.StatusOK || !strings.Contains(body, "Sign in") {
+		t.Fatalf("same-origin logout: %d %s", status, body)
+	}
+}
+
 func TestDashboardRequiresSessionAndCSRFAndRevokesOnLogout(t *testing.T) {
 	d := openDashboard(t)
 	response, err := http.Get(d.server.URL + "/")
@@ -336,7 +367,7 @@ func TestSessionRotationCookiePolicyCrossOriginAndCredentialRotation(t *testing.
 		t.Fatal("preauth session became an authenticated session")
 	}
 	form := url.Values{"csrf": {token(t, body)}}
-	for _, origin := range []string{"https://different.invalid", "https://" + u.Host} {
+	for _, origin := range []string{"null", "https://different.invalid", "https://" + u.Host} {
 		req, _ := http.NewRequest("POST", d.server.URL+"/logout", strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Origin", origin)
