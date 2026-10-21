@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/md5"
 	"crypto/sha1"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
@@ -36,42 +37,18 @@ type job struct {
 	next     int64
 }
 
-func (e *Engine) drain(ctx context.Context) error {
-	rows, err := e.store.db.QueryContext(ctx, `SELECT id,metadata,state,stage_name,md5,sha1,size,node_id,attempts FROM assets a
-		WHERE account_id=? AND state IN ('pending','staged','unconfirmed','failed') AND next_at<=unixepoch('subsec')*1000 AND attempts<5
-		AND error_code!='source_changed'
-		AND EXISTS(SELECT 1 FROM scope_assets m JOIN rules r ON r.account_id=m.account_id AND r.scope=m.scope
-			WHERE m.account_id=a.account_id AND m.asset_id=a.id AND r.active=1 AND m.generation=r.generation AND r.error_code='')
-		ORDER BY priority DESC,id LIMIT 64`, e.opts.AccountID)
-	if err != nil {
-		return errors.New("storage_unavailable")
-	}
-	var jobs []job
-	for rows.Next() {
-		var j job
-		var metadata string
-		if err = rows.Scan(&j.id, &metadata, &j.state, &j.stage, &j.md5, &j.sha1, &j.size, &j.node, &j.attempts); err != nil {
-			break
-		}
-		if err = json.Unmarshal([]byte(metadata), &j.asset); err != nil {
-			break
-		}
-		jobs = append(jobs, j)
-	}
-	err = errors.Join(err, rows.Err(), rows.Close())
-	if err != nil {
-		return errors.New("storage_unavailable")
-	}
-	queue := make(chan job, len(jobs))
-	results := make(chan error, len(jobs))
-	for _, j := range jobs {
-		queue <- j
-	}
-	close(queue)
+const eligibleSQL = `(EXISTS(SELECT 1 FROM scope_assets m JOIN rules r ON r.account_id=m.account_id AND r.scope=m.scope
+	WHERE m.account_id=a.account_id AND m.asset_id=a.id AND r.active=1 AND m.generation=r.generation AND r.error_code='')
+	OR EXISTS(SELECT 1 FROM signals m JOIN rules r ON r.account_id=m.account_id AND r.scope=m.scope
+	WHERE m.account_id=a.account_id AND m.asset_id=a.id AND r.active=1 AND m.generation=r.generation AND r.error_code=''))`
+
+func (e *Engine) drain(ctx context.Context, attempted map[string]bool) error {
+	var selectMu sync.Mutex
+	results := make(chan error, 64+e.opts.Workers)
 	var workers sync.WaitGroup
-	for i := 0; i < min(e.opts.Workers, e.opts.MaxStagingFiles); i++ {
+	for range min(e.opts.Workers, e.opts.MaxStagingFiles) {
 		workers.Go(func() {
-			for j := range queue {
+			for {
 				if ctx.Err() != nil {
 					return
 				}
@@ -79,7 +56,20 @@ func (e *Engine) drain(ctx context.Context) error {
 				if err != nil || st.Paused {
 					return
 				}
-				results <- e.transfer(ctx, &j)
+				selectMu.Lock()
+				err = e.processHints(ctx, 1)
+				var j *job
+				if err == nil && len(attempted) < 64 {
+					j, err = e.nextJob(ctx, attempted)
+				}
+				selectMu.Unlock()
+				if err != nil {
+					results <- err
+				}
+				if j == nil {
+					return
+				}
+				results <- e.transfer(ctx, j)
 			}
 		})
 	}
@@ -93,12 +83,44 @@ func (e *Engine) drain(ctx context.Context) error {
 	return nil
 }
 
+func (e *Engine) nextJob(ctx context.Context, attempted map[string]bool) (*job, error) {
+	rows, err := e.store.db.QueryContext(ctx, `SELECT id,metadata,state,stage_name,md5,sha1,size,node_id,attempts FROM assets a
+		WHERE account_id=? AND state IN ('pending','staged','unconfirmed','failed') AND next_at<=unixepoch('subsec')*1000 AND attempts<5
+		AND error_code!='source_changed'
+		AND `+eligibleSQL+` ORDER BY priority DESC,id LIMIT 64`, e.opts.AccountID)
+	if err != nil {
+		return nil, errors.New("storage_unavailable")
+	}
+	var selected *job
+	for rows.Next() {
+		var j job
+		var metadata string
+		if err = rows.Scan(&j.id, &metadata, &j.state, &j.stage, &j.md5, &j.sha1, &j.size, &j.node, &j.attempts); err != nil {
+			break
+		}
+		if err = json.Unmarshal([]byte(metadata), &j.asset); err != nil {
+			break
+		}
+		if !attempted[j.id] {
+			attempted[j.id] = true
+			selected = &j
+			break
+		}
+	}
+	err = errors.Join(err, rows.Err(), rows.Close())
+	if err != nil {
+		return nil, errors.New("storage_unavailable")
+	}
+	return selected, nil
+}
+
 func safeName(name string) bool {
 	return name != "" && name != "." && name != ".." && len(name) <= 255 && utf8.ValidString(name) &&
 		!strings.ContainsAny(name, `/\:`) && !strings.ContainsFunc(name, unicode.IsControl)
 }
 
 func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
+	started := time.Now()
 	var unlock func()
 	defer func() {
 		// Persist the outcome before allowing another worker to use this content.
@@ -108,6 +130,7 @@ func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
 		if unlock != nil {
 			unlock()
 		}
+		e.logJob(context.WithoutCancel(ctx), j, started, result)
 	}()
 	if j.state != "unconfirmed" {
 		if j.asset.ExcludedReason != "" {
@@ -117,7 +140,7 @@ func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
 			default:
 				code = "source_excluded"
 			}
-			return e.setState(ctx, j, "skipped", code)
+			return e.skip(ctx, j, code)
 		}
 		if !safeName(j.asset.Name) {
 			return errors.New("unsafe_filename")
@@ -132,13 +155,13 @@ func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
 			}
 		}
 		if j.asset.LivePhotoVideo {
-			return e.setState(ctx, j, "skipped", "live_photo_companion")
+			return e.skip(ctx, j, "live_photo_companion")
 		}
 		if kind == "VIDEO" && !e.opts.IncludeVideos {
-			return e.setState(ctx, j, "skipped", "video_disabled")
+			return e.skip(ctx, j, "video_disabled")
 		}
 		if kind != "IMAGE" && kind != "VIDEO" {
-			return e.setState(ctx, j, "skipped", "unsupported_type")
+			return e.skip(ctx, j, "unsupported_type")
 		}
 		if j.asset.MIME == "" {
 			j.asset.MIME = mime.TypeByExtension(filepath.Ext(j.asset.Name))
@@ -255,6 +278,40 @@ func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
 	return e.confirm(ctx, j)
 }
 
+func anonymousID(id string) string {
+	sum := sha256.Sum256([]byte(id))
+	return hex.EncodeToString(sum[:8])
+}
+
+func (e *Engine) logJob(ctx context.Context, j *job, started time.Time, result error) {
+	if e.opts.Logger == nil {
+		return
+	}
+	scope := ""
+	_ = e.store.db.QueryRowContext(ctx, `SELECT min(scope) FROM (
+		SELECT m.scope FROM scope_assets m JOIN rules r ON r.account_id=m.account_id AND r.scope=m.scope
+		WHERE m.account_id=? AND m.asset_id=? AND r.active=1 AND m.generation=r.generation
+		UNION SELECT m.scope FROM signals m JOIN rules r ON r.account_id=m.account_id AND r.scope=m.scope
+		WHERE m.account_id=? AND m.asset_id=? AND r.active=1 AND m.generation=r.generation)`,
+		e.opts.AccountID, j.id, e.opts.AccountID, j.id).Scan(&scope)
+	st, _ := e.Status(ctx)
+	code := "ok"
+	if result != nil {
+		code = errorCode(result)
+	}
+	stage := j.state
+	if result != nil {
+		stage = "failed"
+		if j.state == "unconfirmed" || j.state == "running" {
+			stage = "unconfirmed"
+		}
+	}
+	e.opts.Logger.InfoContext(ctx, "job_progress", "account", anonymousID(e.opts.AccountID),
+		"rule", anonymousID(e.opts.AccountID+"\x00"+scope),
+		"job_id", anonymousID(e.opts.AccountID+"\x00"+j.id), "stage", stage,
+		"counts", st, "elapsed_ms", time.Since(started).Milliseconds(), "error_code", code, "last_success", st.LastSuccess)
+}
+
 type contentLock struct {
 	mu   sync.Mutex
 	refs int
@@ -306,6 +363,15 @@ func (e *Engine) confirm(ctx context.Context, j *job) error {
 	return e.store.removeStage(stage)
 }
 
+func (e *Engine) skip(ctx context.Context, j *job, code string) error {
+	stage := j.stage
+	j.stage, j.md5, j.sha1, j.size = "", "", "", 0
+	if err := e.setState(ctx, j, "skipped", code); err != nil {
+		return err
+	}
+	return e.store.removeStage(stage)
+}
+
 func (e *Engine) fail(ctx context.Context, j job, err error) error {
 	ctx = context.WithoutCancel(ctx)
 	code := errorCode(err)
@@ -330,7 +396,7 @@ func (e *Engine) fail(ctx context.Context, j job, err error) error {
 	return errors.New(code)
 }
 
-func (e *Engine) stage(ctx context.Context, j *job) error {
+func (e *Engine) stage(ctx context.Context, j *job) (result error) {
 	dir := filepath.Join(e.store.dir, "staging")
 	e.store.staging.Lock()
 	if e.store.stageFiles >= e.opts.MaxStagingFiles || j.asset.Size > e.opts.MaxStagingBytes-e.store.stageBytes {
@@ -349,7 +415,7 @@ func (e *Engine) stage(ctx context.Context, j *job) error {
 	defer func() {
 		f.Close()
 		if j.stage == "" {
-			e.store.removeStage(filepath.Base(path))
+			result = errors.Join(result, e.store.removeStage(filepath.Base(path)))
 		}
 	}()
 	r, err := readRetry(ctx, func() (io.ReadCloser, error) { return e.source.Original(ctx, j.id) })

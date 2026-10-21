@@ -2,7 +2,9 @@ package syncer
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -19,22 +21,35 @@ type Options struct {
 	MaxStagingBytes int64
 	MaxStagingFiles int
 	BytesPerSecond  int64
+	Logger          *slog.Logger
 }
 
 type Status struct {
-	Pending     int            `json:"pending"`
-	Staged      int            `json:"staged"`
-	Running     int            `json:"running"`
-	Unconfirmed int            `json:"unconfirmed"`
-	Confirmed   int            `json:"confirmed"`
-	Failed      int            `json:"failed"`
-	Blocked     int            `json:"blocked"`
-	Skipped     int            `json:"skipped"`
-	Scanning    int            `json:"scanning"`
-	Paused      bool           `json:"paused"`
-	PauseReason string         `json:"pause_reason,omitempty"`
-	Errors      map[string]int `json:"errors"`
-	LastSuccess *time.Time     `json:"last_success"`
+	Pending                 int            `json:"pending"`
+	Staged                  int            `json:"staged"`
+	Running                 int            `json:"running"`
+	Unconfirmed             int            `json:"unconfirmed"`
+	Confirmed               int            `json:"confirmed"`
+	Failed                  int            `json:"failed"`
+	Blocked                 int            `json:"blocked"`
+	Skipped                 int            `json:"skipped"`
+	Scanning                int            `json:"scanning"`
+	Paused                  bool           `json:"paused"`
+	PauseReason             string         `json:"pause_reason,omitempty"`
+	Errors                  map[string]int `json:"errors"`
+	LastSuccess             *time.Time     `json:"last_success"`
+	AlbumsPending           int            `json:"albums_pending"`
+	AlbumsUnconfirmed       int            `json:"albums_unconfirmed"`
+	AlbumsFailed            int            `json:"albums_failed"`
+	AssociationsPending     int            `json:"associations_pending"`
+	AssociationsFailed      int            `json:"associations_failed"`
+	AssociationsUnconfirmed int            `json:"associations_unconfirmed"`
+	EventsPending           int            `json:"events_pending"`
+	EventsFailed            int            `json:"events_failed"`
+	IncrementalScanning     bool           `json:"incremental_scanning"`
+	LastIncremental         *time.Time     `json:"last_incremental"`
+	WorkRemaining           bool           `json:"work_remaining"`
+	NextAttempt             *time.Time     `json:"next_attempt,omitempty"`
 }
 
 type Engine struct {
@@ -51,6 +66,7 @@ type Engine struct {
 func New(store *Store, source bridge.Source, target bridge.Target, opts Options) (*Engine, error) {
 	if store == nil || source == nil || target == nil || opts.AccountID == "" ||
 		(!opts.Library && len(opts.AlbumIDs) == 0) || (opts.Library && len(opts.AlbumIDs) != 0) ||
+		(opts.Library && opts.MirrorAlbums) ||
 		opts.Workers < 0 || opts.Workers > 32 || opts.MaxStagingBytes < 0 ||
 		opts.MaxStagingFiles < 0 || opts.BytesPerSecond < 0 {
 		return nil, errors.New("invalid_options")
@@ -94,11 +110,36 @@ func (e *Engine) Retry(ctx context.Context) error {
 	if err != nil {
 		return errors.New("storage_unavailable")
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.ExecContext(ctx, `UPDATE rules SET generation=generation+1,cursor='',expected=-1,
+		started_at=?,attempts=0,next_at=0 WHERE account_id=? AND complete=0 AND error_code!=''`,
+		time.Now().UTC().Format(time.RFC3339Nano), e.opts.AccountID)
+	if err == nil {
+		_, err = tx.ExecContext(ctx, `DELETE FROM scan_cursors WHERE account_id=? AND scope IN
+			(SELECT scope FROM rules WHERE account_id=? AND complete=0 AND error_code!='')`, e.opts.AccountID, e.opts.AccountID)
+	}
+	if err != nil {
+		return errors.New("storage_unavailable")
+	}
 	_, err = tx.ExecContext(ctx, `UPDATE assets SET state=CASE WHEN state='unconfirmed' THEN state
 		WHEN stage_name!='' THEN 'staged' ELSE 'pending' END,attempts=0,next_at=0,
 		error_code=CASE WHEN state='unconfirmed' THEN error_code ELSE '' END
 		WHERE account_id=? AND state IN ('failed','blocked','unconfirmed') AND error_code!='source_changed'`, e.opts.AccountID)
+	if err == nil {
+		_, err = tx.ExecContext(ctx, `UPDATE hints SET attempts=0,next_at=0,error_code='' WHERE account_id=?`, e.opts.AccountID)
+	}
+	if err == nil {
+		_, err = tx.ExecContext(ctx, `UPDATE albums SET attempts=0,next_at=0,error_code='' WHERE account_id=?`, e.opts.AccountID)
+	}
+	if err == nil {
+		_, err = tx.ExecContext(ctx, `UPDATE memberships SET attempts=0,next_at=0,error_code='' WHERE account_id=?`, e.opts.AccountID)
+	}
+	if err == nil {
+		_, err = tx.ExecContext(ctx, `UPDATE rules SET attempts=0,next_at=0,error_code='' WHERE account_id=?`, e.opts.AccountID)
+	}
+	if err == nil {
+		_, err = tx.ExecContext(ctx, `UPDATE incremental SET error_code='' WHERE account_id=?`, e.opts.AccountID)
+	}
 	if err == nil {
 		_, err = tx.ExecContext(ctx, `UPDATE accounts SET pause_reason=CASE WHEN pause_reason='auth' THEN '' ELSE pause_reason END,
 			error_code='' WHERE id=?`, e.opts.AccountID)
@@ -174,10 +215,118 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		return st, errors.New("storage_unavailable")
 	}
+	if e.opts.MirrorAlbums {
+		err = e.store.db.QueryRowContext(ctx, `SELECT
+			coalesce(sum(a.target_id IS NULL OR a.target_id='' OR a.complete_generation!=r.generation OR a.applied_name!=r.name),0),
+			coalesce(sum(a.state IN ('creating','unconfirmed')),0),
+			coalesce(sum(a.error_code!=''),0)
+			FROM rules r LEFT JOIN albums a ON r.account_id=a.account_id AND r.scope=a.scope
+			WHERE r.account_id=? AND r.active=1 AND r.album_id!=''`, e.opts.AccountID).
+			Scan(&st.AlbumsPending, &st.AlbumsUnconfirmed, &st.AlbumsFailed)
+		if err != nil {
+			return st, errors.New("storage_unavailable")
+		}
+		err = e.store.db.QueryRowContext(ctx, `SELECT coalesce(sum(m.state NOT IN ('present','absent')),0),
+			coalesce(sum(m.state IN ('unconfirmed_add','unconfirmed_remove')),0),
+			coalesce(sum(m.error_code!=''),0)
+			FROM memberships m JOIN rules r ON r.account_id=m.account_id AND r.scope=m.scope
+			WHERE m.account_id=? AND r.active=1`, e.opts.AccountID).
+			Scan(&st.AssociationsPending, &st.AssociationsUnconfirmed, &st.AssociationsFailed)
+		if err != nil {
+			return st, errors.New("storage_unavailable")
+		}
+	}
+	if err = e.store.db.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(error_code!=''),0) FROM hints WHERE account_id=?`,
+		e.opts.AccountID).Scan(&st.EventsPending, &st.EventsFailed); err != nil {
+		return st, errors.New("storage_unavailable")
+	}
+	var watermark string
+	err = e.store.db.QueryRowContext(ctx, "SELECT active,watermark FROM incremental WHERE account_id=?", e.opts.AccountID).
+		Scan(&st.IncrementalScanning, &watermark)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return st, errors.New("storage_unavailable")
+	}
+	if watermark != "" {
+		t, err := time.Parse(time.RFC3339Nano, watermark)
+		if err != nil {
+			return st, errors.New("storage_unavailable")
+		}
+		st.LastIncremental = &t
+	}
+	rows, err = e.store.db.QueryContext(ctx, `SELECT error_code,count(*) FROM (
+		SELECT error_code FROM rules WHERE account_id=? AND active=1
+		UNION ALL SELECT error_code FROM hints WHERE account_id=?
+		UNION ALL SELECT error_code FROM incremental WHERE account_id=? AND ?
+		UNION ALL SELECT a.error_code FROM albums a JOIN rules r ON r.account_id=a.account_id AND r.scope=a.scope
+			WHERE a.account_id=? AND r.active=1 AND ?
+		UNION ALL SELECT m.error_code FROM memberships m JOIN rules r ON r.account_id=m.account_id AND r.scope=m.scope
+			WHERE m.account_id=? AND r.active=1 AND ?) WHERE error_code!='' GROUP BY error_code`,
+		e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.Library,
+		e.opts.AccountID, e.opts.MirrorAlbums, e.opts.AccountID, e.opts.MirrorAlbums)
+	if err != nil {
+		return st, errors.New("storage_unavailable")
+	}
+	for rows.Next() {
+		var code string
+		var count int
+		if err = rows.Scan(&code, &count); err != nil {
+			break
+		}
+		st.Errors[code] += count
+	}
+	if err = errors.Join(err, rows.Err(), rows.Close()); err != nil {
+		return st, errors.New("storage_unavailable")
+	}
+	var due int
+	err = e.store.db.QueryRowContext(ctx, `SELECT
+		(SELECT count(*) FROM rules WHERE account_id=? AND active=1 AND complete=0 AND (error_code='' OR (attempts<5 AND next_at<=unixepoch('subsec')*1000)))+
+		(SELECT count(*) FROM hints WHERE account_id=? AND attempts<5 AND next_at<=unixepoch('subsec')*1000)+
+		(SELECT count(*) FROM incremental WHERE account_id=? AND active=1 AND error_code='')+
+		(SELECT count(*) FROM assets a WHERE account_id=? AND state IN ('pending','staged','failed','unconfirmed')
+		 AND attempts<5 AND next_at<=unixepoch('subsec')*1000 AND error_code!='source_changed' AND `+eligibleSQL+`)+
+		(SELECT count(*) FROM albums a JOIN rules r ON r.account_id=a.account_id AND r.scope=a.scope
+		 WHERE a.account_id=? AND ? AND r.active=1 AND r.complete=1 AND a.state NOT IN ('creating','unconfirmed')
+		 AND a.error_code!='' AND a.attempts<5 AND a.next_at<=unixepoch('subsec')*1000)`,
+		e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.MirrorAlbums).Scan(&due)
+	if err != nil {
+		return st, errors.New("storage_unavailable")
+	}
+	st.WorkRemaining = due > 0 && !st.Paused
+	var next *int64
+	err = e.store.db.QueryRowContext(ctx, `SELECT min(next_at) FROM (
+		SELECT next_at FROM assets a WHERE account_id=? AND state IN ('failed','unconfirmed')
+			AND attempts<5 AND error_code!='source_changed' AND `+eligibleSQL+`
+		UNION ALL SELECT next_at FROM hints WHERE account_id=? AND attempts<5
+		UNION ALL SELECT next_at FROM rules WHERE account_id=? AND active=1 AND complete=0 AND attempts<5
+		UNION ALL SELECT a.next_at FROM albums a JOIN rules r ON r.account_id=a.account_id AND r.scope=a.scope
+			WHERE a.account_id=? AND ? AND r.active=1 AND a.attempts<5 AND a.error_code!=''
+			AND a.state NOT IN ('creating','unconfirmed')) WHERE next_at>unixepoch('subsec')*1000`,
+		e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.MirrorAlbums).Scan(&next)
+	if err != nil {
+		return st, errors.New("storage_unavailable")
+	}
+	if next != nil && !st.Paused {
+		t := time.UnixMilli(*next)
+		st.NextAttempt = &t
+	}
 	return st, nil
 }
 
 func (e *Engine) Once(ctx context.Context) error {
+	return e.run(ctx, true, false)
+}
+
+// Step continues durable work without starting another completed full scan.
+func (e *Engine) Step(ctx context.Context) error {
+	return e.run(ctx, false, false)
+}
+
+// Reconcile starts an overlapping library delta and performs daily full verification.
+func (e *Engine) Reconcile(ctx context.Context) error {
+	return e.run(ctx, false, true)
+}
+
+func (e *Engine) run(ctx context.Context, full, incremental bool) error {
 	run, _ := e.store.runs.LoadOrStore(e.opts.AccountID, &sync.Mutex{})
 	if !run.(*sync.Mutex).TryLock() {
 		return errors.New("engine_busy")
@@ -193,14 +342,40 @@ func (e *Engine) Once(ctx context.Context) error {
 	if err = e.identify(ctx); err != nil {
 		return e.accountError(ctx, err)
 	}
-	if err = e.configureRules(ctx); err != nil {
+	if err = e.configureRules(ctx, full); err != nil {
 		return errors.New("storage_unavailable")
 	}
-	// A new invocation retries a failed page, retaining its last committed cursor.
-	if _, err = e.store.db.ExecContext(ctx, "UPDATE rules SET error_code='' WHERE account_id=?", e.opts.AccountID); err != nil {
+	// Explicit runs retry immediately; continuations honor persisted scan backoff.
+	if _, err = e.store.db.ExecContext(ctx, `UPDATE rules SET error_code='' WHERE account_id=?
+		AND (? OR (attempts<5 AND next_at<=unixepoch('subsec')*1000))`, e.opts.AccountID, full); err != nil {
 		return errors.New("storage_unavailable")
 	}
-	workErr := e.drain(ctx)
+	if incremental {
+		var due int
+		if err = e.store.db.QueryRowContext(ctx, `SELECT count(*) FROM rules WHERE account_id=? AND active=1
+			AND complete=1 AND completed_at<?`, e.opts.AccountID, time.Now().Add(-24*time.Hour).UTC().Format(time.RFC3339Nano)).
+			Scan(&due); err != nil {
+			return errors.New("storage_unavailable")
+		}
+		if !e.opts.Library || due > 0 {
+			if err := e.configureRules(ctx, true); err != nil {
+				return errors.New("storage_unavailable")
+			}
+		}
+		if e.opts.Library {
+			if err := e.beginIncremental(ctx); err != nil {
+				return err
+			}
+		}
+	}
+	if err := e.validateScopes(ctx); err != nil {
+		return e.accountError(ctx, err)
+	}
+	workErr := e.processHints(ctx, 8)
+	attempted := make(map[string]bool)
+	if err := e.drain(ctx, attempted); err != nil {
+		workErr = err
+	}
 	for page := 0; page < 8; page++ {
 		if ctx.Err() != nil {
 			return errors.New("canceled")
@@ -212,16 +387,22 @@ func (e *Engine) Once(ctx context.Context) error {
 		if st.Paused {
 			return errors.New("account_paused")
 		}
+		if err := e.incrementalPage(ctx); err != nil {
+			return e.accountError(ctx, err)
+		}
 		more, scanErr := e.scanPage(ctx)
 		if scanErr != nil {
 			return e.accountError(ctx, scanErr)
 		}
-		if !more {
-			break
-		}
-		if err := e.drain(ctx); err != nil {
+		if err := e.drain(ctx, attempted); err != nil {
 			workErr = err
 		}
+		if !more && !st.IncrementalScanning {
+			break
+		}
+	}
+	if err := e.mirror(ctx); err != nil {
+		workErr = err
 	}
 	if err := e.finishScan(ctx); err != nil {
 		return errors.New("storage_unavailable")
@@ -284,7 +465,8 @@ func errorCode(err error) string {
 	case bridge.Authentication, bridge.Permission, bridge.RateLimit, bridge.Unavailable,
 		bridge.NotFound, bridge.Conflict, bridge.Unconfirmed, bridge.Protocol, bridge.Unsupported,
 		"identity_unavailable", "identity_mismatch", "storage_unavailable", "staging_quota",
-		"checksum_mismatch", "size_mismatch", "staging_corrupt", "unsafe_filename", "source_changed", "canceled":
+		"checksum_mismatch", "size_mismatch", "staging_corrupt", "unsafe_filename", "source_changed", "canceled",
+		"invalid_event", "album_unconfirmed", "membership_guard":
 		return code
 	}
 	return "remote_error"

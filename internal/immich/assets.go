@@ -141,7 +141,8 @@ func (a assetResponse) asset() (bridge.Asset, error) {
 }
 
 func (c *Client) Assets(ctx context.Context, scope bridge.Scope, cursor string) (bridge.Page, error) {
-	if scope.Library == (scope.AlbumID != "") || (scope.AlbumID != "" && !uuid.MatchString(scope.AlbumID)) {
+	if scope.Library == (scope.AlbumID != "") || (scope.AlbumID != "" && !uuid.MatchString(scope.AlbumID)) ||
+		(scope.AssetID != "" && !uuid.MatchString(scope.AssetID)) {
 		return bridge.Page{}, &bridge.Error{Code: bridge.Protocol}
 	}
 	version, err := c.Version(ctx)
@@ -183,6 +184,9 @@ func (c *Client) assetsPage(ctx context.Context, scope bridge.Scope, cursor, vis
 	}
 	if scope.AlbumID != "" {
 		payload["albumIds"] = []string{scope.AlbumID}
+	}
+	if scope.AssetID != "" {
+		payload["id"] = scope.AssetID
 	}
 	if !scope.UpdatedAfter.IsZero() {
 		payload["updatedAfter"] = scope.UpdatedAfter.UTC().Format(time.RFC3339Nano)
