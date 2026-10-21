@@ -18,11 +18,12 @@ type Asset struct {
 	Name           string    `json:"name"`
 	MIME           string    `json:"mime"`
 	Kind           string    `json:"kind"`
-	Size           int64     `json:"size"`
-	SHA1           string    `json:"sha1"`
+	Size           int64     `json:"size"` // -1 means the source did not report a byte size.
+	SHA1           string    `json:"sha1"` // Base64 content SHA-1; empty when provenance is unknown.
 	TakenAt        time.Time `json:"taken_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 	LivePhotoVideo bool      `json:"live_photo_video"`
+	ExcludedReason string    `json:"excluded_reason,omitempty"`
 }
 
 type Scope struct {
@@ -52,7 +53,7 @@ type Content struct {
 	Size     int64
 	MD5      string
 	TakenAt  time.Time
-	ParentID string
+	ParentID string // Empty identifies the authenticated root.
 }
 
 type Node struct {
@@ -60,7 +61,7 @@ type Node struct {
 	Name     string
 	MD5      string
 	Size     int64
-	ParentID string
+	ParentID string // Empty identifies the authenticated root, verified by the adapter.
 }
 
 type Capabilities struct {
