@@ -22,7 +22,7 @@ issue. Stop the daemon before running another CLI process on the same volume.
 | `invalid_event` | Check UUIDv4, native type/trigger, top-level fields and 64 KiB body limit; see the event contract. |
 | `webhook_unauthorized` | Check the configured account ID and bearer header against the mounted shared secret. |
 | `webhook_unavailable` | Check the secret path/readability, minimum 32 trimmed bytes and maximum 4 KiB file size. |
-| `source_changed` | Source metadata no longer agrees with recorded content evidence. Preserve confirmed/uncertain mappings; retry does not clear this conflict. |
+| `source_changed` | Source content evidence (SHA-1, size, or filesystem modification time) no longer agrees with the recorded original. Preserve confirmed/uncertain mappings; retry does not clear this conflict. A metadata-only Immich edit does not trigger it. |
 | Local storage/lock failure | Stop the competing writer, fix volume ownership/capacity, and retry. Never remove a live process's lock. |
 
 For `unconfirmed`, the write may have committed before its response was lost.

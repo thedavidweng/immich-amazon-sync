@@ -52,8 +52,8 @@ func (e *Engine) drain(ctx context.Context, attempted map[string]bool) error {
 				if ctx.Err() != nil {
 					return
 				}
-				st, err := e.Status(ctx)
-				if err != nil || st.Paused {
+				paused, err := e.paused(ctx)
+				if err != nil || paused {
 					return
 				}
 				selectMu.Lock()
@@ -294,7 +294,7 @@ func (e *Engine) logJob(ctx context.Context, j *job, started time.Time, result e
 		UNION SELECT m.scope FROM signals m JOIN rules r ON r.account_id=m.account_id AND r.scope=m.scope
 		WHERE m.account_id=? AND m.asset_id=? AND r.active=1 AND m.generation=r.generation)`,
 		e.opts.AccountID, j.id, e.opts.AccountID, j.id).Scan(&scope)
-	st, _ := e.Status(ctx)
+	st, _ := e.summary(ctx)
 	code := "ok"
 	if result != nil {
 		code = errorCode(result)
@@ -360,7 +360,8 @@ func (e *Engine) confirm(ctx context.Context, j *job) error {
 	if err := e.setState(ctx, j, "confirmed", ""); err != nil {
 		return err
 	}
-	return e.store.removeStage(stage)
+	e.cleanupStage(ctx, stage)
+	return nil
 }
 
 func (e *Engine) skip(ctx context.Context, j *job, code string) error {
@@ -369,7 +370,17 @@ func (e *Engine) skip(ctx context.Context, j *job, code string) error {
 	if err := e.setState(ctx, j, "skipped", code); err != nil {
 		return err
 	}
-	return e.store.removeStage(stage)
+	e.cleanupStage(ctx, stage)
+	return nil
+}
+
+// cleanupStage removes a staged file after its durable state no longer references it.
+// A failed unlink must not downgrade a confirmed or skipped asset; the orphan is
+// removed by cleanStaging at the next startup.
+func (e *Engine) cleanupStage(ctx context.Context, stage string) {
+	if err := e.store.removeStage(stage); err != nil && e.opts.Logger != nil {
+		e.opts.Logger.WarnContext(ctx, "staging_cleanup_failed", "error_code", "storage_unavailable")
+	}
 }
 
 func (e *Engine) fail(ctx context.Context, j job, err error) error {

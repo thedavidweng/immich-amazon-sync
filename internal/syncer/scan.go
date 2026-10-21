@@ -240,7 +240,7 @@ func (e *Engine) discover(ctx context.Context, tx *sql.Tx, a bridge.Asset, metad
 	}
 	changed := digest != "" && ((a.SHA1 != "" && checksum != a.SHA1) ||
 		(a.Size >= 0 && a.Size != size) ||
-		(a.SHA1 == "" && !old.UpdatedAt.Equal(a.UpdatedAt)))
+		(a.SHA1 == "" && !old.FileModifiedAt.Equal(a.FileModifiedAt)))
 	safeSkip := a.ExcludedReason != "" && state != "confirmed" && state != "running" && state != "unconfirmed"
 	if changed && !safeSkip {
 		// Preserve the original metadata and confirmed/uncertain content evidence.

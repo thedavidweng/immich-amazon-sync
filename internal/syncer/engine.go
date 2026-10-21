@@ -153,7 +153,7 @@ func (e *Engine) Retry(ctx context.Context) error {
 	return nil
 }
 
-func (e *Engine) Status(ctx context.Context) (Status, error) {
+func (e *Engine) summary(ctx context.Context) (Status, error) {
 	st := Status{Errors: map[string]int{}}
 	var reason, code string
 	var last *string
@@ -206,9 +206,24 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 			st.Errors[code] += count
 		}
 	}
-	err = errors.Join(err, rows.Err(), rows.Close())
-	if err != nil {
+	if err = errors.Join(err, rows.Err(), rows.Close()); err != nil {
 		return st, errors.New("storage_unavailable")
+	}
+	return st, nil
+}
+
+func (e *Engine) paused(ctx context.Context) (bool, error) {
+	var reason string
+	if err := e.store.db.QueryRowContext(ctx, "SELECT pause_reason FROM accounts WHERE id=?", e.opts.AccountID).Scan(&reason); err != nil {
+		return false, errors.New("storage_unavailable")
+	}
+	return reason != "", nil
+}
+
+func (e *Engine) Status(ctx context.Context) (Status, error) {
+	st, err := e.summary(ctx)
+	if err != nil {
+		return st, err
 	}
 	err = e.store.db.QueryRowContext(ctx, "SELECT count(*) FROM rules WHERE account_id=? AND active=1 AND complete=0",
 		e.opts.AccountID).Scan(&st.Scanning)
@@ -253,7 +268,7 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 		}
 		st.LastIncremental = &t
 	}
-	rows, err = e.store.db.QueryContext(ctx, `SELECT error_code,count(*) FROM (
+	rows, err := e.store.db.QueryContext(ctx, `SELECT error_code,count(*) FROM (
 		SELECT error_code FROM rules WHERE account_id=? AND active=1
 		UNION ALL SELECT error_code FROM hints WHERE account_id=?
 		UNION ALL SELECT error_code FROM incremental WHERE account_id=? AND ?
@@ -380,11 +395,11 @@ func (e *Engine) run(ctx context.Context, full, incremental bool) error {
 		if ctx.Err() != nil {
 			return errors.New("canceled")
 		}
-		st, err = e.Status(ctx)
+		paused, err := e.paused(ctx)
 		if err != nil {
-			return err
+			return errors.New("storage_unavailable")
 		}
-		if st.Paused {
+		if paused {
 			return errors.New("account_paused")
 		}
 		if err := e.incrementalPage(ctx); err != nil {

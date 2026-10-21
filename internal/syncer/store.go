@@ -48,6 +48,9 @@ func Open(dataDir string) (*Store, error) {
 		err = s.migrate()
 	}
 	if err == nil {
+		_, err = s.db.Exec("CREATE INDEX IF NOT EXISTS asset_state_errors ON assets(account_id,state,error_code)")
+	}
+	if err == nil {
 		_, err = s.db.Exec("UPDATE assets SET state='unconfirmed',error_code='upload_unconfirmed' WHERE state='running'")
 	}
 	if err == nil {

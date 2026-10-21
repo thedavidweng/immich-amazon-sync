@@ -171,6 +171,7 @@ const photoJSON = `{"id":"` + assetID + `","type":"IMAGE","originalFileName":"ph
 	"originalMimeType":"image/heic","checksum":"qZk+NkcGgWq6PiVxeFDCbJzQ2J0=",
 	"libraryId":null,"visibility":"timeline","isOffline":false,"isTrashed":false,
 	"exifInfo":{"fileSizeInByte":3},"fileCreatedAt":"2026-10-01T12:00:00Z",
+	"fileModifiedAt":"2026-10-01T11:00:00Z",
 	"updatedAt":"2026-10-02T12:00:00Z","livePhotoVideoId":"33333333-3333-4333-8333-333333333333"}`
 
 func TestAlbumDiscoveryAndOriginalContract(t *testing.T) {
@@ -244,7 +245,8 @@ func TestAlbumDiscoveryAndOriginalContract(t *testing.T) {
 	a := page.Assets[0]
 	if a.SHA1 != "qZk+NkcGgWq6PiVxeFDCbJzQ2J0=" || a.Size != 3 ||
 		a.Kind != "IMAGE" || a.MIME != "image/heic" || a.LivePhotoVideo ||
-		a.TakenAt.Format(time.RFC3339) != "2026-10-01T12:00:00Z" {
+		a.TakenAt.Format(time.RFC3339) != "2026-10-01T12:00:00Z" ||
+		a.FileModifiedAt.Format(time.RFC3339) != "2026-10-01T11:00:00Z" {
 		t.Fatalf("asset: %+v", a)
 	}
 	last, err := c.Assets(t.Context(), scope, page.Next)

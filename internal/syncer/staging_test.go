@@ -43,7 +43,7 @@ func TestSkippedStagedVideoReleasesQuotaButUncertainUploadKeepsEvidence(t *testi
 				}
 				opts.IncludeVideos = false
 				if excluded {
-					a.ExcludedReason, a.SHA1, a.UpdatedAt = "offline", "", time.Now()
+					a.ExcludedReason, a.SHA1, a.FileModifiedAt = "offline", "", time.Now()
 					s.pages[""] = bridge.Page{Assets: []bridge.Asset{a}}
 				}
 				e = engine(t, store, s, d, opts)

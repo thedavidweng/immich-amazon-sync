@@ -1036,3 +1036,104 @@ func TestDownloadedChecksumProtectsConfirmedOriginalWhenSourceChecksumWasUnknown
 		t.Fatalf("confirmed original evidence was lost: %+v", st)
 	}
 }
+
+func TestCleanupFailureDoesNotDowngradeConfirmation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix permission semantics")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	dir := t.TempDir()
+	store, err := syncer.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := photo("one")
+	s := &sourceFake{identity: "source", data: map[string]string{"one": "hello"},
+		pages: map[string]bridge.Page{"": {Assets: []bridge.Asset{a}}}}
+	uploads := 0
+	d := &targetFake{identity: "target"}
+	d.upload = func(_ context.Context, c bridge.Content, r io.Reader) (bridge.Node, error) {
+		b, err := io.ReadAll(r)
+		if err != nil {
+			return bridge.Node{}, err
+		}
+		uploads++
+		sum := md5.Sum(b)
+		n := bridge.Node{ID: "one-node", Name: c.Name, MD5: hex.EncodeToString(sum[:]), Size: int64(len(b))}
+		d.mu.Lock()
+		d.nodes = append(d.nodes, n)
+		d.mu.Unlock()
+		if err := os.Chmod(filepath.Join(dir, "staging"), 0o500); err != nil {
+			return bridge.Node{}, err
+		}
+		return n, nil
+	}
+	e := engine(t, store, s, d, options())
+	if err := e.Once(t.Context()); err != nil {
+		t.Fatalf("cleanup failure failed the job: %v", err)
+	}
+	if st := status(t, e); st.Confirmed != 1 || st.Failed != 0 || uploads != 1 {
+		t.Fatalf("confirmation was downgraded: %+v uploads=%d", st, uploads)
+	}
+	if err := os.Chmod(filepath.Join(dir, "staging"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = syncer.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	files, err := os.ReadDir(filepath.Join(dir, "staging"))
+	if err != nil || len(files) != 0 {
+		t.Fatalf("orphan staging was not cleaned: %v %v", files, err)
+	}
+	e = engine(t, store, s, d, options())
+	if err := e.Once(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if uploads != 1 {
+		t.Fatalf("confirmed asset uploaded again: %d", uploads)
+	}
+}
+
+func TestMetadataEditDoesNotPoisonChecksumlessAsset(t *testing.T) {
+	s := &sourceFake{identity: "source", data: map[string]string{"one": "hello"}}
+	a := photo("one")
+	a.SHA1 = ""
+	a.FileModifiedAt = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	s.pages = map[string]bridge.Page{"": {Assets: []bridge.Asset{a}}}
+	d := &targetFake{identity: "target"}
+	store, err := syncer.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	e := engine(t, store, s, d, options())
+	if err := e.Once(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	// Immich metadata edits move updatedAt but leave the file's modification time alone.
+	edited := a
+	edited.TakenAt = a.TakenAt.Add(time.Hour)
+	s.pages[""] = bridge.Page{Assets: []bridge.Asset{edited}}
+	if err := e.Once(t.Context()); err != nil {
+		t.Fatalf("metadata edit poisoned the asset: %v", err)
+	}
+	if st := status(t, e); st.Confirmed != 1 || st.Errors["source_changed"] != 0 || st.LastSuccess == nil {
+		t.Fatalf("metadata edit did not settle: %+v", st)
+	}
+	changed := edited
+	changed.FileModifiedAt = edited.FileModifiedAt.Add(time.Hour)
+	s.pages[""] = bridge.Page{Assets: []bridge.Asset{changed}}
+	if err := e.Once(t.Context()); err == nil || err.Error() != "source_changed" {
+		t.Fatalf("file modification was ignored: %v", err)
+	}
+	if st := status(t, e); st.Confirmed != 1 || st.Errors["source_changed"] != 1 || len(d.nodes) != 1 {
+		t.Fatalf("file modification lost the confirmed mapping: %+v", st)
+	}
+}

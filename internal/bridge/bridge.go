@@ -21,7 +21,7 @@ type Asset struct {
 	Size           int64     `json:"size"` // -1 means the source did not report a byte size.
 	SHA1           string    `json:"sha1"` // Base64 content SHA-1; empty when provenance is unknown.
 	TakenAt        time.Time `json:"taken_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	FileModifiedAt time.Time `json:"file_modified_at"`
 	LivePhotoVideo bool      `json:"live_photo_video"`
 	ExcludedReason string    `json:"excluded_reason,omitempty"`
 }
