@@ -86,11 +86,20 @@ archive history omitted by the earlier implementation.
 
 Immich Workflows begin at v3.0; v2 has none. Discovery uses the plugin methods
 and workflow triggers endpoints, not deprecated `/server/features`.
-`AssetCreate` provides an acceleration hint, not reliable delivery. Current
-webhook payloads carry the asset under `data.asset`; there is no established
-durable acknowledgment/replay guarantee or album-membership event. Manual
-registration keeps the polling key read-only. Automatic discovery/registration
-needs explicitly chosen plugin/workflow permissions. Polling remains necessary.
+The service directly accepts native `AssetV1` payloads with `AssetCreate`,
+`AssetMetadataExtraction` or `AssetTagged`, carrying the ID under `data.asset.id`.
+Optional native `config` and `workflow` fields are accepted and discarded.
+Payloads are limited to 64 KiB; only the stable UUIDv4 is retained and revalidated
+against the configured source scope. See [event HTTP reference](events.md).
+Acceptance is covered by offline contracts, not a real Immich Workflow run.
+
+Events provide acceleration hints. There is no established upstream durable
+acknowledgment/replay guarantee or album-membership event. Registration is manual;
+the service does not create Workflows through its read-only Source seam. Keep
+the polling key read-only and [configure the native step](../how-to/event-hints.md)
+separately. Polling remains necessary. Owned album mapping and bounded relation
+reconciliation are implemented with offline tests; real Amazon album behavior
+and regional writes remain unverified.
 
 ## Regions
 

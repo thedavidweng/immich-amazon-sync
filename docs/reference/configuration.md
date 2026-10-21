@@ -9,14 +9,14 @@ See [config.example.json](config.example.json) for the minimal deployment shape.
 | --- | --- | --- |
 | `data_dir` | `data` | SQLite, lock and bounded staging; container overrides to `/data`. |
 | `listen` | `127.0.0.1:8080` | HTTP listen address; container overrides to `0.0.0.0:8080`. |
-| `scan_interval` | `15m` | Go duration, at least one second. |
+| `scan_interval` | `15m` | Periodic reconciliation interval, at least one second; not a cycle deadline or backfill delay. |
 | `workers` | `2` | Configured worker limit, 1..16; no throughput guarantee. |
 | `max_staging_bytes` | `10737418240` | Positive total staging budget, 10 GiB. |
 | `max_staging_files` | `2` | Positive staging file count limit. |
 | `bytes_per_second` | `0` | Nonnegative configured transfer limit; zero disables the cap. |
 | `log_level` | `info` | `debug`, `info`, `warn`, `error`. |
 | `admin_password_file` | unset | Optional mounted admin passphrase file, at least 12 characters; enables the local UI. |
-| `webhook_secret_file` | unset | Optional shared-secret file for authenticated event hints. |
+| `webhook_secret_file` | unset | Optional bearer-secret file for `/events/{account}`; trimmed secret at least 32 bytes, raw file at most 4 KiB. |
 | `accounts` | empty | Explicit, isolated account configurations. |
 
 | Per-account field | Default | Meaning |
@@ -29,12 +29,21 @@ See [config.example.json](config.example.json) for the minimal deployment shape.
 | `album_ids` | empty | Explicit source album UUID allowlist. |
 | `library` | `false` | Deliberate whole-accessible-library choice, mutually exclusive with `album_ids`. |
 | `include_videos` | `false` | Include eligible standalone originals classified as video. |
-| `mirror_albums` | `false` | Maintain managed Amazon albums separately from media transfer. |
+| `mirror_albums` | `false` | Mirror explicitly selected albums; requires `album_ids` and `library: false`. |
 
 At least one album or explicit library mode is required for each account.
 Account IDs must be unique. Zero accounts is only valid when local management
 bootstrap is explicitly enabled with an admin credential. Secret files must be
-nonempty and at most 64 KiB; the JSON config limit is 1 MiB.
+nonempty and at most 64 KiB for remote credentials; the JSON config limit is
+1 MiB. The event handler applies the stricter webhook-secret limit above.
+Library mode with `mirror_albums: true` returns `invalid_options`; automatic
+discovery/mirroring of all visible albums is not implemented.
+For whole-accessible-library backup, explicitly set `library: true`,
+`album_ids: []` and `mirror_albums: false`. This does not bypass source permissions.
+
+Events do not change source scope. See [event setup](../how-to/event-hints.md),
+[managed albums](../how-to/managed-albums.md) and
+[progress scheduling](status.md) for polling, backfill and membership policy.
 
 The admin credential JSON key is exactly `admin_password_file`; its
 environment counterpart is `ADMIN_PASSWORD_FILE`. Store a file path in JSON,

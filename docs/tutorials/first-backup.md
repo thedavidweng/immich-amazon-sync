@@ -45,7 +45,9 @@ or force an upload to bypass uncertainty.
 
    Inspect the result and your Amazon account. An `unconfirmed` result is not
    success; follow [troubleshooting](../how-to/troubleshooting.md), retaining
-   the data volume.
+   the data volume. One invocation is bounded; a large scope can still have
+   pending scans/media after exit 0. Check [durable status](../reference/status.md)
+   and start `serve` for automatic continuation.
 7. Start periodic operation and inspect the local health probe:
 
    ```sh
@@ -59,6 +61,9 @@ The named volume is initialized with ownership `10001:10001` from the image.
 SQLite state and staging persist under `/data`; secret files stay outside it.
 Probe success means local readiness. Check account diagnostics/logs for remote
 failures. The default scan interval is 15 minutes.
+Event hints and continuing backfill do not wait for that interval. After the
+basic backup works, optionally configure [native Workflow hints](../how-to/event-hints.md)
+or [managed albums](../how-to/managed-albums.md) with disposable test data first.
 
 Stop the daemon before any other process uses its data directory. Use
 `docker compose stop sync` to stop and `docker compose up -d` to resume.

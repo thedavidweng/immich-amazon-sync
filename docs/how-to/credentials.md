@@ -14,6 +14,8 @@ Permissions do not bypass sharing or ownership restrictions. A key with
 Workflow setup is optional and version-dependent. Polling requires no write or
 workflow scopes. Manual workflow creation in Immich can keep this service's
 API key read-only. See [compatibility](../reference/compatibility.md).
+Native Workflow setup uses a separate bearer-secret file; follow
+[event hints](event-hints.md) for mounting, rotation and private reachability.
 
 ## Amazon
 

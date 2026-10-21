@@ -17,6 +17,12 @@ issue. Stop the daemon before running another CLI process on the same volume.
 | `remote_protocol` | Capture only finite diagnostic fields and deployed versions; pagination/schema incompatibility must not become an empty album. |
 | `content_conflict` | A filename or HTTP 409 is not content equality. Investigate confirmed remote MD5/size/identity. |
 | `upload_unconfirmed` / unconfirmed count | Retain the state volume and staged original. Reconcile remote metadata; do not force a new upload or rename. |
+| `album_unconfirmed` | Album creation may have committed without a known returned ID. Preserve state; retry/restart cannot safely adopt by name or recreate it. |
+| `membership_guard` | Verify source scope/counts and snapshots. Empty or excessive removals are blocked; there is no guard override. |
+| `invalid_event` | Check UUIDv4, native type/trigger, top-level fields and 64 KiB body limit; see the event contract. |
+| `webhook_unauthorized` | Check the configured account ID and bearer header against the mounted shared secret. |
+| `webhook_unavailable` | Check the secret path/readability, minimum 32 trimmed bytes and maximum 4 KiB file size. |
+| `source_changed` | Source metadata no longer agrees with recorded content evidence. Preserve confirmed/uncertain mappings; retry does not clear this conflict. |
 | Local storage/lock failure | Stop the competing writer, fix volume ownership/capacity, and retry. Never remove a live process's lock. |
 
 For `unconfirmed`, the write may have committed before its response was lost.
@@ -43,6 +49,26 @@ timeline and archived originals. Previously completed history requires a new
 full scan; continuing an old completed scan cannot discover the omitted archive.
 v2 shared albums remain unsupported rather than returning an incomplete backup.
 See [Immich compatibility](../reference/compatibility.md#immich-contract).
+
+## Discovery and album progress
+
+Successful `sync once` is a bounded pass, not proof that a large backfill is
+complete. Use `serve` for continuation and inspect
+[durable status](../reference/status.md), including `albums_failed`,
+association/event counts and optional `next_attempt`. A future retry deadline
+can leave `work_remaining` false while failed work remains.
+
+After fixing source access or invalid pagination, account Retry can invalidate
+failed incomplete full generations and start fresh discovery. Changed album
+counts automatically invalidate interrupted generations. Retry preserves manual
+pause, confirmed content and uncertain writes; resume a manually paused account
+separately. Do not alter SQLite cursors or remove the volume.
+
+Album associations retry independently from media. Follow
+[managed album recovery and guards](managed-albums.md); empty source results,
+missing albums and incomplete scans never authorize media deletion. A webhook
+`202` proves only local enqueue; use [event setup](event-hints.md) and the
+[response contract](../reference/events.md) to diagnose delivery separately.
 
 ## Local management
 

@@ -8,7 +8,7 @@ immich-amazon-sync [--config PATH] [--account ID] [--json] COMMAND
 | --- | --- |
 | `serve` | Run the local service and scheduled backups; stop with SIGTERM. |
 | `serve --setup --config PATH` | Explicit first UI setup with a mounted admin secret and a new writable config path. |
-| `sync once` | Perform a controlled discovery/transfer pass; this can write media and managed membership. |
+| `sync once` | Start/resume a bounded explicit full-scan pass; can write media and managed membership. |
 | `albums list` | Read accessible source album IDs, names and counts. |
 | `doctor` | Read-only remote diagnostics and local storage checks; no upload or album creation. |
 | `version` | Print the build version without credentials or config. |
@@ -32,6 +32,15 @@ The command's `--help` is authoritative for additional management operations.
 Every process accessing a state volume must respect the single-writer boundary.
 Stop `serve` before running a separate stateful CLI invocation.
 
+For each selected account, one `sync once` invocation attempts at most 64 distinct
+media jobs and advances full discovery by at most eight page steps; an already
+active library delta can also advance. Cursors and remaining work persist.
+Exit 0 means that bounded pass succeeded, not that all historical media is backed
+up. Inspect `scanning`,
+`work_remaining`, retry deadlines and `last_success` in the
+[JSON status](status.md). Use `serve` for automatic continuation without waiting
+for the next periodic scan; the bounds are work limits, not a wall-clock timeout.
+
 `--setup` is never inferred from a missing file. It rejects an existing config
 (including a symlink), missing `--config`, `--account`, missing admin secret or
 accounts supplied through `IMMICH_URL`. The parent directory must already exist
@@ -49,6 +58,7 @@ Compose config bind is read-only. See [local management](../how-to/local-managem
 | --- | --- |
 | `GET /healthz` | Process is running. |
 | `GET /readyz` | Core local services can work. Remote credential/network failures belong in diagnostics. |
+| `POST /events/{account}` | Independently bearer-authenticated durable asset hints; see [event HTTP reference](events.md). |
 
 Probes do not expose credentials or prove successful cloud transfer.
 The Docker healthcheck uses BusyBox `wget` against both fixed loopback endpoints,
@@ -58,3 +68,6 @@ host loopback only.
 
 Optional HTML routes and form fields are documented in
 [management HTTP reference](management.md); they are not a JSON management API.
+Event HTTP statuses are distinct from CLI exits: `invalid_event` maps to exit 2,
+`webhook_unauthorized` to 3, and `album_unconfirmed`, `membership_guard` and
+`webhook_unavailable` to 1 when reported through CLI diagnostics.
