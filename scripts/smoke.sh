@@ -5,7 +5,8 @@ cd "$(dirname "$0")/.."
 if [ "$#" -eq 0 ]; then
     set -- linux/amd64 linux/arm64
 fi
-scratch=$(mktemp -d)
+mkdir -p .scratch
+scratch=$(mktemp -d "$(pwd)/.scratch/container-smoke.XXXXXX")
 name="immich-sync-smoke-$(basename "$scratch" | tr '[:upper:]' '[:lower:]')"
 container=
 volume=
