@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -67,13 +68,21 @@ func Load(path string) (Config, error) {
 			return cfg, errors.New("config_invalid_json")
 		}
 	} else if os.Getenv("IMMICH_URL") != "" {
+		includeVideos := false
+		if value := os.Getenv("INCLUDE_VIDEOS"); value != "" {
+			var err error
+			includeVideos, err = strconv.ParseBool(value)
+			if err != nil {
+				return cfg, errors.New("include_videos_invalid")
+			}
+		}
 		cfg.Accounts = []Account{{
 			ID: "default", ImmichURL: os.Getenv("IMMICH_URL"),
 			APIKeyFile: os.Getenv("IMMICH_API_KEY_FILE"), apiKey: os.Getenv("IMMICH_API_KEY"),
 			AmazonRegion: os.Getenv("AMAZON_REGION"),
 			CookieFile:   os.Getenv("AMAZON_COOKIE_FILE"), cookie: os.Getenv("AMAZON_COOKIE"),
 			AlbumIDs:      splitIDs(os.Getenv("ALBUM_IDS")),
-			IncludeVideos: os.Getenv("INCLUDE_VIDEOS") == "true",
+			IncludeVideos: includeVideos,
 		}}
 	}
 	if value := os.Getenv("DATA_DIR"); value != "" {

@@ -78,3 +78,11 @@ func TestLibraryAndAlbumScopesAreMutuallyExclusive(t *testing.T) {
 		t.Fatalf("ambiguous scope accepted: %v", err)
 	}
 }
+
+func TestInvalidVideoEnvironmentIsAnError(t *testing.T) {
+	t.Setenv("IMMICH_URL", "http://immich:2283")
+	t.Setenv("INCLUDE_VIDEOS", "sometimes")
+	if _, err := config.Load(""); err == nil || err.Error() != "include_videos_invalid" {
+		t.Fatalf("invalid video setting accepted: %v", err)
+	}
+}
