@@ -80,10 +80,10 @@ func (c *Client) Find(ctx context.Context, content bridge.Content) ([]bridge.Nod
 	if err != nil {
 		return nil, err
 	}
-	page, err := c.sdk.Search(ctx, aphotos.SearchOptions{
+	page, err := c.sdk.QueryNodes(ctx, aphotos.NodeQueryOptions{
 		Filter: aphotos.NewFilter().Kind(aphotos.NodeKindFile).Status(aphotos.NodeStatusAvailable).
 			MD5(content.MD5).ParentID(parent),
-		DisableLowResThumb: true, Limit: 200,
+		Limit: 200,
 	})
 	if err != nil {
 		return nil, classify(err)

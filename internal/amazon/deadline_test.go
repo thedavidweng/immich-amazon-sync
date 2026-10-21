@@ -73,7 +73,7 @@ func TestEachSDKMetadataOperationHasItsOwnDeadline(t *testing.T) {
 		name, method, path, code string
 		call                     func(context.Context, *amazon.Client) error
 	}{
-		{"search", "GET", "/search", bridge.Unavailable, func(ctx context.Context, c *amazon.Client) error { _, err := c.Find(ctx, content); return err }},
+		{"find", "GET", "/nodes", bridge.Unavailable, func(ctx context.Context, c *amazon.Client) error { _, err := c.Find(ctx, content); return err }},
 		{"node", "GET", "/nodes/node-a", bridge.Unavailable, func(ctx context.Context, c *amazon.Client) error { _, err := c.GetNode(ctx, "node-a"); return err }},
 		{"member-page", "GET", "/nodes/album-a/children", bridge.Unavailable, func(ctx context.Context, c *amazon.Client) error {
 			_, err := c.AlbumMembers(ctx, "album-a")
@@ -97,7 +97,8 @@ func TestEachSDKMetadataOperationHasItsOwnDeadline(t *testing.T) {
 				t.Run(phase, func(t *testing.T) {
 					synctest.Test(t, func(t *testing.T) {
 						transport := deadlineTransport(func(r *http.Request) (*http.Response, error) {
-							if r.Method == tt.method && r.URL.Path == tt.path {
+							if r.Method == tt.method && r.URL.Path == tt.path &&
+								(r.Method != "GET" || r.URL.Path != "/nodes" || r.URL.Query().Get("filters") != "isRoot:true") {
 								if phase == "headers" {
 									<-r.Context().Done()
 									return nil, r.Context().Err()

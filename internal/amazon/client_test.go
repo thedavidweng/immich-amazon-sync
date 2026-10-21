@@ -270,11 +270,11 @@ func TestExplicitStorageFolderRetainsIdentity(t *testing.T) {
 
 func TestExplicitEmptySearchProvesAbsence(t *testing.T) {
 	c := newClient(t, aphotos.RegionUS, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/nodes" {
+		if r.URL.Path == "/nodes" && r.URL.Query().Get("filters") == "isRoot:true" {
 			_, _ = fmt.Fprint(w, `{"data":[`+rootJSON+`],"count":1}`)
 			return
 		}
-		if r.URL.Path != "/search" || r.URL.Query().Get("limit") != "200" || r.URL.Query().Get("offset") != "0" {
+		if r.URL.Path != "/nodes" || r.URL.Query().Get("limit") != "200" || r.URL.Query().Get("offset") != "0" {
 			t.Errorf("unbounded search: %s", r.URL)
 		}
 		_, _ = fmt.Fprint(w, `{"count":0,"data":[]}`)
@@ -298,14 +298,15 @@ func TestAmbiguousCandidatesAndIncompleteMembershipCannotProveAbsence(t *testing
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := newClient(t, aphotos.RegionUS, func(w http.ResponseWriter, r *http.Request) {
-				switch r.URL.Path {
-				case "/nodes":
+				if r.URL.Path == "/nodes" && r.URL.Query().Get("filters") == "isRoot:true" {
 					_, _ = fmt.Fprint(w, `{"data":[`+rootJSON+`],"count":1}`)
-				case "/nodes/album-a":
-					_, _ = fmt.Fprint(w, albumJSON)
-				default:
-					_, _ = fmt.Fprint(w, payload)
+					return
 				}
+				if r.URL.Path == "/nodes/album-a" {
+					_, _ = fmt.Fprint(w, albumJSON)
+					return
+				}
+				_, _ = fmt.Fprint(w, payload)
 			})
 			_, err := c.Find(t.Context(), bridge.Content{Size: 3, MD5: "900150983cd24fb0d6963f7d28e17f72"})
 			if err == nil {
@@ -321,7 +322,7 @@ func TestAmbiguousCandidatesAndIncompleteMembershipCannotProveAbsence(t *testing
 
 func TestMultipleVerifiedSearchMatchesRemainUnconfirmed(t *testing.T) {
 	c := newClient(t, aphotos.RegionUS, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/nodes" {
+		if r.URL.Path == "/nodes" && r.URL.Query().Get("filters") == "isRoot:true" {
 			_, _ = fmt.Fprint(w, `{"data":[`+rootJSON+`],"count":1}`)
 			return
 		}
@@ -340,17 +341,19 @@ const nodeJSON = `{"id":"node-a","name":"photo.jpg","kind":"FILE","status":"AVAI
 
 func TestMediaConfirmationUsesRemoteDigestSizeStatusAndParent(t *testing.T) {
 	c := newClient(t, aphotos.RegionUS, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/nodes" && r.URL.Query().Get("filters") == "isRoot:true" {
+			_, _ = fmt.Fprint(w, `{"data":[`+rootJSON+`],"count":1}`)
+			return
+		}
 		switch r.URL.Path {
 		case "/nodes":
-			_, _ = fmt.Fprint(w, `{"data":[`+rootJSON+`],"count":1}`)
-		case "/nodes/node-a":
-			_, _ = fmt.Fprint(w, nodeJSON)
-		case "/search":
 			filter := r.URL.Query().Get("filters")
 			if !strings.Contains(filter, "900150983cd24fb0d6963f7d28e17f72") || !strings.Contains(filter, "root-account-a") {
 				t.Errorf("unscoped digest search: %s", filter)
 			}
 			_, _ = fmt.Fprint(w, `{"data":[`+nodeJSON+`],"count":1}`)
+		case "/nodes/node-a":
+			_, _ = fmt.Fprint(w, nodeJSON)
 		case "/upload":
 			b, err := io.ReadAll(r.Body)
 			if err != nil || string(b) != "abc" || r.URL.Query().Get("parentNodeId") != "root-account-a" {
@@ -393,7 +396,7 @@ func TestFindDoesNotConfirmUnverifiableNodes(t *testing.T) {
 	for name, payload := range tests {
 		t.Run(name, func(t *testing.T) {
 			c := newClient(t, aphotos.RegionUS, func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/nodes" {
+				if r.URL.Path == "/nodes" && r.URL.Query().Get("filters") == "isRoot:true" {
 					_, _ = fmt.Fprint(w, `{"data":[`+rootJSON+`],"count":1}`)
 					return
 				}
@@ -418,7 +421,7 @@ func TestEmptyFileStillRequiresAnExplicitValidRemoteSize(t *testing.T) {
 			remote := strings.ReplaceAll(nodeJSON, "900150983cd24fb0d6963f7d28e17f72", "d41d8cd98f00b204e9800998ecf8427e")
 			remote = strings.ReplaceAll(remote, `"size":3`, `"size":`+size)
 			c := newClient(t, aphotos.RegionUS, func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/nodes" {
+				if r.URL.Path == "/nodes" && r.URL.Query().Get("filters") == "isRoot:true" {
 					_, _ = fmt.Fprint(w, `{"data":[`+rootJSON+`],"count":1}`)
 					return
 				}
