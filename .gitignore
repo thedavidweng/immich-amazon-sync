@@ -1,0 +1,10 @@
+.DS_Store
+.scratch/
+/dist/
+/data/
+/secrets/
+*.db
+*.db-shm
+*.db-wal
+*.test
+coverage.out
