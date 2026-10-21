@@ -1,0 +1,21 @@
+[tools]
+go = "1.27.2"
+golangci-lint = "2.14.0"
+jactionlint = "2.2.0"
+
+[tasks.fmt]
+run = "gofmt -w ."
+
+[tasks.build]
+run = "go build ./..."
+
+[tasks.test]
+run = "go test ./..."
+
+[tasks.check]
+description = "Read-only Go and workflow quality gate"
+run = "sh scripts/check.sh"
+
+[tasks.smoke]
+description = "Build and exercise both Linux container platforms without cloud access"
+run = "sh scripts/smoke.sh"

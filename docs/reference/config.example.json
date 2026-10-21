@@ -1,0 +1,23 @@
+{
+  "data_dir": "/data",
+  "listen": "0.0.0.0:8080",
+  "scan_interval": "15m",
+  "workers": 2,
+  "max_staging_bytes": 10737418240,
+  "max_staging_files": 2,
+  "bytes_per_second": 0,
+  "log_level": "info",
+  "accounts": [
+    {
+      "id": "home",
+      "immich_url": "https://immich.example.org",
+      "immich_api_key_file": "/run/secrets/immich_api_key",
+      "amazon_region": "us",
+      "amazon_cookie_file": "/run/secrets/amazon_cookie",
+      "album_ids": ["11111111-1111-4111-8111-111111111111"],
+      "library": false,
+      "include_videos": false,
+      "mirror_albums": false
+    }
+  ]
+}
