@@ -29,7 +29,7 @@ jobs:
         with:
           version: v0.38.0
           cache-binary: false
-      - name: Publish new immutable version and commit tags
+      - name: Publish immutable version and commit tags
         env:
           REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REGISTRY_USER: ${{ github.actor }}
@@ -37,22 +37,54 @@ jobs:
           VERSION: ${{ github.ref_name }}
           COMMIT: ${{ github.sha }}
         run: |
-          set -eu
+          set -euo pipefail
           printf '%s\n' "$VERSION" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
           image="ghcr.io/$(printf '%s' "$REPOSITORY" | tr '[:upper:]' '[:lower:]')"
           printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$REGISTRY_USER" --password-stdin
           trap 'docker logout ghcr.io' EXIT
-          for tag in "$VERSION" "sha-$COMMIT"; do
-            if docker buildx imagetools inspect "$image:$tag" > /dev/null 2> "$RUNNER_TEMP/manifest-error"; then
-              echo "Refusing to overwrite existing tag: $tag" >&2
-              exit 1
+
+          tag_exists() {
+            if docker buildx imagetools inspect "$1" > /dev/null 2> "$RUNNER_TEMP/manifest-error"; then
+              return 0
             fi
-            if ! grep -Fq "$image:$tag: not found" "$RUNNER_TEMP/manifest-error" \
-                && ! grep -Fq 'manifest unknown' "$RUNNER_TEMP/manifest-error"; then
-              cat "$RUNNER_TEMP/manifest-error" >&2
-              exit 1
+            if grep -Fq "$1: not found" "$RUNNER_TEMP/manifest-error" \
+                || grep -Fq 'manifest unknown' "$RUNNER_TEMP/manifest-error"; then
+              return 1
             fi
-          done
-          docker buildx build --platform linux/amd64,linux/arm64 --push \
-            --build-arg VERSION="$VERSION" --build-arg COMMIT="$COMMIT" \
-            --tag "$image:$VERSION" --tag "$image:sha-$COMMIT" .
+            cat "$RUNNER_TEMP/manifest-error" >&2
+            exit 1
+          }
+
+          revision_matches() {
+            docker buildx imagetools inspect "$1" --format '{{json .Image}}' \
+              | jq -e --arg revision "$COMMIT" \
+                'length > 0 and ([.[].config.Labels["org.opencontainers.image.revision"]] | all(. == $revision))' \
+                > /dev/null
+          }
+
+          version_exists=false
+          if tag_exists "$image:$VERSION"; then
+            revision_matches "$image:$VERSION" || { echo "Existing $VERSION tag was not built from $COMMIT" >&2; exit 1; }
+            version_exists=true
+          fi
+          sha_exists=false
+          if tag_exists "$image:sha-$COMMIT"; then
+            revision_matches "$image:sha-$COMMIT" || { echo "Existing sha-$COMMIT tag was not built from $COMMIT" >&2; exit 1; }
+            sha_exists=true
+          fi
+          if [ "$version_exists" = true ] && [ "$sha_exists" = true ]; then
+            echo "Both tags already exist for $COMMIT"
+            exit 0
+          fi
+          if [ "$sha_exists" = false ]; then
+            if [ "$version_exists" = true ]; then
+              docker buildx imagetools create --tag "$image:sha-$COMMIT" "$image:$VERSION"
+            else
+              docker buildx build --platform linux/amd64,linux/arm64 --push \
+                --build-arg VERSION="$VERSION" --build-arg COMMIT="$COMMIT" \
+                --tag "$image:sha-$COMMIT" .
+            fi
+          fi
+          if [ "$version_exists" = false ]; then
+            docker buildx imagetools create --tag "$image:$VERSION" "$image:sha-$COMMIT"
+          fi
