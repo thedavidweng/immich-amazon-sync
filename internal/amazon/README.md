@@ -20,7 +20,7 @@ collision; an uncertain create cannot authorize recreation. Membership uses only
 SDK collection operations, with stable album ID and account validation. There
 is no media deletion operation.
 
-The SDK pin `v0.1.3-0.20261021004957-6a7dc3ea2ff7` validates list envelopes.
+The SDK pin `v0.1.3-0.20261021010657-563dc061fffc` validates list envelopes.
 Explicit `{"count":0,"data":[]}` results establish an empty search or album;
 missing/null fields and partial pages cannot establish absence. Find requests
 one bounded page and requires zero or one verified result. Multiple matches are
@@ -28,10 +28,12 @@ unconfirmed. Album members use pages of 200, with stable count, advancing offset
 HasMore, ownership and duplicate-ID checks. No partial membership is returned.
 
 The SDK currently has no ContentDate write capability. Original embedded EXIF
-is preserved, while Immich-only timestamp edits are not transferred. SDK
-RetryAfter is retained where exposed (currently RateLimitError). HTTP 503
-RetryAfter and final non-2xx statuses below 400 for mutations/uploads remain
-generic SDK gaps; read status validation is fixed in the pinned revision.
+is preserved, while Immich-only timestamp edits are not transferred. The pinned
+SDK requires final HTTP 2xx statuses for reads, mutations and uploads. It retains
+RetryAfter on rate limits and transient failures, including HTTP 503 and
+response-body failures; the adapter preserves it through uncertain writes and
+post-upload verification. These failures still cannot prove noncommit or
+authorize blind replay.
 
 Tests are offline HTTP contracts, not live proof of regions, album behavior,
 format support or presentation. No cloud credentials or live writes are used.

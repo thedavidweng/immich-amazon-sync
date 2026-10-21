@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/thedavidweng/immich-amazon-sync/internal/admin"
@@ -33,7 +34,19 @@ func SetupConfig(path string) (config.Config, error) {
 	if cfg.AdminPasswordFile == "" {
 		return cfg, errors.New("credentials_required")
 	}
-	return cfg, cfg.Validate()
+	if err := cfg.Validate(); err != nil {
+		return cfg, err
+	}
+	probe, err := os.CreateTemp(filepath.Dir(path), ".setup-*")
+	if err != nil {
+		return cfg, errors.New("config_write_failed")
+	}
+	closeErr := probe.Close()
+	removeErr := os.Remove(probe.Name())
+	if closeErr != nil || removeErr != nil {
+		return cfg, errors.New("config_write_failed")
+	}
+	return cfg, nil
 }
 
 // EnableAdmin registers the optional dashboard before Run. An empty path allows

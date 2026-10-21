@@ -63,6 +63,7 @@ type dashboard struct {
 	mu       sync.Mutex
 	sessions map[string]session
 	attempts map[string]attempt
+	issuance map[string]attempt
 }
 
 const cookieName = "immich_admin"
@@ -79,6 +80,7 @@ func New(backend Backend, options Options) (http.Handler, error) {
 		backend: backend, options: options, mux: http.NewServeMux(),
 		pages:    template.Must(template.New("pages").Parse(pageTemplates)),
 		sessions: make(map[string]session), attempts: make(map[string]attempt),
+		issuance: make(map[string]attempt),
 	}
 	d.mux.HandleFunc("GET /login", d.loginPage)
 	d.mux.HandleFunc("POST /login", d.login)
@@ -138,16 +140,48 @@ func (d *dashboard) issue(w http.ResponseWriter, r *http.Request, previous *sess
 	key := randomToken()
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	now := time.Now()
 	for key, existing := range d.sessions {
-		if !existing.Expires.After(time.Now()) {
+		if !existing.Expires.After(now) || existing.Credential != digest {
 			delete(d.sessions, key)
 		}
+	}
+	if !authenticated {
+		for host, value := range d.issuance {
+			if !value.Until.After(now) {
+				delete(d.issuance, host)
+			}
+		}
+		host, _, _ := net.SplitHostPort(r.RemoteAddr)
+		issued := d.issuance[host]
+		if issued.Count >= 5 || (issued.Count == 0 && len(d.issuance) >= 1024) {
+			return session{}, errors.New("login_rate_limited")
+		}
+		if issued.Count == 0 {
+			issued.Until = now.Add(time.Minute)
+		}
+		issued.Count++
+		d.issuance[host] = issued
 	}
 	if old, err := r.Cookie(cookieName); err == nil {
 		delete(d.sessions, old.Value)
 	}
-	if len(d.sessions) >= 256 {
-		return session{}, errors.New("session_capacity")
+	anonymous, oldest := 0, ""
+	var earliest time.Time
+	for key, existing := range d.sessions {
+		if !existing.Authenticated {
+			anonymous++
+			if oldest == "" || existing.Expires.Before(earliest) {
+				oldest, earliest = key, existing.Expires
+			}
+		}
+	}
+	// Anonymous entries have their own cap and can only displace anonymous state.
+	if len(d.sessions) >= 256 || (!authenticated && anonymous >= 128) {
+		if oldest == "" {
+			return session{}, errors.New("session_capacity")
+		}
+		delete(d.sessions, oldest)
 	}
 	d.sessions[key] = entry
 	http.SetCookie(w, &http.Cookie{
@@ -244,8 +278,21 @@ func (d *dashboard) render(w http.ResponseWriter, name string, value any) {
 }
 
 func (d *dashboard) loginPage(w http.ResponseWriter, r *http.Request) {
+	if entry, ok := d.current(r); ok {
+		if entry.Authenticated {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+		} else {
+			d.render(w, "login", entry)
+		}
+		return
+	}
 	entry, err := d.issue(w, r, nil)
 	if err != nil {
+		if err.Error() == "login_rate_limited" {
+			w.Header().Set("Retry-After", "60")
+			d.fail(w, http.StatusTooManyRequests, "login_rate_limited")
+			return
+		}
 		d.fail(w, http.StatusServiceUnavailable, "session_unavailable")
 		return
 	}

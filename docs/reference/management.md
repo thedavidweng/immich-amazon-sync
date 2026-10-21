@@ -6,7 +6,7 @@ when an admin passphrase file is configured. They share the normal listener;
 
 | Route | Form/behavior |
 | --- | --- |
-| `GET /login` | Issue pre-auth cookie and hidden `csrf` token. |
+| `GET /login` | Issue or reuse pre-auth cookie and hidden `csrf` token; authenticated users redirect home. |
 | `POST /login` | `csrf`, `password`; rotate session and CSRF on success. |
 | `POST /logout` | `csrf`; revoke session. |
 | `GET /` | Authenticated overview, aggregate durable counts and account controls. |

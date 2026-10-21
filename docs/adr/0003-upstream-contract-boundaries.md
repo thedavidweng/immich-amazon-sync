@@ -21,6 +21,9 @@ eligible. Reject v2 shared albums as unsupported because their search can omit
 other contributors. v3.3.4 keeps the existing flat request; other v2/v3 releases
 are not individually verified. Previously completed history needs a new full
 scan to discover archived originals omitted before this correction.
+Both v2 album metadata reads must request `withoutAssets=true`; v2 otherwise
+embeds all assets and defeats bounded discovery. The pinned v3 metadata
+response omits embedded assets and has no such query parameter.
 
 Pin the public aphotos SDK to revision
 `563dc061fffca89df49022227cc6b995e3f890a9`, Go pseudo-version

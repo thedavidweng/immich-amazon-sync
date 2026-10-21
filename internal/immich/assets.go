@@ -55,14 +55,30 @@ func (c *Client) Album(ctx context.Context, id string) (bridge.Album, error) {
 	if !uuid.MatchString(id) {
 		return bridge.Album{}, &bridge.Error{Code: bridge.Protocol}
 	}
-	var a albumResponse
-	if err := c.json(ctx, http.MethodGet, "/albums/"+id, nil, &a); err != nil {
+	version, err := c.Version(ctx)
+	if err != nil {
 		return bridge.Album{}, err
 	}
-	if a.ID != id {
-		return bridge.Album{}, &bridge.Error{Code: bridge.Protocol}
+	a, err := c.albumMetadata(ctx, id, version)
+	if err != nil {
+		return bridge.Album{}, err
 	}
 	return a.album()
+}
+
+func (c *Client) albumMetadata(ctx context.Context, id, version string) (albumResponse, error) {
+	path := "/albums/" + id
+	if strings.HasPrefix(version, "2.") {
+		path += "?withoutAssets=true"
+	}
+	var a albumResponse
+	if err := c.json(ctx, http.MethodGet, path, nil, &a); err != nil {
+		return albumResponse{}, err
+	}
+	if a.ID != id {
+		return albumResponse{}, &bridge.Error{Code: bridge.Protocol}
+	}
+	return a, nil
 }
 
 type assetResponse struct {
@@ -150,11 +166,11 @@ func (c *Client) Assets(ctx context.Context, scope bridge.Scope, cursor string) 
 		return bridge.Page{}, err
 	}
 	if strings.HasPrefix(version, "2.") && scope.AlbumID != "" {
-		var album albumResponse
-		if err := c.json(ctx, http.MethodGet, "/albums/"+scope.AlbumID, nil, &album); err != nil {
+		album, err := c.albumMetadata(ctx, scope.AlbumID, version)
+		if err != nil {
 			return bridge.Page{}, err
 		}
-		if _, err := album.album(); err != nil || album.ID != scope.AlbumID || album.Shared == nil {
+		if _, err := album.album(); err != nil || album.Shared == nil {
 			return bridge.Page{}, &bridge.Error{Code: bridge.Protocol}
 		}
 		if *album.Shared {

@@ -77,6 +77,9 @@ Do not expose the dashboard publicly; publish only on host loopback.
 | Diagnose a blocked or uncertain transfer | [Troubleshooting](docs/how-to/troubleshooting.md) |
 | Look up JSON fields and environment variables | [Configuration](docs/reference/configuration.md) |
 | Look up CLI, exits and health behavior | [CLI](docs/reference/cli.md) |
+| Set up trusted event hints and incremental polling | [Event hints](docs/how-to/event-hints.md) |
+| Understand managed album membership and uncertainty | [Managed albums](docs/how-to/managed-albums.md) |
+| Interpret progress counters and scheduling | [Status](docs/reference/status.md) |
 | Assess versions, regions and media limitations | [Compatibility evidence](docs/reference/compatibility.md) |
 | Understand identities and deletion safety | [Safety model](docs/explanation/safety.md) |
 | Understand deployment and upstream contract choices | [ADRs](docs/adr/) |
