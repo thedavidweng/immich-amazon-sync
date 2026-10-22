@@ -8,6 +8,7 @@ overview. There is no public JSON status endpoint.
 | Status field | Meaning |
 | --- | --- |
 | `pending`, `staged`, `running`, `unconfirmed`, `confirmed`, `existing`, `deletion_pending`, `deleted`, `failed`, `blocked`, `skipped` | Media counts by durable state. `confirmed` means a verified node at the configured target parent; `existing` means a verified copy already exists elsewhere in the same Amazon account (another folder or only inside an album) and was reused instead of uploading; `deletion_pending` means Immich reports the asset trashed and the mapped node awaits the sweep; `deleted` means the mapped node was moved to the Amazon trash; `skipped` is not a cloud backup. |
+| `exclusions` | Durable skip counts by finite reason, including eligibility filters (`media_type_excluded`, `raw_excluded`, `size_excluded`, `size_unknown`, `archived_excluded`, `tag_excluded`, `tag_provenance_unavailable`) and source conditions (`hidden`, `locked`, `offline`, `trashed`, `unsupported_type`, `source_excluded`, `live_photo_companion`). A policy change requeues filter-managed exclusions; a refreshed hint or reconciliation reevaluates them without a full rescan. |
 | `scanning` | Active full-scan rules without a completed generation. |
 | `paused`, `pause_reason` | Account pause; `pause_reason` is omitted when empty. Manual pause remains until resumed. |
 | `errors` | Counts by finite code, including media, active rules, hints and requested album work. |

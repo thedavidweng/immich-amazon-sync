@@ -10,6 +10,7 @@ immich-amazon-sync [--config PATH] [--account ID] [--json] COMMAND
 | `serve --setup --config PATH` | Explicit first UI setup with a mounted admin secret and a new writable config path. |
 | `sync once` | Start/resume a bounded explicit full-scan pass; can write media, managed membership and -- only when explicitly enabled -- Amazon trashing. |
 | `deletions plan` | Read-only manifest of assets pending deletion propagation: count, synced total, blocked reason and asset IDs. Changes nothing. |
+| `filters` | Print each account's effective eligibility policy (media types, maximum original size, RAW/archive rules and excluded tag IDs) from configuration only. Never contacts either remote or opens local state. |
 | `albums list` | Read accessible source album IDs, names and counts. |
 | `doctor` | Read-only remote diagnostics and local storage checks; no upload or album creation. |
 | `version` | Print the build version without credentials or config. |
@@ -34,9 +35,11 @@ Every process accessing a state volume must respect the single-writer boundary.
 Stop `serve` before running a separate stateful CLI invocation.
 
 Human-readable account lines report `confirmed`, `existing`, `deleted`,
-`deletion_pending`, `pending`, `failed` and `unconfirmed` media counts. `existing` means a verified copy was reused from
+`deletion_pending`, `pending`, `failed`, `unconfirmed` and total `excluded`
+media counts. `existing` means a verified copy was reused from
 elsewhere in the same Amazon account; it is backed up but not at the configured
-target parent. `--json` carries the full status object.
+target parent. `--json` carries the full status object including per-reason
+`exclusions`.
 
 For each selected account, one `sync once` invocation attempts at most 64 distinct
 media jobs and advances full discovery by at most eight page steps; an already

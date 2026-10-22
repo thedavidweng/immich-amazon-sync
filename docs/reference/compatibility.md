@@ -193,7 +193,7 @@ exercised.
 | Media/metadata | Intended handling | Evidence/limitation |
 | --- | --- | --- |
 | Eligible image original | Stream original bytes, stage within bounds, compute full MD5/size, verify remote evidence | Offline contracts; individual formats and Amazon rendering untested. |
-| Standalone video | Explicit `include_videos`; no transcoding | Quota, accepted codecs and playback require real-account testing. |
+| Standalone video | Explicit `filters.media_types` including `video`; no transcoding | Quota, accepted codecs and playback require real-account testing. |
 | HEIC/HEIF, RAW | Preserve eligible original bytes without claiming preview support | Experimental/unverified format behavior. |
 | Android embedded Motion Photo | Original image retains embedded motion bytes | No Amazon motion-playback guarantee. |
 | Apple Live Photo | Still and hidden MOV can be separate originals | Still-only backup does not preserve the complete pair; no full Live Photo claim. |

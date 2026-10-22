@@ -13,7 +13,7 @@ when an admin passphrase file is configured. They share the normal listener;
 | `GET /accounts/new` | Source and Destination editor for a new account. |
 | `GET /accounts/{id}/edit` | Existing account editor. |
 | `POST /accounts/discover` | `csrf`, source URL/key file and editor fields; source-only album lookup without save or scope selection. |
-| `POST /accounts/save` | `csrf`, `original_id`, `id`, `immich_url`, `key_file`, `region`, `cookie_file`, `album_ids`, repeated `album_id`, and optional `library`, `include_videos`, `mirror_albums`, `deletions`, `deletions_confirmation`. |
+| `POST /accounts/save` | `csrf`, `original_id`, `id`, `immich_url`, `key_file`, `region`, `cookie_file`, `album_ids`, repeated `album_id`, `media_image`, `media_video`, `max_original_bytes`, `skip_raw`, `include_archived`, `excluded_tags`, and optional `library`, `mirror_albums`, `deletions`, `deletions_confirmation`. |
 | `POST /accounts/{id}/pause`, `/resume`, `/retry`, `/doctor` | `csrf`; account control or read-only diagnostics, not a cloud-write probe. |
 | `POST /accounts/{id}/remove` | `csrf`; configuration removal, not local-history or cloud-media deletion. |
 

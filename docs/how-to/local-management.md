@@ -52,8 +52,9 @@ Source settings enter the trusted Immich URL and
 discovery neither saves configuration nor selects a scope. Choose stable album
 IDs or deliberately enable the whole accessible library, never both. In
 Destination settings choose the actual marketplace and
-`/run/secrets/amazon_cookie`. Leave videos and album mirroring off for a first
-small test. The UI accepts paths, not key or Cookie values.
+`/run/secrets/amazon_cookie`. Leave the default image-only filter and album
+mirroring off for a first small test. The UI accepts paths, not key or Cookie
+values.
 
 **Saving activates scheduled work and may write to Amazon.** Use disposable
 originals first and review [compatibility](../reference/compatibility.md).

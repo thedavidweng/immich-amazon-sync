@@ -66,7 +66,7 @@ Checked with `gh api repos/ImAleeexx/immich-gphotos/pulls/<n>`; `merged` was
 | Per-account workers and uplink byte cap | Global-ish worker/cap | Workers + byte cap existing | Offline contract | #17 preserves; #20/#27 clarify |
 | Configurable retry policy | Engine object | Fixed conservative bounds | Not yet tested | #27 |
 | Filters: type, video, size, RAW, archive, tags, album allowlist | Engine partial | Limited type/video/scope | Offline contract | #21 |
-| Durable, reevaluable, non-destructive exclusions | Partial | Skip reasons only | Not yet tested | #21 |
+| Durable, reevaluable, non-destructive exclusions | Partial | Skip reasons only | Offline contract | #21 |
 | Categorized storage usage (`photo`, `video`, `other`, `lastCalculated`) | Quota mode proxy | SDK supports; not surfaced | Offline contract | #22 |
 | Honest unknown capacity; no quality selector | No | Original bytes only | Unsupported (quality modes not ported) | #22 |
 | Video advisory threshold and opt-in hold; quota error classification | No | No | Not yet tested | #22 |
