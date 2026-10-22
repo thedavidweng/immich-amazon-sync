@@ -28,7 +28,7 @@ or force an upload to bypass uncertainty.
 
    Replace `album_ids` with the desired stable IDs. Names are display labels;
    identical names do not identify an album. Keep `library`, `include_videos`
-   and `mirror_albums` false for the first check.
+   and `album_sync_mode` (`off` for the first check) conservative.
 5. Diagnose configuration, credentials, remote identities and local storage:
 
    ```sh

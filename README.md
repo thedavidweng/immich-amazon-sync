@@ -3,7 +3,8 @@
 A self-hosted, one-way backup service: **Immich originals -> durable SQLite
 queue -> aphotos Go SDK -> Amazon Photos**. Run one container with one persistent
 data volume. Select source albums by ID; whole-library backup requires an
-explicit choice.
+explicit choice. Album mirroring is off by default and can be scoped to those
+selected albums or to every album the API key can read.
 
 Amazon Photos has no official public API. This service uses an unofficial SDK;
 sessions expire and upstream behavior can change. Keep an independent backup.
