@@ -18,6 +18,7 @@ type Options struct {
 	IncludeVideos   bool
 	MirrorAlbums    bool
 	Deletions       bool
+	Favorites       string
 	Workers         int
 	MaxStagingBytes int64
 	MaxStagingFiles int
@@ -52,6 +53,13 @@ type Status struct {
 	EventsFailed            int            `json:"events_failed"`
 	IncrementalScanning     bool           `json:"incremental_scanning"`
 	LastIncremental         *time.Time     `json:"last_incremental"`
+	FavoritesMode           string         `json:"favorites_mode"`
+	FavoritesDesired        int            `json:"favorites_desired"`
+	FavoritesPending        int            `json:"favorites_pending"`
+	FavoritesApplied        int            `json:"favorites_applied"`
+	FavoritesFailed         int            `json:"favorites_failed"`
+	FavoritesUncertain      int            `json:"favorites_uncertain"`
+	FavoritesUnknown        int            `json:"favorites_unknown"`
 	WorkRemaining           bool           `json:"work_remaining"`
 	NextAttempt             *time.Time     `json:"next_attempt,omitempty"`
 }
@@ -71,6 +79,7 @@ func New(store *Store, source bridge.Source, target bridge.Target, opts Options)
 	if store == nil || source == nil || target == nil || opts.AccountID == "" ||
 		(!opts.Library && len(opts.AlbumIDs) == 0) || (opts.Library && len(opts.AlbumIDs) != 0) ||
 		(opts.Library && opts.MirrorAlbums) ||
+		(opts.Favorites != "" && opts.Favorites != "off" && opts.Favorites != "add_only") ||
 		opts.Workers < 0 || opts.Workers > 32 || opts.MaxStagingBytes < 0 ||
 		opts.MaxStagingFiles < 0 || opts.BytesPerSecond < 0 {
 		return nil, errors.New("invalid_options")
@@ -131,6 +140,12 @@ func (e *Engine) Retry(ctx context.Context) error {
 		WHERE account_id=? AND state IN ('failed','blocked','unconfirmed') AND error_code!='source_changed'`, e.opts.AccountID)
 	if err == nil {
 		_, err = tx.ExecContext(ctx, `UPDATE hints SET attempts=0,next_at=0,error_code='' WHERE account_id=?`, e.opts.AccountID)
+	}
+	if err == nil {
+		// Every favorite attempt re-reads the node before writing, so an
+		// uncertain favorite mutation is safe to retry instead of a blind write.
+		_, err = tx.ExecContext(ctx, `UPDATE favorites SET attempts=0,next_at=0,error_code=''
+			WHERE account_id=? AND state IN ('pending','failed','uncertain')`, e.opts.AccountID)
 	}
 	if err == nil {
 		_, err = tx.ExecContext(ctx, `UPDATE albums SET attempts=0,next_at=0,error_code='' WHERE account_id=?`, e.opts.AccountID)
@@ -219,6 +234,20 @@ func (e *Engine) summary(ctx context.Context) (Status, error) {
 	if err = errors.Join(err, rows.Err(), rows.Close()); err != nil {
 		return st, errors.New("storage_unavailable")
 	}
+	st.FavoritesMode = e.favoriteMode()
+	err = e.store.db.QueryRowContext(ctx, `SELECT
+		coalesce(sum(desired=1),0),
+		coalesce(sum(state='pending'),0),
+		coalesce(sum(state='applied'),0),
+		coalesce(sum(state='failed'),0),
+		coalesce(sum(state='uncertain'),0),
+		coalesce(sum(state='unknown'),0)
+		FROM favorites WHERE account_id=?`, e.opts.AccountID).
+		Scan(&st.FavoritesDesired, &st.FavoritesPending, &st.FavoritesApplied,
+			&st.FavoritesFailed, &st.FavoritesUncertain, &st.FavoritesUnknown)
+	if err != nil {
+		return st, errors.New("storage_unavailable")
+	}
 	return st, nil
 }
 
@@ -285,9 +314,10 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 		UNION ALL SELECT a.error_code FROM albums a JOIN rules r ON r.account_id=a.account_id AND r.scope=a.scope
 			WHERE a.account_id=? AND r.active=1 AND ?
 		UNION ALL SELECT m.error_code FROM memberships m JOIN rules r ON r.account_id=m.account_id AND r.scope=m.scope
-			WHERE m.account_id=? AND r.active=1 AND ?) WHERE error_code!='' GROUP BY error_code`,
+			WHERE m.account_id=? AND r.active=1 AND ?
+		UNION ALL SELECT error_code FROM favorites WHERE account_id=?) WHERE error_code!='' GROUP BY error_code`,
 		e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.Library,
-		e.opts.AccountID, e.opts.MirrorAlbums, e.opts.AccountID, e.opts.MirrorAlbums)
+		e.opts.AccountID, e.opts.MirrorAlbums, e.opts.AccountID, e.opts.MirrorAlbums, e.opts.AccountID)
 	if err != nil {
 		return st, errors.New("storage_unavailable")
 	}
@@ -313,9 +343,11 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 		 AND next_at<=unixepoch('subsec')*1000)+
 		(SELECT count(*) FROM albums a JOIN rules r ON r.account_id=a.account_id AND r.scope=a.scope
 		 WHERE a.account_id=? AND ? AND r.active=1 AND r.complete=1 AND a.state NOT IN ('creating','unconfirmed')
-		 AND a.error_code!='' AND a.attempts<5 AND a.next_at<=unixepoch('subsec')*1000)`,
+		 AND a.error_code!='' AND a.attempts<5 AND a.next_at<=unixepoch('subsec')*1000)+
+		(SELECT count(*) FROM favorites WHERE account_id=? AND ? AND state IN ('pending','failed','uncertain')
+		 AND attempts<5 AND next_at<=unixepoch('subsec')*1000 AND `+favoriteEligibleSQL+`)`,
 		e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID,
-		e.opts.AccountID, e.opts.MirrorAlbums).Scan(&due)
+		e.opts.AccountID, e.opts.MirrorAlbums, e.opts.AccountID, e.favoritesOn()).Scan(&due)
 	if err != nil {
 		return st, errors.New("storage_unavailable")
 	}
@@ -329,9 +361,11 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 		UNION ALL SELECT next_at FROM rules WHERE account_id=? AND active=1 AND complete=0 AND attempts<5
 		UNION ALL SELECT a.next_at FROM albums a JOIN rules r ON r.account_id=a.account_id AND r.scope=a.scope
 			WHERE a.account_id=? AND ? AND r.active=1 AND a.attempts<5 AND a.error_code!=''
-			AND a.state NOT IN ('creating','unconfirmed')) WHERE next_at>unixepoch('subsec')*1000`,
+			AND a.state NOT IN ('creating','unconfirmed')
+		UNION ALL SELECT next_at FROM favorites WHERE account_id=? AND ? AND state IN ('pending','failed','uncertain')
+			AND attempts<5 AND `+favoriteEligibleSQL+`) WHERE next_at>unixepoch('subsec')*1000`,
 		e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID,
-		e.opts.MirrorAlbums).Scan(&next)
+		e.opts.MirrorAlbums, e.opts.AccountID, e.favoritesOn()).Scan(&next)
 	if err != nil {
 		return st, errors.New("storage_unavailable")
 	}
@@ -436,6 +470,9 @@ func (e *Engine) run(ctx context.Context, full, incremental bool) error {
 			break
 		}
 	}
+	if err := e.sweepFavorites(ctx); err != nil {
+		workErr = err
+	}
 	if err := e.sweepDeletions(ctx); err != nil {
 		workErr = err
 		if errorCode(err) == "deletion_guard" {
@@ -504,7 +541,8 @@ func errorCode(err error) string {
 	}
 	switch code {
 	case bridge.Authentication, bridge.Permission, bridge.RateLimit, bridge.Unavailable,
-		bridge.NotFound, bridge.Conflict, bridge.Unconfirmed, bridge.Protocol, bridge.Unsupported,
+		bridge.NotFound, bridge.Conflict, bridge.Unconfirmed, bridge.FavoriteUnconfirmed,
+		bridge.Protocol, bridge.Unsupported,
 		"identity_unavailable", "identity_mismatch", "storage_unavailable", "staging_quota",
 		"checksum_mismatch", "size_mismatch", "staging_corrupt", "unsafe_filename", "source_changed", "canceled",
 		"invalid_event", "album_unconfirmed", "membership_guard", "deletion_guard":

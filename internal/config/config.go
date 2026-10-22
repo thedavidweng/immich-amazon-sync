@@ -41,6 +41,10 @@ type Account struct {
 	Library       bool     `json:"library"`
 	IncludeVideos bool     `json:"include_videos"`
 	MirrorAlbums  bool     `json:"mirror_albums"`
+	// Favorites is "off" (default) or "add_only". Add-only stars a verified
+	// node when the source explicitly reports the asset favorite and never
+	// unstars.
+	Favorites string `json:"favorites,omitempty"`
 	// Deletions propagates a source trash to the Amazon node. Enabling it also
 	// requires DeletionConfirmation to equal DeletionConfirmationPhrase.
 	Deletions            bool   `json:"deletions"`
@@ -100,6 +104,7 @@ func Load(path string) (Config, error) {
 			CookieFile:   os.Getenv("AMAZON_COOKIE_FILE"), cookie: os.Getenv("AMAZON_COOKIE"),
 			AlbumIDs:      splitIDs(os.Getenv("ALBUM_IDS")),
 			IncludeVideos: includeVideos,
+			Favorites:     os.Getenv("FAVORITES"),
 		}}
 	}
 	if value := os.Getenv("DATA_DIR"); value != "" {
@@ -171,6 +176,11 @@ func (c Config) Validate() error {
 		}
 		if account.Deletions && account.DeletionConfirmation != DeletionConfirmationPhrase {
 			return errors.New("deletion_confirmation_required")
+		}
+		switch account.Favorites {
+		case "", "off", "add_only":
+		default:
+			return errors.New("favorites_invalid")
 		}
 		for _, id := range account.AlbumIDs {
 			if !identifier.MatchString(id) {
