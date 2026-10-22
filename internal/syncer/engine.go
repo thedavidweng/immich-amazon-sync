@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/thedavidweng/immich-amazon-sync/internal/bridge"
+	"github.com/thedavidweng/immich-amazon-sync/internal/direct"
 )
 
 type Options struct {
@@ -22,7 +23,10 @@ type Options struct {
 	MaxStagingBytes int64
 	MaxStagingFiles int
 	BytesPerSecond  int64
-	Logger          *slog.Logger
+	// DirectRoots are operator-approved read-only mappings. Empty keeps every
+	// original on the Immich API.
+	DirectRoots []direct.Root
+	Logger      *slog.Logger
 }
 
 type Status struct {
@@ -57,6 +61,7 @@ type Status struct {
 	LastIncremental         *time.Time     `json:"last_incremental"`
 	WorkRemaining           bool           `json:"work_remaining"`
 	NextAttempt             *time.Time     `json:"next_attempt,omitempty"`
+	Direct                  DirectCounters `json:"direct"`
 }
 
 type Engine struct {
@@ -68,6 +73,7 @@ type Engine struct {
 	rateAt    time.Time
 	contentMu sync.Mutex
 	contents  map[string]*contentLock
+	direct    *direct.Set
 }
 
 func New(store *Store, source bridge.Source, target bridge.Target, opts Options) (*Engine, error) {
@@ -98,11 +104,15 @@ func New(store *Store, source bridge.Source, target bridge.Target, opts Options)
 		opts.MaxStagingFiles = 2
 	}
 	opts.AlbumIDs = append([]string(nil), opts.AlbumIDs...)
+	directSet, err := direct.New(opts.DirectRoots)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := store.db.Exec("INSERT INTO accounts(id) VALUES(?) ON CONFLICT DO NOTHING", opts.AccountID); err != nil {
 		return nil, errors.New("storage_unavailable")
 	}
 	return &Engine{store: store, source: source, target: target, opts: opts,
-		contents: make(map[string]*contentLock)}, nil
+		contents: make(map[string]*contentLock), direct: directSet}, nil
 }
 
 func (e *Engine) Pause(ctx context.Context, paused bool) error {
@@ -247,6 +257,7 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		return st, err
 	}
+	st.Direct = e.store.directCounters(e.opts.AccountID)
 	err = e.store.db.QueryRowContext(ctx, "SELECT count(*) FROM rules WHERE account_id=? AND active=1 AND complete=0",
 		e.opts.AccountID).Scan(&st.Scanning)
 	if err != nil {
@@ -539,6 +550,7 @@ func errorCode(err error) string {
 		bridge.NotFound, bridge.Conflict, bridge.Unconfirmed, bridge.Protocol, bridge.Unsupported,
 		"identity_unavailable", "identity_mismatch", "storage_unavailable", "staging_quota",
 		"checksum_mismatch", "size_mismatch", "staging_corrupt", "unsafe_filename", "source_changed", "canceled",
+		"direct_path_invalid", "direct_path_escape", "direct_path_not_regular",
 		"invalid_event", "album_unconfirmed", "membership_guard", "deletion_guard", "album_inaccessible":
 		return code
 	}

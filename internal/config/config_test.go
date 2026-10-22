@@ -151,3 +151,70 @@ func TestDeletionPropagationRequiresTypedConfirmation(t *testing.T) {
 		t.Fatalf("disabled deletion was gated: %v", err)
 	}
 }
+
+func TestDirectRootsAreOptInAndValidated(t *testing.T) {
+	dir := t.TempDir()
+	key, cookie := filepath.Join(dir, "key"), filepath.Join(dir, "cookie")
+	for path, value := range map[string]string{key: "private-key\n", cookie: "private-cookie\n"} {
+		if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	account := `{"id":"home","immich_url":"http://immich:2283","immich_api_key_file":"` + key +
+		`","amazon_region":"ca","amazon_cookie_file":"` + cookie + `","library":true`
+	path := filepath.Join(dir, "config.json")
+	load := func(t *testing.T, body string) (config.Config, error) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(`{"accounts":[`+body+`]}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return config.Load(path)
+	}
+	cfg, err := load(t, account+`}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("absent direct roots must stay valid and disabled: %v", err)
+	}
+	if len(cfg.Accounts[0].Roots()) != 0 {
+		t.Fatal("direct reads were enabled without an explicit mapping")
+	}
+	cfg, err = load(t, account+`,"direct_roots":[{"immich_path":"/immich/upload","host_path":"/originals"}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("approved mapping rejected: %v", err)
+	}
+	roots := cfg.Accounts[0].Roots()
+	if len(roots) != 1 || roots[0].ImmichPath != "/immich/upload" || roots[0].HostPath != "/originals" {
+		t.Fatalf("mapping lost: %+v", roots)
+	}
+	saved := filepath.Join(dir, "saved.json")
+	if err := cfg.Save(saved); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := config.Load(saved)
+	if err != nil || len(reloaded.Accounts[0].DirectRoots) != 1 ||
+		reloaded.Accounts[0].DirectRoots[0] != (config.DirectRoot{ImmichPath: "/immich/upload", HostPath: "/originals"}) {
+		t.Fatalf("mapping was not persisted: %+v, %v", reloaded.Accounts, err)
+	}
+	for name, mapping := range map[string]string{
+		"relative host root":   `{"immich_path":"/immich/upload","host_path":"originals"}`,
+		"relative immich path": `{"immich_path":"upload","host_path":"/originals"}`,
+		"unclean immich path":  `{"immich_path":"/immich/upload/","host_path":"/originals"}`,
+		"empty mapping":        `{}`,
+		"duplicate mapping":    `{"immich_path":"/immich/upload","host_path":"/originals"},{"immich_path":"/immich/upload","host_path":"/other"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg, err := load(t, account+`,"direct_roots":[`+mapping+`]}`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := cfg.Validate(); err == nil || err.Error() != "direct_root_invalid" {
+				t.Fatalf("unsafe mapping accepted: %v", err)
+			}
+		})
+	}
+}

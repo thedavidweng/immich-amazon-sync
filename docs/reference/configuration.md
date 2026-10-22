@@ -33,6 +33,7 @@ See [config.example.json](config.example.json) for the minimal deployment shape.
 | `mirror_albums` | unset | Deprecated boolean form of `album_sync_mode`. `true` maps to `selected` and never to `all_accessible`; combining it with a different mode returns `album_sync_mode_conflict`. |
 | `deletions` | `false` | Propagate an Immich trash to the Amazon trash for mapped assets. Off by default; never permanently deletes. |
 | `deletions_confirmation` | unset | Must be exactly `ENABLE DELETIONS` while `deletions` is true; a missing or different phrase rejects the config with `deletion_confirmation_required`. |
+| `direct_roots` | empty | Optional read-only mappings from an Immich-reported path prefix to a local directory. Each entry has `immich_path` and `host_path`; both must be absolute and clean, and `immich_path` must be unique. Empty means every original is downloaded from Immich. |
 
 At least one album or explicit library mode is required for each account.
 Account IDs must be unique. Zero accounts is only valid when local management
@@ -53,6 +54,15 @@ mirroring, explicitly set `library: true`, `album_ids: []` and
 Existing `mirror_albums: true` configurations keep exactly their selected album
 scope; the legacy boolean never enables `all_accessible`. Unsetting it leaves
 album mirroring off. An unknown mode returns `album_sync_mode_invalid`.
+
+`direct_roots` is opt-in and has no default mapping. Only regular files under an
+approved root are read; a missing path, an absent mount or a permission error
+falls back to the Immich API, while an unclean path, an escaping symlink or a
+non-regular file fails closed with a finite `direct_path_*` code. The mount is
+never written or retimed. Invalid entries reject the config with
+`direct_root_invalid`. See
+[direct originals](../how-to/direct-originals.md) for the Compose overlay,
+safety rules and diagnostics.
 
 Events do not change source scope. See [event setup](../how-to/event-hints.md),
 [managed albums](../how-to/managed-albums.md) and

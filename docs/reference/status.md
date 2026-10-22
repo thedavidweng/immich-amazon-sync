@@ -27,6 +27,7 @@ overview. There is no public JSON status endpoint.
 | `last_incremental` | Completed library discovery watermark, or `null`; this is the scan-start boundary, not proof of transfer completion. |
 | `work_remaining` | Unpaused work is eligible for continuation now. False does not mean every job succeeded. |
 | `next_attempt` | Optional earliest scheduled retry timestamp; omitted when none is scheduled or the account is paused. |
+| `direct` | Process-local read-only mount diagnostics: `reads`, `bytes_avoided`, per-reason `fallbacks` and fail-closed `failures`. Counters reset on restart and never contain a path. Zero everywhere when no `direct_roots` mapping is configured. |
 
 Counts such as pending, failed and unconfirmed album work overlap; do not add
 them to infer a total. Disabling album mirroring reports zero album/association
