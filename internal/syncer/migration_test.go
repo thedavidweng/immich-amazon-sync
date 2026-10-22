@@ -652,3 +652,85 @@ func TestVersionSevenStoreAddsLivePhotoPairsWithoutWideningScope(t *testing.T) {
 		t.Fatalf("migration created pair work: %d, %v", pairs, err)
 	}
 }
+
+// A version 9 store is one step from current: the pair ledger is added, the
+// drift-audit column stays, and every favorite and usage row is untouched.
+// Reopening the resulting version 10 store runs no step at all.
+func TestVersionNineStoreAddsLivePhotoPairsWithoutTouchingFavoritesOrUsage(t *testing.T) {
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "sync.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema, err := os.ReadFile("testdata/v9.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(string(schema)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO accounts(id,source_identity,target_identity,filter_fingerprint)
+		VALUES('account','source','target','fingerprint');
+		INSERT INTO favorites(account_id,node_id,desired,applied,observed,state,checked_at)
+		VALUES('account','node','1','1','1','applied',7);
+		INSERT INTO usage(account_id,observed_at,last_calculated,categories,hold)
+		VALUES('account','2026-10-22T00:00:00Z','2026-10-21T00:00:00Z','[{"type":"photo"}]',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := syncer.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// A second open is the version 10 "already current" path: no step runs, so
+	// a re-run would fail on the duplicate live_pairs table.
+	store, err = syncer.Open(dir)
+	if err != nil {
+		t.Fatalf("version 10 store did not reopen: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = sql.Open("sqlite", filepath.Join(dir, "sync.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var version int
+	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 10 {
+		t.Fatalf("schema version = %d, %v", version, err)
+	}
+	var mode string
+	if err = db.QueryRow("SELECT live_photo_mode FROM accounts WHERE id='account'").Scan(&mode); err != nil || mode != "" {
+		t.Fatalf("existing account gained a pair mode: %q, %v", mode, err)
+	}
+	var pairs int
+	if err = db.QueryRow("SELECT count(*) FROM live_pairs").Scan(&pairs); err != nil || pairs != 0 {
+		t.Fatalf("migration created pair work: %d, %v", pairs, err)
+	}
+	var desired, applied, observed, checked int
+	var state string
+	if err = db.QueryRow(`SELECT desired,applied,observed,state,checked_at FROM favorites
+		WHERE account_id='account' AND node_id='node'`).Scan(&desired, &applied, &observed, &state, &checked); err != nil {
+		t.Fatal(err)
+	}
+	if desired != 1 || applied != 1 || observed != 1 || state != "applied" || checked != 7 {
+		t.Fatalf("migration disturbed the favorite row: desired=%d applied=%d observed=%d state=%s checked=%d",
+			desired, applied, observed, state, checked)
+	}
+	var observedAt, lastCalculated, categories string
+	var hold int
+	if err = db.QueryRow(`SELECT observed_at,last_calculated,categories,hold FROM usage
+		WHERE account_id='account'`).Scan(&observedAt, &lastCalculated, &categories, &hold); err != nil {
+		t.Fatal(err)
+	}
+	if observedAt != "2026-10-22T00:00:00Z" || lastCalculated != "2026-10-21T00:00:00Z" ||
+		categories != `[{"type":"photo"}]` || hold != 1 {
+		t.Fatalf("migration disturbed the usage row: %q %q %q %d", observedAt, lastCalculated, categories, hold)
+	}
+}
