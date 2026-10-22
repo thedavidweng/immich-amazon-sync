@@ -103,7 +103,7 @@ func TestReusedRemoteContentStillReceivesAlbumMembership(t *testing.T) {
 	d := newAlbumTarget()
 	d.nodes = []bridge.Node{albumOnly("remote-node", "old-name.jpg", "5d41402abc4b2a76b9719d911017c592", 5)}
 	opts := options()
-	opts.MirrorAlbums = true
+	opts.AlbumSyncMode = bridge.AlbumSyncSelected
 	e := engine(t, store, s, d, opts)
 	if err := e.Once(t.Context()); err != nil {
 		t.Fatal(err)

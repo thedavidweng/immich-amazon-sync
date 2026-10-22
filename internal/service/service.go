@@ -265,7 +265,7 @@ func newEngine(store *syncer.Store, cfg config.Config, account config.Account, l
 	}
 	engine, err := syncer.New(store, source, target, syncer.Options{
 		AccountID: account.ID, AlbumIDs: account.AlbumIDs, Library: account.Library,
-		IncludeVideos: account.IncludeVideos, MirrorAlbums: account.MirrorAlbums,
+		IncludeVideos: account.IncludeVideos, AlbumSyncMode: account.AlbumMode(),
 		Deletions: account.Deletions,
 		Workers:   cfg.Workers, MaxStagingBytes: cfg.MaxStagingBytes,
 		MaxStagingFiles: cfg.MaxStagingFiles, BytesPerSecond: cfg.BytesPerSecond,

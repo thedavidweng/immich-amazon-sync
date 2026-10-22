@@ -33,10 +33,11 @@ The command's `--help` is authoritative for additional management operations.
 Every process accessing a state volume must respect the single-writer boundary.
 Stop `serve` before running a separate stateful CLI invocation.
 
-Human-readable account lines report `confirmed`, `existing`, `deleted`,
-`deletion_pending`, `pending`, `failed` and `unconfirmed` media counts. `existing` means a verified copy was reused from
-elsewhere in the same Amazon account; it is backed up but not at the configured
-target parent. `--json` carries the full status object.
+Human-readable account lines report `album_sync_mode`, `confirmed`, `existing`,
+`deleted`, `deletion_pending`, `pending`, `failed`, `unconfirmed`,
+`albums_active` and `albums_inaccessible`. `existing` means a verified copy was
+reused from elsewhere in the same Amazon account; it is backed up but not at the
+configured target parent. `--json` carries the full status object.
 
 For each selected account, one `sync once` invocation attempts at most 64 distinct
 media jobs and advances full discovery by at most eight page steps; an already
