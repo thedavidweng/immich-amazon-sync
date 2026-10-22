@@ -90,6 +90,16 @@ func (s *Store) directCounters(account string) DirectCounters {
 	return counters
 }
 
+// schemaVersion is the highest ledger schema this binary understands. An
+// unknown version — newer than this head, or an out-of-range header value —
+// fails closed instead of being migrated, treated as current or rewritten.
+const schemaVersion = 10
+
+// errUnsupportedSchema is the finite failure for an unknown ledger schema. The
+// CLI and service code classify it as a local-storage error, so the operator
+// sees why an older binary refused a newer volume.
+var errUnsupportedSchema = errors.New("unsupported_schema")
+
 func Open(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		return nil, errors.New("storage_unavailable")
@@ -126,6 +136,9 @@ func Open(dataDir string) (*Store, error) {
 	}
 	if err != nil {
 		s.Close()
+		if errors.Is(err, errUnsupportedSchema) {
+			return nil, err
+		}
 		return nil, errors.New("storage_unavailable")
 	}
 	return s, nil
@@ -210,8 +223,8 @@ func (s *Store) migrate() error {
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 10 {
-		return errors.New("unsupported_schema")
+	if version < 0 || version > schemaVersion {
+		return errUnsupportedSchema
 	}
 	steps := []func() error{s.migrateP1, s.migrateP2, s.migrateP3, s.migrateP4,
 		s.migrateP5, s.migrateP6, s.migrateP7, s.migrateP8, s.migrateP9}

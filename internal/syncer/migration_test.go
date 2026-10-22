@@ -1,8 +1,12 @@
 package syncer_test
 
 import (
+	"compress/gzip"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -732,5 +736,478 @@ func TestVersionNineStoreAddsLivePhotoPairsWithoutTouchingFavoritesOrUsage(t *te
 	if observedAt != "2026-10-22T00:00:00Z" || lastCalculated != "2026-10-21T00:00:00Z" ||
 		categories != `[{"type":"photo"}]` || hold != 1 {
 		t.Fatalf("migration disturbed the usage row: %q %q %q %d", observedAt, lastCalculated, categories, hold)
+	}
+}
+
+// One live version-3 ledger exercises the whole release upgrade path: every
+// durable category the gate promises survives to the current head, no new
+// mutating feature gains scope, and the migrated store reopens without a step.
+// Version 3 is the schema of the deployed release at issue #16's baseline.
+func TestVersionThreeLiveSchemaUpgradePreservesEveryDurableState(t *testing.T) {
+	dir := t.TempDir()
+	staging := filepath.Join(dir, "staging")
+	if err := os.MkdirAll(staging, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const staged = "original-staged"
+	if err := os.WriteFile(filepath.Join(staging, staged), []byte("staged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staging, "original-orphan"), []byte("orphan"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "sync.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema, err := os.ReadFile("testdata/v3.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(string(schema)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO accounts(id,source_identity,target_identity,pause_reason,last_success,error_code)
+		VALUES('account','source-identity','target-identity','paused by operator','2026-01-01T00:00:00Z','remote_unavailable');
+		INSERT INTO rules(account_id,scope,album_id,active,generation,cursor,complete,expected,error_code,name,completed_at,started_at,attempts,next_at)
+		VALUES('account','album:album-a','album-a',1,2,'album-cursor',1,3,'','Family','2026-01-01T00:00:00Z','2026-01-01T00:00:01Z',2,77),
+		       ('account','library','',1,1,'library-cursor',0,-1,'','Library','','',0,0);
+		INSERT INTO albums(account_id,scope,target_id,name,applied_name,state,error_code,attempts,next_at,baseline,complete_generation)
+		VALUES('account','album:album-a','owned-album','Family','Family','confirmed','',0,0,2,2);
+		INSERT INTO memberships(account_id,scope,node_id,owned,state,error_code,attempts,next_at)
+		VALUES('account','album:album-a','node-one',1,'present','',0,0),
+		       ('account','album:album-a','node-two',0,'present','',0,0);
+		INSERT INTO scan_cursors(account_id,scope,token) VALUES('account','album:album-a','page-7');
+		INSERT INTO incremental(account_id,watermark,since,started_at,cursor,active,error_code)
+		VALUES('account','watermark-9','2026-01-01T00:00:00Z','2026-01-01T00:01:00Z','cursor-9',1,'');
+		INSERT INTO incremental_tokens(account_id,token) VALUES('account','token-9');
+		INSERT INTO incremental_seen(account_id,asset_id) VALUES('account','one');
+		INSERT INTO hints(account_id,asset_id,priority,version,attempts,next_at,error_code)
+		VALUES('account','one',10,3,2,1234,'');
+		INSERT INTO signals(account_id,scope,asset_id,generation) VALUES('account','album:album-a','one',2);
+		INSERT INTO scope_assets(account_id,scope,asset_id,generation)
+		VALUES('account','album:album-a','one',2),
+		       ('account','album:album-a','two',2),
+		       ('account','library','three',1)`); err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := json.Marshal(photo("one"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedAsset := func(id, state, code string, attempts int, nextAt int64, stage, md5, sha1 string,
+		size int64, node, prior string, priority int) {
+		t.Helper()
+		if _, err := db.Exec(`INSERT INTO assets(account_id,id,metadata,state,error_code,attempts,next_at,stage_name,md5,sha1,size,node_id,priority,prior_state)
+			VALUES('account',?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			id, string(metadata), state, code, attempts, nextAt, stage, md5, sha1, size, node, priority, prior); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedAsset("one", "confirmed", "", 0, 0, "", "md5-one", "sha1-one", 5, "node-one", "", 10)
+	seedAsset("two", "existing", "", 0, 0, "", "md5-two", "sha1-two", 5, "node-two", "", 0)
+	seedAsset("three", "delete_pending", "", 0, 0, "", "md5-three", "sha1-three", 5, "node-three", "confirmed", 0)
+	seedAsset("four", "deleted", "", 0, 0, "", "md5-four", "sha1-four", 5, "node-four", "confirmed", 0)
+	seedAsset("five", "unconfirmed", "upload_unconfirmed", 2, 1234, staged, "md5-five", "sha1-five", 7, "", "", 0)
+	seedAsset("video", "skipped", "video_disabled", 0, 0, "", "", "", 0, "", "", 0)
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := syncer.Open(dir)
+	if err != nil {
+		t.Fatalf("live version-3 ledger refused the upgrade: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := sql.Open("sqlite", filepath.Join(dir, "sync.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	var version int
+	if err := raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 10 {
+		t.Fatalf("schema version = %d, %v", version, err)
+	}
+	var sourceIdentity, targetIdentity, pauseReason, lastSuccess, accountError, fingerprint, mode string
+	if err := raw.QueryRow(`SELECT source_identity,target_identity,pause_reason,last_success,error_code,
+		filter_fingerprint,live_photo_mode FROM accounts WHERE id='account'`).
+		Scan(&sourceIdentity, &targetIdentity, &pauseReason, &lastSuccess, &accountError, &fingerprint, &mode); err != nil {
+		t.Fatal(err)
+	}
+	if sourceIdentity != "source-identity" || targetIdentity != "target-identity" ||
+		pauseReason != "paused by operator" || lastSuccess != "2026-01-01T00:00:00Z" ||
+		accountError != "remote_unavailable" || fingerprint != "" || mode != "" {
+		t.Fatalf("account identity or safe defaults changed: %q %q %q %q %q %q %q",
+			sourceIdentity, targetIdentity, pauseReason, lastSuccess, accountError, fingerprint, mode)
+	}
+
+	for _, want := range []struct {
+		id, state, code, stage, md5, sha1, node, prior, exclusion string
+		attempts, nextAt, size, priority, favorite                int64
+	}{
+		{id: "one", state: "confirmed", md5: "md5-one", sha1: "sha1-one", size: 5, node: "node-one", priority: 10, favorite: -1},
+		{id: "two", state: "existing", md5: "md5-two", sha1: "sha1-two", size: 5, node: "node-two", favorite: -1},
+		{id: "three", state: "delete_pending", md5: "md5-three", sha1: "sha1-three", size: 5, node: "node-three",
+			prior: "confirmed", favorite: -1},
+		{id: "four", state: "deleted", md5: "md5-four", sha1: "sha1-four", size: 5, node: "node-four",
+			prior: "confirmed", favorite: -1},
+		{id: "five", state: "unconfirmed", code: "upload_unconfirmed", stage: staged, md5: "md5-five",
+			sha1: "sha1-five", size: 7, attempts: 2, nextAt: 1234, favorite: -1},
+		{id: "video", state: "skipped", exclusion: filter.MediaType, favorite: -1},
+	} {
+		var gotState, gotCode, gotStage, gotMD5, gotSHA1, gotNode, gotPrior, gotExclusion string
+		var gotAttempts, gotNext, gotSize, gotPriority, gotFavorite int64
+		if err := raw.QueryRow(`SELECT state,error_code,stage_name,md5,sha1,size,node_id,priority,prior_state,exclusion,favorite,attempts,next_at
+			FROM assets WHERE account_id='account' AND id=?`, want.id).
+			Scan(&gotState, &gotCode, &gotStage, &gotMD5, &gotSHA1, &gotSize, &gotNode, &gotPriority,
+				&gotPrior, &gotExclusion, &gotFavorite, &gotAttempts, &gotNext); err != nil {
+			t.Fatal(err)
+		}
+		if gotState != want.state || gotCode != want.code || gotStage != want.stage || gotMD5 != want.md5 ||
+			gotSHA1 != want.sha1 || gotSize != want.size || gotNode != want.node || gotPriority != want.priority ||
+			gotPrior != want.prior || gotExclusion != want.exclusion || gotFavorite != want.favorite ||
+			gotAttempts != want.attempts || gotNext != want.nextAt {
+			t.Fatalf("asset %s changed across the upgrade: state=%q code=%q stage=%q md5=%q sha1=%q size=%d node=%q priority=%d prior=%q exclusion=%q favorite=%d attempts=%d next=%d",
+				want.id, gotState, gotCode, gotStage, gotMD5, gotSHA1, gotSize, gotNode, gotPriority,
+				gotPrior, gotExclusion, gotFavorite, gotAttempts, gotNext)
+		}
+	}
+
+	for _, want := range []struct {
+		scope, albumID, cursor, origin string
+		generation, complete, expected int64
+	}{
+		{scope: "album:album-a", albumID: "album-a", cursor: "album-cursor", origin: "explicit",
+			generation: 2, complete: 1, expected: 3},
+		{scope: "library", albumID: "", cursor: "library-cursor", origin: "explicit",
+			generation: 1, complete: 0, expected: -1},
+	} {
+		var albumID, cursor, origin, name string
+		var generation, complete, expected, discovered int64
+		if err := raw.QueryRow(`SELECT album_id,cursor,origin,discovered,generation,complete,expected,name
+			FROM rules WHERE account_id='account' AND scope=?`, want.scope).
+			Scan(&albumID, &cursor, &origin, &discovered, &generation, &complete, &expected, &name); err != nil {
+			t.Fatal(err)
+		}
+		if albumID != want.albumID || cursor != want.cursor || origin != want.origin || discovered != 1 ||
+			generation != want.generation || complete != want.complete || expected != want.expected {
+			t.Fatalf("rule %s changed across the upgrade: album=%q cursor=%q origin=%q discovered=%d generation=%d complete=%d expected=%d",
+				want.scope, albumID, cursor, origin, discovered, generation, complete, expected)
+		}
+	}
+	var targetID, appliedName, albumState string
+	var baseline, completeGeneration int64
+	if err := raw.QueryRow(`SELECT target_id,applied_name,state,baseline,complete_generation
+		FROM albums WHERE account_id='account' AND scope='album:album-a'`).
+		Scan(&targetID, &appliedName, &albumState, &baseline, &completeGeneration); err != nil {
+		t.Fatal(err)
+	}
+	if targetID != "owned-album" || appliedName != "Family" || albumState != "confirmed" ||
+		baseline != 2 || completeGeneration != 2 {
+		t.Fatalf("album ownership changed: target=%q applied=%q state=%q baseline=%d generation=%d",
+			targetID, appliedName, albumState, baseline, completeGeneration)
+	}
+	var owned, unowned int
+	if err := raw.QueryRow(`SELECT sum(owned),count(*)-sum(owned) FROM memberships
+		WHERE account_id='account' AND scope='album:album-a'`).Scan(&owned, &unowned); err != nil {
+		t.Fatal(err)
+	}
+	if owned != 1 || unowned != 1 {
+		t.Fatalf("owned membership state changed: owned=%d unowned=%d", owned, unowned)
+	}
+	var cursorToken, watermark, since, incrementalCursor string
+	var active int
+	if err := raw.QueryRow(`SELECT token FROM scan_cursors WHERE account_id='account' AND scope='album:album-a'`).
+		Scan(&cursorToken); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.QueryRow(`SELECT watermark,since,cursor,active FROM incremental WHERE account_id='account'`).
+		Scan(&watermark, &since, &incrementalCursor, &active); err != nil {
+		t.Fatal(err)
+	}
+	var tokens, seen, hints, signals, scoped int
+	if err := raw.QueryRow(`SELECT count(*) FROM incremental_tokens WHERE account_id='account'`).Scan(&tokens); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.QueryRow(`SELECT count(*) FROM incremental_seen WHERE account_id='account'`).Scan(&seen); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.QueryRow(`SELECT count(*) FROM hints WHERE account_id='account'`).Scan(&hints); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.QueryRow(`SELECT count(*) FROM signals WHERE account_id='account'`).Scan(&signals); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.QueryRow(`SELECT count(*) FROM scope_assets WHERE account_id='account'`).Scan(&scoped); err != nil {
+		t.Fatal(err)
+	}
+	if cursorToken != "page-7" || watermark != "watermark-9" || since != "2026-01-01T00:00:00Z" ||
+		incrementalCursor != "cursor-9" || active != 1 || tokens != 1 || seen != 1 || hints != 1 ||
+		signals != 1 || scoped != 3 {
+		t.Fatalf("event cursor or discovery state changed: token=%q watermark=%q since=%q cursor=%q active=%d tokens=%d seen=%d hints=%d signals=%d scope_assets=%d",
+			cursorToken, watermark, since, incrementalCursor, active, tokens, seen, hints, signals, scoped)
+	}
+
+	for _, table := range []string{"favorites", "live_pairs", "workflows", "usage"} {
+		var rows int
+		if err := raw.QueryRow("SELECT count(*) FROM " + table).Scan(&rows); err != nil || rows != 0 {
+			t.Fatalf("migration invented %s work: rows=%d %v", table, rows, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(staging, staged)); err != nil {
+		t.Fatalf("migration released a staged original still referenced by an intent: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(staging, "original-orphan")); !os.IsNotExist(err) {
+		t.Fatalf("migration kept an unreferenced staging file: %v", err)
+	}
+
+	store, err = syncer.Open(dir)
+	if err != nil {
+		t.Fatalf("upgraded version-10 store did not reopen: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Every checked-in fixture is a real starting point for the upgrade path, not
+// just the one step it was introduced for. Each must reach the current head and
+// reopen without running a migration step twice.
+func TestEveryCheckedInFixtureUpgradesToHeadAndReopens(t *testing.T) {
+	for _, fixture := range []string{"v1.sql", "v3.sql", "v4.sql", "v5.sql", "v6.sql", "v7.sql", "v8.sql", "v9.sql"} {
+		t.Run(fixture, func(t *testing.T) {
+			dir := t.TempDir()
+			db, err := sql.Open("sqlite", filepath.Join(dir, "sync.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			schema, err := os.ReadFile(filepath.Join("testdata", fixture))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = db.Exec(string(schema)); err != nil {
+				t.Fatal(err)
+			}
+			if err = db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				store, err := syncer.Open(dir)
+				if err != nil {
+					t.Fatalf("%s did not upgrade or reopen: %v", fixture, err)
+				}
+				if err := store.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			raw, err := sql.Open("sqlite", filepath.Join(dir, "sync.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer raw.Close()
+			var version, livePairs, favoriteAudit, exclusion, liveMode, usage int
+			if err := raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 10 {
+				t.Fatalf("schema version = %d, %v", version, err)
+			}
+			for query, target := range map[string]*int{
+				"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='live_pairs'":     &livePairs,
+				"SELECT count(*) FROM pragma_table_info('favorites') WHERE name='checked_at'":     &favoriteAudit,
+				"SELECT count(*) FROM pragma_table_info('assets') WHERE name='exclusion'":         &exclusion,
+				"SELECT count(*) FROM pragma_table_info('accounts') WHERE name='live_photo_mode'": &liveMode,
+				"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='usage'":          &usage,
+			} {
+				if err := raw.QueryRow(query).Scan(target); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if livePairs != 1 || favoriteAudit != 1 || exclusion != 1 || liveMode != 1 || usage != 1 {
+				t.Fatalf("%s upgraded to an incomplete head schema: live_pairs=%d checked_at=%d exclusion=%d live_photo_mode=%d usage=%d",
+					fixture, livePairs, favoriteAudit, exclusion, liveMode, usage)
+			}
+		})
+	}
+}
+
+// An unknown schema version fails closed with the finite schema code instead of
+// being treated as current, rewritten, or reaching the migration dispatch and
+// panicking. Both a future version and an out-of-range negative header value are
+// unknown; the database keeps its version and its contents.
+func TestUnknownSchemaVersionsFailClosedWithTheSchemaCode(t *testing.T) {
+	for _, version := range []int{11, 999, -1} {
+		t.Run(fmt.Sprint(version), func(t *testing.T) {
+			dir := t.TempDir()
+			store, err := syncer.Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+			db, err := sql.Open("sqlite", filepath.Join(dir, "sync.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = db.Exec(`INSERT INTO accounts(id) VALUES('account')`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = db.Exec(fmt.Sprintf("PRAGMA user_version=%d;", version)); err != nil {
+				t.Fatal(err)
+			}
+			if err = db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = syncer.Open(dir); err == nil || err.Error() != "unsupported_schema" {
+				t.Fatalf("version %d was not refused with unsupported_schema: %v", version, err)
+			}
+			db, err = sql.Open("sqlite", filepath.Join(dir, "sync.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			var got, accounts int
+			if err := db.QueryRow("PRAGMA user_version").Scan(&got); err != nil || got != version {
+				t.Fatalf("refused open rewrote the version: %d, %v", got, err)
+			}
+			if err := db.QueryRow("SELECT count(*) FROM accounts").Scan(&accounts); err != nil || accounts != 1 {
+				t.Fatalf("refused open changed the ledger: accounts=%d %v", accounts, err)
+			}
+		})
+	}
+}
+
+// A ledger upgraded from the live schema keeps today's write surface when the
+// operator changes nothing: stock options do not star, pair, mirror an album or
+// trash anything, even when the source already reports those inputs.
+func TestMigratedLiveAccountWithDefaultOptionsStaysOnBaselineBehaviour(t *testing.T) {
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "sync.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema, err := os.ReadFile("testdata/v3.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(string(schema)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO accounts(id,source_identity,target_identity) VALUES('account','source','target');
+		INSERT INTO rules(account_id,scope,album_id,complete,expected,name) VALUES('account','album:album','album',1,-1,'Family')`); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := syncer.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	favorite := true
+	still := liveStill("still", "mov")
+	still.Favorite = &favorite
+	companion := liveCompanion("mov")
+	s := &sourceFake{identity: "source",
+		albums: []bridge.Album{{ID: "album", Name: "Family", Count: 2}},
+		pages:  map[string]bridge.Page{"": {Assets: []bridge.Asset{still, companion}}},
+		data:   map[string]string{"still": "hello"},
+		assets: map[string]bridge.Asset{"mov": companion}}
+	d := newAlbumTarget()
+	e := engine(t, store, s, d, options())
+	if err := e.Once(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	st := status(t, e)
+	if st.FavoritesMode != "off" || st.FavoritesApplied != 0 || len(d.favWrites) != 0 {
+		t.Fatalf("upgraded account gained favorite scope: %+v writes=%v", st, d.favWrites)
+	}
+	if st.LivePhotoMode != "still_only" || st.PairsComplete != 0 || st.PairsIncomplete != 0 {
+		t.Fatalf("upgraded account gained Live Photo pair scope: %+v", st)
+	}
+	if st.Confirmed != 1 || st.Deleted != 0 || st.DeletePending != 0 || len(d.trashed) != 0 {
+		t.Fatalf("baseline media state or deletion scope changed: %+v trashed=%v", st, d.trashed)
+	}
+	if d.creates != 0 || len(d.albums) != 0 {
+		t.Fatalf("upgraded account gained album mirroring: creates=%d albums=%v", d.creates, d.albums)
+	}
+	if st.Exclusions["hidden"] != 1 {
+		t.Fatalf("hidden companion was not excluded by the default mode: %+v", st.Exclusions)
+	}
+	if st.TransferWindow != nil || st.DeferralReason != "" {
+		t.Fatalf("upgraded account gained a transfer window: %+v", st)
+	}
+	if st.Usage.VideoHold || st.Usage.QuotaHold || st.Usage.VideoThresholdBytes != 0 {
+		t.Fatalf("upgraded account gained a usage hold: %+v", st.Usage)
+	}
+	if st.Direct.Reads != 0 || len(st.Direct.Fallbacks) != 0 {
+		t.Fatalf("upgraded account gained direct-read scope: %+v", st.Direct)
+	}
+}
+
+// The container smoke mounts this checked-in version-3 ledger, so it must be a
+// genuine live-schema database whose mapping survives the upgrade. It is also
+// the seeded prior fixture the release gate starts from on both architectures.
+func TestContainerLegacyFixtureUpgradesAndKeepsItsMapping(t *testing.T) {
+	archive, err := os.Open(filepath.Join("..", "..", "scripts", "testdata", "legacy-v3.sqlite.gz"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer archive.Close()
+	reader, err := gzip.NewReader(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sync.sqlite")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = io.Copy(file, reader); err != nil {
+		t.Fatal(err)
+	}
+	if err = errors.Join(reader.Close(), file.Close()); err != nil {
+		t.Fatal(err)
+	}
+	store, err := syncer.Open(dir)
+	if err != nil {
+		t.Fatalf("container fixture did not upgrade: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	var version, confirmed, rules, favorites int
+	var node string
+	if err := raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 10 {
+		t.Fatalf("fixture version = %d, %v", version, err)
+	}
+	if err := raw.QueryRow(`SELECT count(*) FROM assets WHERE account_id='legacy' AND state='confirmed'`).
+		Scan(&confirmed); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.QueryRow(`SELECT node_id FROM assets WHERE account_id='legacy'`).Scan(&node); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.QueryRow(`SELECT count(*) FROM rules WHERE account_id='legacy'`).Scan(&rules); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.QueryRow(`SELECT count(*) FROM favorites`).Scan(&favorites); err != nil {
+		t.Fatal(err)
+	}
+	if confirmed != 1 || node != "legacy-node" || rules != 1 || favorites != 0 {
+		t.Fatalf("container fixture migrated incorrectly: confirmed=%d node=%q rules=%d favorites=%d",
+			confirmed, node, rules, favorites)
 	}
 }
