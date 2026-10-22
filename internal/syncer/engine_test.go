@@ -61,28 +61,62 @@ func (s *sourceFake) Original(ctx context.Context, id string) (io.ReadCloser, er
 
 type targetFake struct {
 	bridge.Target
-	identity string
-	mu       sync.Mutex
-	nodes    []bridge.Node
-	bodies   []string
-	upload   func(context.Context, bridge.Content, io.Reader) (bridge.Node, error)
-	find     func(context.Context, bridge.Content) ([]bridge.Node, error)
-	get      func(context.Context, string) (bridge.Node, error)
-	authErr  error
+	identity  string
+	mu        sync.Mutex
+	nodes     []bridge.Node
+	bodies    []string
+	upload    func(context.Context, bridge.Content, io.Reader) (bridge.Node, error)
+	find      func(context.Context, bridge.Content) ([]bridge.Node, error)
+	findAll   func(context.Context, bridge.Content) (bridge.Node, error)
+	get       func(context.Context, string) (bridge.Node, error)
+	authErr   error
+	lookedAll int
 }
 
 func (t *targetFake) Probe(context.Context) (bridge.Capabilities, error) {
 	return bridge.Capabilities{Identity: t.identity}, t.authErr
 }
 
+// fakeFind models the strict target lookup: only nodes at the requested parent.
 func (t *targetFake) Find(ctx context.Context, c bridge.Content) ([]bridge.Node, error) {
 	if t.find != nil {
 		return t.find(ctx, c)
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return append([]bridge.Node(nil), t.nodes...), nil
+	var nodes []bridge.Node
+	for _, n := range t.nodes {
+		if n.ParentID == c.ParentID && !n.AlbumOnly && strings.EqualFold(n.MD5, c.MD5) && n.Size == c.Size {
+			nodes = append(nodes, n)
+		}
+	}
+	return nodes, nil
 }
+
+// FindExisting models the controlled account-wide lookup: only one verified
+// node may match, and it may live in another folder or only in an album.
+func (t *targetFake) FindExisting(ctx context.Context, c bridge.Content) (bridge.Node, error) {
+	if t.findAll != nil {
+		return t.findAll(ctx, c)
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.lookedAll++
+	var matches []bridge.Node
+	for _, n := range t.nodes {
+		if n.MD5 == c.MD5 && n.Size == c.Size && n.ID != "" {
+			matches = append(matches, n)
+		}
+	}
+	if len(matches) == 0 {
+		return bridge.Node{}, nil
+	}
+	if len(matches) > 1 {
+		return bridge.Node{}, &bridge.Error{Code: bridge.Unconfirmed}
+	}
+	return matches[0], nil
+}
+
 func (t *targetFake) GetNode(ctx context.Context, id string) (bridge.Node, error) {
 	if t.get != nil {
 		return t.get(ctx, id)
@@ -435,7 +469,7 @@ func TestAmbiguousUploadNeverRepostsEvenAfterRetryAndRestart(t *testing.T) {
 	}
 }
 
-func TestDedupRequiresConfirmedContentAndBoundParent(t *testing.T) {
+func TestTargetScopedDedupRequiresConfirmedContentAndBoundParent(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		node bridge.Node
@@ -456,6 +490,14 @@ func TestDedupRequiresConfirmedContentAndBoundParent(t *testing.T) {
 			s := &sourceFake{identity: "source", pages: map[string]bridge.Page{"": {Assets: []bridge.Asset{photo("one")}}},
 				data: map[string]string{"one": "hello"}}
 			d := &targetFake{identity: "target", nodes: []bridge.Node{tc.node}}
+			// The strict target lookup returns the raw candidate so the engine
+			// must reject anything unverified itself.
+			d.find = func(context.Context, bridge.Content) ([]bridge.Node, error) {
+				return []bridge.Node{tc.node}, nil
+			}
+			d.findAll = func(context.Context, bridge.Content) (bridge.Node, error) {
+				return bridge.Node{}, &bridge.Error{Code: bridge.Unconfirmed}
+			}
 			e := engine(t, store, s, d, options())
 			err = e.Once(context.Background())
 			if tc.code == "" {

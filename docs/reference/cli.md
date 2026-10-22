@@ -32,6 +32,11 @@ The command's `--help` is authoritative for additional management operations.
 Every process accessing a state volume must respect the single-writer boundary.
 Stop `serve` before running a separate stateful CLI invocation.
 
+Human-readable account lines report `confirmed`, `existing`, `pending`, `failed`
+and `unconfirmed` media counts. `existing` means a verified copy was reused from
+elsewhere in the same Amazon account; it is backed up but not at the configured
+target parent. `--json` carries the full status object.
+
 For each selected account, one `sync once` invocation attempts at most 64 distinct
 media jobs and advances full discovery by at most eight page steps; an already
 active library delta can also advance. Cursors and remaining work persist.

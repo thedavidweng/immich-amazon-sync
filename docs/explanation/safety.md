@@ -18,6 +18,15 @@ identity; changing users under the same local ID must stop work. Content and
 album mappings stay scoped to that account. Album names cannot substitute for
 stable source IDs or prove ownership of an existing target album.
 
+A copy already present elsewhere in the same account is reusable only after the
+controlled account-wide MD5 lookup returns exactly one owned, AVAILABLE node
+whose re-read MD5 and byte size match. That node is recorded as `existing`
+rather than `confirmed`, because it is not at the configured target parent. The
+staged original is released and the node mapping is durable, so a later album
+generation can attach the remote copy without downloading the original again.
+A 409, a filename, a search hit alone or an incomplete enumeration never
+establishes reuse.
+
 Media confirmation and Membership are independent. A confirmed upload whose
 album operation fails keeps its Node mapping; only the relationship needs
 repair. Removing a membership from one managed album must not remove the shared

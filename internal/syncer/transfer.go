@@ -174,56 +174,81 @@ func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
 	}
 	unlock = e.lockContent(j)
 	content := bridge.Content{Name: j.asset.Name, MIME: j.asset.MIME, MD5: j.md5, Size: j.size, TakenAt: j.asset.TakenAt}
-	var known, state string
-	err := e.store.db.QueryRowContext(ctx, `SELECT node_id,state FROM assets
-		WHERE account_id=? AND md5=? AND size=? AND state IN ('confirmed','running','unconfirmed')
-		ORDER BY (node_id!='') DESC,(state='confirmed') DESC LIMIT 1`,
-		e.opts.AccountID, j.md5, j.size).Scan(&known, &state)
+	// A crash or lost response after dispatch is never permission to POST again.
+	uncertain := j.state == "unconfirmed"
+	var known string
+	err := e.store.db.QueryRowContext(ctx, `SELECT node_id FROM assets
+		WHERE account_id=? AND md5=? AND size=? AND state IN ('confirmed','existing','running','unconfirmed')
+		AND node_id!='' ORDER BY (state='confirmed') DESC,(state='existing') DESC LIMIT 1`,
+		e.opts.AccountID, j.md5, j.size).Scan(&known)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return errors.New("storage_unavailable")
 	}
 	if err == nil {
-		j.state = "unconfirmed"
-		if known != "" {
-			j.node = known
-			n, err := readRetry(ctx, func() (bridge.Node, error) { return e.target.GetNode(ctx, known) })
-			if err != nil {
-				return err
-			}
-			if n.ID != known || !matches(n, content) {
-				return errors.New(bridge.Unconfirmed)
-			}
-			return e.confirm(ctx, j)
+		node, err := readRetry(ctx, func() (bridge.Node, error) { return e.target.GetNode(ctx, known) })
+		if err != nil {
+			return err
 		}
+		if node.ID != known || !sameContent(node, content) {
+			j.state = "unconfirmed"
+			return errors.New(bridge.Unconfirmed)
+		}
+		return e.reuse(ctx, j, node)
 	}
 	nodes, err := readRetry(ctx, func() ([]bridge.Node, error) { return e.target.Find(ctx, content) })
 	if err != nil {
 		return err
 	}
-	for _, n := range nodes {
-		if matches(n, content) {
-			verified, err := readRetry(ctx, func() (bridge.Node, error) { return e.target.GetNode(ctx, n.ID) })
-			if err != nil {
-				return err
-			}
-			if !matches(verified, content) || verified.ID != n.ID {
-				j.state = "unconfirmed"
-				return errors.New(bridge.Unconfirmed)
-			}
-			j.node = verified.ID
-			return e.confirm(ctx, j)
-		}
+	if len(nodes) > 1 {
+		// The strict lookup proves zero or one match; anything else is unusable.
+		j.state = "unconfirmed"
+		return errors.New(bridge.Unconfirmed)
 	}
-	for _, n := range nodes {
-		if n.ID == "" || n.MD5 == "" || n.Size < 0 || n.ParentID != content.ParentID {
+	if len(nodes) == 1 {
+		n := nodes[0]
+		if n.ID == "" || n.MD5 == "" || n.Size < 0 {
 			j.state = "unconfirmed"
 			return errors.New(bridge.Unconfirmed)
 		}
-		if n.Name == content.Name && n.ParentID == content.ParentID {
-			return errors.New(bridge.Conflict)
+		if !sameContent(n, content) {
+			// A same-name target node with different content is an explicit
+			// conflict; anything else remains unverifiable.
+			if n.Name == content.Name && n.Placement(content.ParentID) == bridge.PlacementTarget {
+				return errors.New(bridge.Conflict)
+			}
+			j.state = "unconfirmed"
+			return errors.New(bridge.Unconfirmed)
 		}
+		verified, err := readRetry(ctx, func() (bridge.Node, error) { return e.target.GetNode(ctx, n.ID) })
+		if err != nil {
+			return err
+		}
+		if !sameContent(verified, content) || verified.ID != n.ID ||
+			verified.Placement(content.ParentID) != bridge.PlacementTarget {
+			j.state = "unconfirmed"
+			return errors.New(bridge.Unconfirmed)
+		}
+		return e.reuse(ctx, j, verified)
 	}
-	if j.state == "unconfirmed" {
+	// The target parent is strict. Only an authoritative account-wide lookup may
+	// prove that a copy already exists somewhere else in this account.
+	existing, err := readRetry(ctx, func() (bridge.Node, error) { return e.target.FindExisting(ctx, content) })
+	if err != nil {
+		if uncertain {
+			j.state = "unconfirmed"
+		}
+		return err
+	}
+	if existing.ID != "" {
+		if !sameContent(existing, content) {
+			j.state = "unconfirmed"
+			return errors.New(bridge.Unconfirmed)
+		}
+		return e.reuse(ctx, j, existing)
+	}
+	if uncertain {
+		// An incomplete or zero match cannot prove a prior write did not commit.
+		j.state = "unconfirmed"
 		return errors.New(bridge.Unconfirmed)
 	}
 	if filepath.Base(j.stage) != j.stage || !strings.HasPrefix(j.stage, "original-") {
@@ -258,6 +283,14 @@ func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
 		if errors.As(uploadErr, &rejection) && (rejection.Code == bridge.Authentication ||
 			rejection.Code == bridge.Permission || rejection.Code == bridge.RateLimit) {
 			j.state = "staged"
+			return uploadErr
+		}
+		// The write may have committed, or Amazon's global dedupe may have
+		// rejected a copy that already exists elsewhere. Reconcile only codes
+		// where the remote state is genuinely unknown.
+		switch errorCode(uploadErr) {
+		case bridge.Conflict, bridge.Unconfirmed, bridge.Unavailable, bridge.Protocol, "canceled":
+			return e.reconcile(ctx, j, content, uploadErr)
 		}
 		return uploadErr
 	}
@@ -265,14 +298,14 @@ func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
 	if err := e.setState(context.WithoutCancel(ctx), j, "unconfirmed", bridge.Unconfirmed); err != nil {
 		return err
 	}
-	if !matches(node, content) {
+	if !sameContent(node, content) || node.Placement(content.ParentID) != bridge.PlacementTarget {
 		return errors.New(bridge.Unconfirmed)
 	}
 	node, err = readRetry(ctx, func() (bridge.Node, error) { return e.target.GetNode(ctx, node.ID) })
 	if err != nil {
 		return err
 	}
-	if !matches(node, content) || node.ID != j.node {
+	if !sameContent(node, content) || node.ID != j.node || node.Placement(content.ParentID) != bridge.PlacementTarget {
 		return errors.New(bridge.Unconfirmed)
 	}
 	return e.confirm(ctx, j)
@@ -339,13 +372,14 @@ func (e *Engine) lockContent(j *job) func() {
 	}
 }
 
-func matches(n bridge.Node, c bridge.Content) bool {
-	return n.ID != "" && n.MD5 != "" && strings.EqualFold(n.MD5, c.MD5) && n.Size == c.Size && n.ParentID == c.ParentID
+func sameContent(n bridge.Node, c bridge.Content) bool {
+	return n.ID != "" && n.MD5 != "" && strings.EqualFold(n.MD5, c.MD5) && n.Size == c.Size
 }
 
 func (e *Engine) setState(ctx context.Context, j *job, state, code string) error {
 	_, err := e.store.db.ExecContext(ctx, `UPDATE assets SET state=?,error_code=?,stage_name=?,md5=?,sha1=?,size=?,node_id=?,attempts=?,next_at=?
-		WHERE account_id=? AND id=?`, state, code, j.stage, j.md5, j.sha1, j.size, j.node, j.attempts, j.next, e.opts.AccountID, j.id)
+		WHERE account_id=? AND id=?`, state, code, j.stage, j.md5, j.sha1, j.size, j.node,
+		j.attempts, j.next, e.opts.AccountID, j.id)
 	if err != nil {
 		return errors.New("storage_unavailable")
 	}
@@ -358,6 +392,49 @@ func (e *Engine) confirm(ctx context.Context, j *job) error {
 	j.stage = ""
 	j.attempts, j.next = 0, 0
 	if err := e.setState(ctx, j, "confirmed", ""); err != nil {
+		return err
+	}
+	e.cleanupStage(ctx, stage)
+	return nil
+}
+
+// reconcile resolves an uncertain write by authoritative remote evidence. A
+// unique verified match clears the job. A complete lookup that proves no copy
+// exists leaves a real name conflict explicit; every other outcome keeps the
+// uncertainty and the staged original.
+func (e *Engine) reconcile(ctx context.Context, j *job, content bridge.Content, writeErr error) error {
+	existing, err := readRetry(ctx, func() (bridge.Node, error) { return e.target.FindExisting(ctx, content) })
+	if err != nil {
+		j.state = "unconfirmed"
+		return err
+	}
+	if existing.ID == "" {
+		j.state = "unconfirmed"
+		if errorCode(writeErr) == bridge.Conflict {
+			return errors.New(bridge.Conflict)
+		}
+		return errors.New(bridge.Unconfirmed)
+	}
+	if !sameContent(existing, content) {
+		j.state = "unconfirmed"
+		return errors.New(bridge.Unconfirmed)
+	}
+	return e.reuse(ctx, j, existing)
+}
+
+// reuse durably maps a verified remote node instead of uploading it. A node in
+// the target folder is a normal confirmation; a verified copy elsewhere in the
+// account is recorded as existing so membership can still be applied later.
+// Either way the staged original is no longer needed.
+func (e *Engine) reuse(ctx context.Context, j *job, n bridge.Node) error {
+	stage := j.stage
+	j.node, j.stage = n.ID, ""
+	j.attempts, j.next = 0, 0
+	state := "confirmed"
+	if n.Placement("") != bridge.PlacementTarget {
+		state = "existing"
+	}
+	if err := e.setState(ctx, j, state, ""); err != nil {
 		return err
 	}
 	e.cleanupStage(ctx, stage)

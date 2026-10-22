@@ -275,7 +275,7 @@ func (e *Engine) finishScan(ctx context.Context) error {
 		return err
 	}
 	err = e.store.db.QueryRowContext(ctx, `SELECT count(*) FROM assets a WHERE account_id=?
-		AND (state NOT IN ('confirmed','skipped') OR error_code='source_changed') AND `+eligibleSQL,
+		AND (state NOT IN ('confirmed','existing','skipped') OR error_code='source_changed') AND `+eligibleSQL,
 		e.opts.AccountID).Scan(&outstanding)
 	if err != nil || unfinished != 0 || outstanding != 0 {
 		return err

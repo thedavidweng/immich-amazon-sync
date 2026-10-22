@@ -109,7 +109,7 @@ func (e *Engine) mirrorAlbum(ctx context.Context, j *albumJob) error {
 	}
 	var outstanding int
 	err := e.store.db.QueryRowContext(ctx, `SELECT count(*) FROM scope_assets m JOIN assets a ON a.account_id=m.account_id AND a.id=m.asset_id
-		WHERE m.account_id=? AND m.scope=? AND m.generation=? AND (a.state NOT IN ('confirmed','skipped') OR a.error_code='source_changed')`,
+		WHERE m.account_id=? AND m.scope=? AND m.generation=? AND (a.state NOT IN ('confirmed','existing','skipped') OR a.error_code='source_changed')`,
 		e.opts.AccountID, j.scope, j.generation).Scan(&outstanding)
 	if err != nil {
 		return errors.New("storage_unavailable")
@@ -152,7 +152,7 @@ func (e *Engine) desiredMembers(ctx context.Context, j *albumJob) ([]string, err
 		SELECT account_id,scope,asset_id,generation FROM scope_assets
 		UNION SELECT account_id,scope,asset_id,generation FROM signals) m JOIN assets a
 		ON a.account_id=m.account_id AND a.id=m.asset_id WHERE m.account_id=? AND m.scope=? AND m.generation=?
-		AND a.state='confirmed' AND a.error_code='' ORDER BY a.node_id`, e.opts.AccountID, j.scope, j.generation)
+		AND a.state IN ('confirmed','existing') AND a.error_code='' ORDER BY a.node_id`, e.opts.AccountID, j.scope, j.generation)
 	if err != nil {
 		return nil, errors.New("storage_unavailable")
 	}
