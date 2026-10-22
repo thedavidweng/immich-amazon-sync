@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sync/atomic"
 	"testing"
@@ -91,7 +92,7 @@ func TestFavoriteReadRejectsForeignOwnership(t *testing.T) {
 }
 
 // The mutation response is never proof: SetFavorite re-reads the node and only
-// survives when the fresh payload carries an explicit true.
+// survives when the fresh payload carries the requested explicit value.
 func TestFavoriteMutationIsVerifiedByReread(t *testing.T) {
 	fixture := loadSDKFixture(t)
 	for name, tt := range map[string]struct {
@@ -122,7 +123,7 @@ func TestFavoriteMutationIsVerifiedByReread(t *testing.T) {
 					http.NotFound(w, r)
 				}
 			})
-			err := c.SetFavorite(t.Context(), favoriteContent(), "node-favorite-false")
+			err := c.SetFavorite(t.Context(), favoriteContent(), "node-favorite-false", true)
 			if tt.want == "" {
 				if err != nil {
 					t.Fatal(err)
@@ -157,7 +158,7 @@ func TestFavoriteAlreadyAppliedIsNotRewritten(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	})
-	if err := c.SetFavorite(t.Context(), favoriteContent(), "node-favorite-true"); err != nil {
+	if err := c.SetFavorite(t.Context(), favoriteContent(), "node-favorite-true", true); err != nil {
 		t.Fatal(err)
 	}
 	if patches.Load() != 0 {
@@ -184,13 +185,77 @@ func TestFavoriteLostMutationIsUnconfirmed(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	})
-	err := c.SetFavorite(t.Context(), favoriteContent(), "node-favorite-false")
+	err := c.SetFavorite(t.Context(), favoriteContent(), "node-favorite-false", true)
 	var remote *bridge.Error
 	if !errors.As(err, &remote) || remote.Code != bridge.FavoriteUnconfirmed || patches.Load() != 1 {
 		t.Fatalf("lost mutation = %v, patches %d", err, patches.Load())
 	}
 	if bytes.Contains([]byte(err.Error()), []byte("private")) {
 		t.Fatal("error leaked a remote body")
+	}
+}
+
+// An unstar is only issued against an explicit remote true and is verified by a
+// fresh read. The request carries the requested value rather than assuming a
+// star, and an already-unfavorited node is never rewritten.
+func TestFavoriteUnstarIsExplicitAndVerified(t *testing.T) {
+	fixture := loadSDKFixture(t)
+	for name, tt := range map[string]struct {
+		before  string
+		after   string
+		patches int32
+		value   bool
+		want    string
+	}{
+		"verified":        {before: "favorite-true", after: "favorite-false", patches: 1, value: false},
+		"absent-field":    {before: "favorite-absent", patches: 0, value: false, want: bridge.FavoriteUnconfirmed},
+		"already-cleared": {before: "favorite-false", patches: 0, value: false},
+		"lost-response":   {before: "favorite-true", after: "favorite-true", patches: 1, value: false, want: bridge.FavoriteUnconfirmed},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var patches atomic.Int32
+			var body []byte
+			c := newClient(t, aphotos.RegionUS, func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == "/nodes":
+					_, _ = fmt.Fprint(w, `{"data":[`+favoriteRoot("owner")+`],"count":1}`)
+				case r.URL.Path == "/nodes/node-favorite-true" && r.Method == http.MethodPatch:
+					patches.Add(1)
+					body, _ = io.ReadAll(r.Body)
+					_, _ = w.Write(fixture.FavoritePatch)
+				case r.URL.Path == "/nodes/node-favorite-true" && r.Method == http.MethodGet:
+					name := tt.before
+					if patches.Load() > 0 {
+						name = tt.after
+					}
+					payload := fixture.Nodes[name]
+					for _, id := range []string{"node-favorite-false", "node-favorite-absent", "node-favorite-key-absent"} {
+						payload = bytes.ReplaceAll(payload, []byte(`"`+id+`"`), []byte(`"node-favorite-true"`))
+					}
+					_, _ = w.Write(payload)
+				default:
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+					http.NotFound(w, r)
+				}
+			})
+			err := c.SetFavorite(t.Context(), favoriteContent(), "node-favorite-true", tt.value)
+			if tt.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				var remote *bridge.Error
+				if !errors.As(err, &remote) || remote.Code != tt.want {
+					t.Fatalf("mutation = %v, want %s", err, tt.want)
+				}
+			}
+			if patches.Load() != tt.patches {
+				t.Fatalf("mutation count = %d, want %d", patches.Load(), tt.patches)
+			}
+			if patches.Load() > 0 && !bytes.Contains(body, []byte(`"favorite":false`)) {
+				t.Fatalf("unstar request did not carry an explicit false: %s", body)
+			}
+		})
 	}
 }
 

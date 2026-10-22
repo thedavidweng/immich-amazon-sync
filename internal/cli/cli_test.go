@@ -299,15 +299,18 @@ func TestSyncOnceStatusExposesFavorites(t *testing.T) {
 	var report struct {
 		Accounts []struct {
 			Status struct {
-				FavoritesMode string `json:"favorites_mode"`
-				Desired       int    `json:"favorites_desired"`
-				Pending       int    `json:"favorites_pending"`
-				Applied       int    `json:"favorites_applied"`
-				Failed        int    `json:"favorites_failed"`
-				Uncertain     int    `json:"favorites_uncertain"`
-				Unknown       int    `json:"favorites_unknown"`
-				Unconfirmed   int    `json:"unconfirmed"`
-				Confirmed     int    `json:"confirmed"`
+				FavoritesMode      string `json:"favorites_mode"`
+				FavoritesAuthority string `json:"favorites_authority"`
+				Desired            int    `json:"favorites_desired"`
+				Pending            int    `json:"favorites_pending"`
+				Applied            int    `json:"favorites_applied"`
+				Preserved          int    `json:"favorites_preserved"`
+				Failed             int    `json:"favorites_failed"`
+				Uncertain          int    `json:"favorites_uncertain"`
+				Unknown            int    `json:"favorites_unknown"`
+				Conflict           int    `json:"favorites_conflict"`
+				Unconfirmed        int    `json:"unconfirmed"`
+				Confirmed          int    `json:"confirmed"`
 			} `json:"status"`
 		} `json:"accounts"`
 	}
@@ -315,8 +318,9 @@ func TestSyncOnceStatusExposesFavorites(t *testing.T) {
 		t.Fatalf("exit=%d out=%q stderr=%q", exit, out.String(), errOut.String())
 	}
 	st := report.Accounts[0].Status
-	if st.FavoritesMode != "add_only" || st.Desired != 0 || st.Pending != 0 || st.Applied != 0 ||
-		st.Failed != 0 || st.Uncertain != 0 || st.Unknown != 0 {
+	if st.FavoritesMode != "add_only" || st.FavoritesAuthority != "star_only" || st.Desired != 0 ||
+		st.Pending != 0 || st.Applied != 0 || st.Preserved != 0 ||
+		st.Failed != 0 || st.Uncertain != 0 || st.Unknown != 0 || st.Conflict != 0 {
 		t.Fatalf("favorites state leaked into or out of media counts: %+v", st)
 	}
 	if st.Unconfirmed != 0 || st.Confirmed != 0 {
@@ -327,7 +331,9 @@ func TestSyncOnceStatusExposesFavorites(t *testing.T) {
 	errOut.Reset()
 	exit = cli.Execute(t.Context(), []string{"--config", cfg, "sync", "once"}, &out, &errOut, "dev")
 	if exit != 1 || !strings.Contains(out.String(), "favorites_mode=add_only") ||
-		!strings.Contains(out.String(), "favorites_applied=0") {
+		!strings.Contains(out.String(), "favorites_authority=star_only") ||
+		!strings.Contains(out.String(), "favorites_applied=0") ||
+		!strings.Contains(out.String(), "favorites_conflict=0") {
 		t.Fatalf("human status lacks favorites: exit=%d out=%q stderr=%q", exit, out.String(), errOut.String())
 	}
 }

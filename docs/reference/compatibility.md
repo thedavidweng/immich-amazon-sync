@@ -242,6 +242,12 @@ adapter maps absence to unknown (`Favorite == nil`) and never to false. A source
 without the field therefore performs no favorite write and reports
 `favorites_unknown`.
 
+Both directions use the SDK's single `SetFavorite(ctx, nodeIDs, bool)` call;
+the service never reimplements the PATCH. An unstar is issued only against an
+explicit remote true and is verified by a re-read that must show an explicit
+false, so the payload's presence semantics gate unstar exactly as they gate a
+star.
+
 The aphotos `NodeSettings.Favorite` typed value cannot prove presence: a
 `settings` object without `favorite` decodes as a synthetic false, and the SDK
 also synthesises a `NodeSettings` fallback when a PATCH response omits

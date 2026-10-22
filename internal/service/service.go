@@ -345,7 +345,8 @@ func newEngine(store *syncer.Store, cfg config.Config, account config.Account, s
 	engine, err := syncer.New(store, source, target, syncer.Options{
 		AccountID: account.ID, AlbumIDs: account.AlbumIDs, Library: account.Library,
 		Filters: account.Policy(), AlbumSyncMode: account.AlbumMode(),
-		Deletions: account.Deletions, Favorites: account.Favorites, DirectRoots: account.Roots(),
+		Deletions: account.Deletions, Favorites: account.Favorites,
+		FavoriteTakeover: account.FavoritesTakeover, DirectRoots: account.Roots(),
 		Workers: cfg.Workers, MaxStagingBytes: cfg.MaxStagingBytes,
 		MaxStagingFiles: cfg.MaxStagingFiles, BytesPerSecond: cfg.BytesPerSecond,
 		CaptureDate: amazon.CaptureDateCapability,

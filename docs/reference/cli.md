@@ -42,9 +42,10 @@ Stop `serve` before running a separate stateful CLI invocation.
 Human-readable account lines report `album_sync_mode`, `confirmed`, `existing`,
 `deleted`, `deletion_pending`, `pending`, `failed`, `unconfirmed`, `deferred`,
 `albums_active`, `albums_inaccessible` and total `excluded` media counts, then the
-`favorites_mode` setting and `favorites_desired`, `favorites_applied`,
-`favorites_pending`, `favorites_failed`, `favorites_uncertain` and
-`favorites_unknown` counters. `existing` means a verified copy was reused from
+`favorites_mode` setting, the `favorites_authority` explanation, and the
+`favorites_desired`, `favorites_observed`, `favorites_applied`,
+`favorites_preserved`, `favorites_pending`, `favorites_failed`,
+`favorites_uncertain`, `favorites_unknown` and `favorites_conflict` counters. `existing` means a verified copy was reused from
 elsewhere in the same Amazon account; it is backed up but not at the configured
 target parent. `deferred` means new upload dispatch waits for a transfer window;
 it is not a failure. When a window is configured the line also reports its

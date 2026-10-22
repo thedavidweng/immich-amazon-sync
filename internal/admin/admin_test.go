@@ -677,9 +677,35 @@ func TestFavoritesModeIsEditableAndPersisted(t *testing.T) {
 		t.Fatal("favorites setting is not exposed in the account editor")
 	}
 	form.Set("original_id", "family")
-	form.Set("favorites", "mirror")
+	form.Set("favorites", "authoritative")
 	if status, body := d.post(t, "/accounts/save", form); status != http.StatusBadRequest || !strings.Contains(body, "favorites_invalid") {
 		t.Fatalf("unknown favorites mode: %d %s", status, body)
+	}
+
+	// Mirror with a recorded takeover is the only authority that clears manual
+	// stars; the editor exposes both controls.
+	form.Set("favorites", "mirror")
+	form.Set("favorites_takeover", "on")
+	if status, body := d.post(t, "/accounts/save", form); status != http.StatusOK {
+		t.Fatalf("save mirror: %d %s", status, body)
+	}
+	cfg, err = config.Load(d.path)
+	if err != nil || cfg.Accounts[0].Favorites != "mirror" || !cfg.Accounts[0].FavoritesTakeover {
+		t.Fatalf("mirror authority not persisted: %+v %v", cfg, err)
+	}
+	_, edit = d.get(t, "/accounts/family/edit")
+	for _, want := range []string{`value="mirror"`, `name="favorites_takeover" checked`} {
+		if !strings.Contains(edit, want) {
+			t.Fatalf("editor lacks %q", want)
+		}
+	}
+	// Takeover cannot exist without mirror.
+	form.Set("original_id", "family")
+	form.Del("favorites")
+	form.Set("favorites", "add_only")
+	if status, body := d.post(t, "/accounts/save", form); status != http.StatusBadRequest ||
+		!strings.Contains(body, "favorites_takeover_requires_mirror") {
+		t.Fatalf("takeover without mirror: %d %s", status, body)
 	}
 }
 

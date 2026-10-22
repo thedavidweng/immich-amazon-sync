@@ -31,12 +31,13 @@ func (c *Client) ReadFavorite(ctx context.Context, content bridge.Content, nodeI
 	return favoriteValue(n)
 }
 
-// SetFavorite ensures one verified, owned node is starred. It reads the
-// authoritative field first, performs at most one mutation, and re-reads the
-// outcome; the SDK's mutation response is never treated as proof. A lost or
-// timed-out mutation therefore leaves the node unconfirmed and the next call
-// begins with a fresh read instead of another write.
-func (c *Client) SetFavorite(ctx context.Context, content bridge.Content, nodeID string) error {
+// SetFavorite ensures one verified, owned node carries the requested favorite
+// value. It reads the authoritative field first, so an unstar is only ever
+// issued against an explicit remote true; performs at most one mutation; and
+// re-reads the outcome. The SDK's mutation response is never treated as proof.
+// A lost or timed-out mutation therefore leaves the node unconfirmed and the
+// next call begins with a fresh read instead of another write.
+func (c *Client) SetFavorite(ctx context.Context, content bridge.Content, nodeID string, favorite bool) error {
 	if nodeID == "" || !validMD5(content.MD5) || content.Size < 0 {
 		return &bridge.Error{Code: bridge.Protocol}
 	}
@@ -55,10 +56,10 @@ func (c *Client) SetFavorite(ctx context.Context, content bridge.Content, nodeID
 	if err != nil {
 		return err
 	}
-	if observed {
+	if observed == favorite {
 		return nil
 	}
-	if err := c.sdk.SetFavorite(ctx, []string{nodeID}, true); err != nil {
+	if err := c.sdk.SetFavorite(ctx, []string{nodeID}, favorite); err != nil {
 		return favoriteUncertain(err)
 	}
 	after, err := c.remoteNode(ctx, nodeID)
@@ -72,7 +73,7 @@ func (c *Client) SetFavorite(ctx context.Context, content bridge.Content, nodeID
 	if err != nil {
 		return err
 	}
-	if !value {
+	if value != favorite {
 		return &bridge.Error{Code: bridge.FavoriteUnconfirmed}
 	}
 	return nil

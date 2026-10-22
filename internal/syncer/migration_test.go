@@ -110,7 +110,7 @@ func TestVersionThreeStoreMigratesFavoritesWithoutWideningScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var version, favorite, rows int
+	var version, favorite, rows, checked int
 	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
@@ -120,11 +120,14 @@ func TestVersionThreeStoreMigratesFavoritesWithoutWideningScope(t *testing.T) {
 	if err = db.QueryRow("SELECT count(*) FROM favorites").Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
+	if err = db.QueryRow("SELECT count(*) FROM pragma_table_info('favorites') WHERE name='checked_at'").Scan(&checked); err != nil {
+		t.Fatal(err)
+	}
 	if err = db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if version != 7 || favorite != -1 || rows != 0 {
-		t.Fatalf("migration widened scope: version=%d favorite=%d rows=%d", version, favorite, rows)
+	if version != 8 || favorite != -1 || rows != 0 || checked != 1 {
+		t.Fatalf("migration widened scope: version=%d favorite=%d rows=%d checked=%d", version, favorite, rows, checked)
 	}
 
 	store, err = syncer.Open(dir)
@@ -212,7 +215,7 @@ func TestVersionThreeStoreReevaluatesLegacyVideoSkip(t *testing.T) {
 	}
 	defer db.Close()
 	var version int
-	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 7 {
+	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 8 {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
 	var state, exclusion string
@@ -269,7 +272,7 @@ func TestVersionFiveStoreAddsFavoritesAndKeepsWorkflowOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var version, favorite, rows int
+	var version, favorite, rows, checked int
 	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
@@ -279,11 +282,14 @@ func TestVersionFiveStoreAddsFavoritesAndKeepsWorkflowOwnership(t *testing.T) {
 	if err = db.QueryRow("SELECT count(*) FROM favorites").Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
+	if err = db.QueryRow("SELECT count(*) FROM pragma_table_info('favorites') WHERE name='checked_at'").Scan(&checked); err != nil {
+		t.Fatal(err)
+	}
 	if err = db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if version != 7 || favorite != -1 || rows != 0 {
-		t.Fatalf("favorites migration widened scope: version=%d favorite=%d rows=%d", version, favorite, rows)
+	if version != 8 || favorite != -1 || rows != 0 || checked != 1 {
+		t.Fatalf("favorites migration widened scope: version=%d favorite=%d rows=%d checked=%d", version, favorite, rows, checked)
 	}
 
 	// Off by default: the migrated account performs no favorite write.
@@ -361,7 +367,7 @@ func TestVersionSixStoreAddsFiltersAndKeepsFavorites(t *testing.T) {
 	}
 	defer db.Close()
 	var version, favorite, applied int
-	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 7 {
+	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 8 {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
 	if err = db.QueryRow("SELECT favorite FROM assets WHERE account_id='account' AND id='video'").Scan(&favorite); err != nil {

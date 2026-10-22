@@ -15,17 +15,20 @@ import (
 )
 
 type Options struct {
-	AccountID       string
-	AlbumIDs        []string
-	Library         bool
-	Filters         filter.Policy
-	AlbumSyncMode   bridge.AlbumSyncMode
-	Deletions       bool
-	Favorites       string
-	Workers         int
-	MaxStagingBytes int64
-	MaxStagingFiles int
-	BytesPerSecond  int64
+	AccountID     string
+	AlbumIDs      []string
+	Library       bool
+	Filters       filter.Policy
+	AlbumSyncMode bridge.AlbumSyncMode
+	Deletions     bool
+	Favorites     string
+	// FavoriteTakeover records that the source is authoritative over stars a
+	// user applied manually on the Amazon side. It is only legal with mirror.
+	FavoriteTakeover bool
+	Workers          int
+	MaxStagingBytes  int64
+	MaxStagingFiles  int
+	BytesPerSecond   int64
 	// CaptureDate is the finite capture-date write capability declared by the
 	// target adapter. Empty is treated as metadata_not_supported: absent proof
 	// must never imply success.
@@ -85,12 +88,16 @@ type Status struct {
 	IncrementalScanning     bool           `json:"incremental_scanning"`
 	LastIncremental         *time.Time     `json:"last_incremental"`
 	FavoritesMode           string         `json:"favorites_mode"`
+	FavoritesAuthority      string         `json:"favorites_authority,omitempty"`
 	FavoritesDesired        int            `json:"favorites_desired"`
+	FavoritesObserved       int            `json:"favorites_observed"`
 	FavoritesPending        int            `json:"favorites_pending"`
 	FavoritesApplied        int            `json:"favorites_applied"`
+	FavoritesPreserved      int            `json:"favorites_preserved"`
 	FavoritesFailed         int            `json:"favorites_failed"`
 	FavoritesUncertain      int            `json:"favorites_uncertain"`
 	FavoritesUnknown        int            `json:"favorites_unknown"`
+	FavoritesConflict       int            `json:"favorites_conflict"`
 	WorkRemaining           bool           `json:"work_remaining"`
 	NextAttempt             *time.Time     `json:"next_attempt,omitempty"`
 	CaptureDate             string         `json:"capture_date"`
@@ -120,7 +127,9 @@ func New(store *Store, source bridge.Source, target bridge.Target, opts Options)
 	if store == nil || source == nil || target == nil || opts.AccountID == "" ||
 		(!opts.Library && len(opts.AlbumIDs) == 0) || (opts.Library && len(opts.AlbumIDs) != 0) ||
 		!mode.Valid() || (mode == bridge.AlbumSyncSelected && (opts.Library || len(opts.AlbumIDs) == 0)) ||
-		(opts.Favorites != "" && opts.Favorites != "off" && opts.Favorites != "add_only") ||
+		(opts.Favorites != "" && opts.Favorites != "off" && opts.Favorites != "add_only" &&
+			opts.Favorites != "mirror") ||
+		(opts.FavoriteTakeover && opts.Favorites != "mirror") ||
 		opts.Workers < 0 || opts.Workers > 32 || opts.MaxStagingBytes < 0 ||
 		opts.MaxStagingFiles < 0 || opts.BytesPerSecond < 0 {
 		return nil, errors.New("invalid_options")
@@ -206,8 +215,13 @@ func (e *Engine) Retry(ctx context.Context) error {
 	if err == nil {
 		// Every favorite attempt re-reads the node before writing, so an
 		// uncertain favorite mutation is safe to retry instead of a blind write.
-		_, err = tx.ExecContext(ctx, `UPDATE favorites SET attempts=0,next_at=0,error_code=''
-			WHERE account_id=? AND state IN ('pending','failed','uncertain')`, e.opts.AccountID)
+		// Settled rows are audited again after an explicit retry, so a user
+		// repair also re-reads drift. Conflicts are re-derived by the next pass.
+		_, err = tx.ExecContext(ctx, `UPDATE favorites SET attempts=0,next_at=0,
+			error_code=CASE WHEN state IN ('pending','failed','uncertain') THEN '' ELSE error_code END,
+			checked_at=CASE WHEN state IN ('applied','none','preserved') THEN 0 ELSE checked_at END
+			WHERE account_id=? AND state IN ('pending','failed','uncertain','applied','none','preserved')`,
+			e.opts.AccountID)
 	}
 	if err == nil {
 		_, err = tx.ExecContext(ctx, `UPDATE albums SET attempts=0,next_at=0,error_code='' WHERE account_id=?`, e.opts.AccountID)
@@ -299,16 +313,21 @@ func (e *Engine) summary(ctx context.Context) (Status, error) {
 		return st, errors.New("storage_unavailable")
 	}
 	st.FavoritesMode = e.favoriteMode()
+	st.FavoritesAuthority = e.favoriteAuthority()
 	err = e.store.db.QueryRowContext(ctx, `SELECT
 		coalesce(sum(desired=1),0),
+		coalesce(sum(observed=1),0),
 		coalesce(sum(state='pending'),0),
 		coalesce(sum(state='applied'),0),
+		coalesce(sum(state='preserved'),0),
 		coalesce(sum(state='failed'),0),
 		coalesce(sum(state='uncertain'),0),
-		coalesce(sum(state='unknown'),0)
+		coalesce(sum(state='unknown'),0),
+		coalesce(sum(state='conflict'),0)
 		FROM favorites WHERE account_id=?`, e.opts.AccountID).
-		Scan(&st.FavoritesDesired, &st.FavoritesPending, &st.FavoritesApplied,
-			&st.FavoritesFailed, &st.FavoritesUncertain, &st.FavoritesUnknown)
+		Scan(&st.FavoritesDesired, &st.FavoritesObserved, &st.FavoritesPending, &st.FavoritesApplied,
+			&st.FavoritesPreserved, &st.FavoritesFailed, &st.FavoritesUncertain, &st.FavoritesUnknown,
+			&st.FavoritesConflict)
 	if err != nil {
 		return st, errors.New("storage_unavailable")
 	}
@@ -750,7 +769,8 @@ func errorCode(err error) string {
 		"identity_unavailable", "identity_mismatch", "storage_unavailable", "staging_quota",
 		"checksum_mismatch", "size_mismatch", "staging_corrupt", "unsafe_filename", "source_changed", "canceled",
 		"direct_path_invalid", "direct_path_escape", "direct_path_not_regular",
-		"invalid_event", "album_unconfirmed", "membership_guard", "deletion_guard", "album_inaccessible":
+		"invalid_event", "album_unconfirmed", "membership_guard", "deletion_guard", "album_inaccessible",
+		"shared_target_conflict":
 		return code
 	}
 	return "remote_error"

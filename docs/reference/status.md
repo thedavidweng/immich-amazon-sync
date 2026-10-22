@@ -24,13 +24,17 @@ overview. There is no public JSON status endpoint.
 | `associations_unconfirmed` | Membership addition/removal intents requiring reconciliation. |
 | `events_pending` | Durable unresolved hints, including failed hints. |
 | `events_failed` | Hints with a recorded processing error. |
-| `favorites_mode` | Effective per-account favorite setting: `off` (default) or `add_only`. |
+| `favorites_mode` | Effective per-account favorite setting: `off` (default), `add_only` or `mirror`. |
+| `favorites_authority` | Who may clear a star: `star_only` for add-only, `source_applied` for mirror without takeover, `takeover` when manual stars may also be cleared. Omitted when favorite sync is off. |
 | `favorites_desired` | Nodes whose source asset explicitly reports favorite, including ones already applied. |
-| `favorites_pending` | Desired nodes awaiting a verified star. |
-| `favorites_applied` | Nodes whose star was confirmed by an authoritative Amazon re-read. |
+| `favorites_observed` | Nodes the last authoritative Amazon read proved to be starred. Retained from the last settled read, so it can be older than the current mutation. |
+| `favorites_pending` | Desired nodes awaiting a verified star or unstar, including the bounded baseline read that decides whether a star belongs to this service. |
+| `favorites_applied` | Nodes whose star was confirmed by an authoritative Amazon re-read. This is the last verified action of this service, not the remote value. |
+| `favorites_preserved` | Amazon stars kept because this service did not apply them: `add_only` never unstars, and `mirror` without takeover preserves manual stars. |
 | `favorites_failed` | Favorite operations with a definite finite error awaiting their own retry. |
 | `favorites_uncertain` | A favorite mutation or read whose committed state is unproven (`favorite_unconfirmed`). Retried only after a fresh read. |
 | `favorites_unknown` | Nodes whose source omitted the favorite field; no write is issued and the state is not treated as false. |
+| `favorites_conflict` | Nodes blocked by `shared_target_conflict`: two local accounts that resolve to the same Amazon identity record contradictory wishes, so neither writes. |
 | `workflow` | Managed Immich Workflow state: `active`, `polling`, `creating`, `unconfirmed`, `failed`, `cleanup_failed`, `removed` or `disabled`; omitted when never requested. |
 | `workflow_code` | Optional finite notice or failure for the workflow state, such as `workflow_version_unsupported`, `workflow_permission_missing`, `workflow_unconfirmed` or `workflow_cleanup_failed`. Omitted when healthy. |
 | `incremental_scanning` | A library delta scan is active. |
@@ -48,8 +52,14 @@ reconciliation is never disabled. Counts such as pending, failed and unconfirmed
 album work overlap; do not add them to infer a total. Favorite counters are
 separate from media states: a `confirmed` or `existing` node can also be
 `favorites_applied`, and favorite retries never change `confirmed`, `existing`
-or `unconfirmed` media counts. Disabled favorite sync performs no write and
-withdraws unsettled intents while keeping an already-applied star. Disabling
+or `unconfirmed` media counts. `favorites_desired` is the source wish,
+`favorites_observed` is the last explicit remote value and `favorites_applied`
+is what this service verified it did, so the three can legitimately disagree
+while a repair is pending. A source trash makes a node ineligible and never
+resurrects or clears its star. Disabled favorite sync performs no write and
+withdraws unsettled intents while keeping an already-applied star. A
+`shared_target_conflict` is also reported in `errors` and blocks both accounts
+until one source wish changes. Disabling
 album mirroring reports zero album/association counts without deleting preserved
 state. No private asset IDs, filenames, paths,
 URLs or raw remote errors are included in these aggregates.
