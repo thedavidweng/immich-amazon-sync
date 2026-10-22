@@ -24,6 +24,7 @@ overview. There is no public JSON status endpoint.
 | `last_incremental` | Completed library discovery watermark, or `null`; this is the scan-start boundary, not proof of transfer completion. |
 | `work_remaining` | Unpaused work is eligible for continuation now. False does not mean every job succeeded. |
 | `next_attempt` | Optional earliest scheduled retry timestamp; omitted when none is scheduled or the account is paused. |
+| `capture_date` | Capture-date write capability of the pinned target SDK. `metadata_not_supported` means the service cannot set a capture date remotely and does not claim that Immich-only date edits are mirrored; `supported` is reserved for a released SDK operation verified by an authoritative read-back. The field is always present and is never an implied success. |
 
 Counts such as pending, failed and unconfirmed album work overlap; do not add
 them to infer a total. Disabling album mirroring reports zero album/association

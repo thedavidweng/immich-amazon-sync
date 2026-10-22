@@ -38,6 +38,19 @@ Safe additions can proceed during backfill, but removals require a completed
 baseline, nonempty desired set and the
 [fixed membership guard](../how-to/managed-albums.md#understand-removal-guards).
 
+## Originals and capture time
+
+Every upload path only reads the source original and writes a separate staging
+copy. The service never rewrites original bytes, calls `utime`, or edits EXIF to
+influence Amazon metadata; tests assert bytes and filesystem mtimes are
+unchanged on the staged upload, verified-reuse and uncertain-write paths.
+Embedded EXIF travels inside the unchanged bytes. Immich-only capture-date edits
+are not mirrored: the pinned SDK has no capture-date setter, so `doctor` and
+status report `capture_date=metadata_not_supported`. Amazon can therefore display
+a different date than Immich for such files and for originals without a usable
+EXIF date. A future setter requires a released SDK operation and an authoritative
+read-back; rewriting originals is never a substitute.
+
 ## Deletion propagation
 
 Deletion propagation is opt-in per account and off by default. The service
