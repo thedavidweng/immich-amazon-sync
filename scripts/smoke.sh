@@ -219,6 +219,13 @@ for platform do
     docker run --rm --network none --platform "$platform" --volume "$volume:/data" \
         --mount "type=bind,source=$scratch/legacy.sqlite,target=/run/legacy.sqlite,readonly" \
         --entrypoint sh "$image" -ec 'cp /run/legacy.sqlite /data/sync.sqlite'
+    # Migration is owned by a writable command; status is read-only and must
+    # never migrate. The deletion plan opens the ledger and mutates nothing.
+    docker run --rm --network none --platform "$platform" --volume "$volume:/data" \
+        --mount "type=bind,source=$scratch/ledger.json,target=/run/ledger.json,readonly" \
+        --mount "type=bind,source=$scratch/key,target=/run/key,readonly" \
+        --mount "type=bind,source=$scratch/cookie,target=/run/cookie,readonly" \
+        "$image" --config /run/ledger.json deletions plan --json >/dev/null
     docker run --rm --network none --platform "$platform" --volume "$volume:/data" \
         --mount "type=bind,source=$scratch/ledger.json,target=/run/ledger.json,readonly" \
         --mount "type=bind,source=$scratch/key,target=/run/key,readonly" \

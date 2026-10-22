@@ -13,13 +13,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	// Embed the IANA database so validation works in containers without tzdata.
-	_ "time/tzdata"
 
 	"github.com/thedavidweng/amazon-photos/pkg/aphotos"
 	"github.com/thedavidweng/immich-amazon-sync/internal/bridge"
 	"github.com/thedavidweng/immich-amazon-sync/internal/direct"
 	"github.com/thedavidweng/immich-amazon-sync/internal/filter"
+	"github.com/thedavidweng/immich-amazon-sync/internal/window"
 )
 
 type Config struct {
@@ -460,35 +459,10 @@ func (w *TransferWindow) validate() error {
 	if w == nil {
 		return nil
 	}
-	if w.Timezone == "" || w.Timezone == "Local" {
-		return errors.New("transfer_window_timezone_invalid")
-	}
-	if _, err := time.LoadLocation(w.Timezone); err != nil {
-		return errors.New("transfer_window_timezone_invalid")
-	}
-	start, err := windowClock(w.Start)
-	if err != nil {
-		return err
-	}
-	end, err := windowClock(w.End)
-	if err != nil {
-		return err
-	}
-	if start == end {
-		return errors.New("transfer_window_bounds_invalid")
-	}
-	return nil
-}
-
-func windowClock(value string) (int, error) {
-	if len(value) != 5 || value[2] != ':' {
-		return 0, errors.New("transfer_window_time_invalid")
-	}
-	parsed, err := time.Parse("15:04", value)
-	if err != nil {
-		return 0, errors.New("transfer_window_time_invalid")
-	}
-	return parsed.Hour()*60 + parsed.Minute(), nil
+	// One validated constructor: the engine dispatches with exactly the window
+	// this configuration check accepted, so the two cannot diverge.
+	_, err := window.New(w.Timezone, w.Start, w.End)
+	return err
 }
 
 // loopbackListen reports whether a listen address only accepts local

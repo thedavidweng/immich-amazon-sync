@@ -17,6 +17,11 @@ func TestEventAndAlbumErrorsHaveStablePublicCodes(t *testing.T) {
 		{"membership_guard", 1},
 		{"webhook_unauthorized", 3},
 		{"webhook_unavailable", 1},
+		{"library_invalid", 2},
+		{"album_sync_mode_invalid", 2},
+		{"album_sync_mode_conflict", 2},
+		{"schema_migration_required", 4},
+		{"ledger_absent", 4},
 	} {
 		t.Run(test.code, func(t *testing.T) {
 			err := errors.New(test.code)

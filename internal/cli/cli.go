@@ -162,7 +162,7 @@ func Execute(ctx context.Context, args []string, out, errOut io.Writer, version 
 			if err != nil {
 				return operational(err)
 			}
-			runtime, err := service.Open(cfg, io.Discard)
+			runtime, err := service.OpenReadOnly(cfg, io.Discard)
 			if err != nil {
 				return operational(err)
 			}

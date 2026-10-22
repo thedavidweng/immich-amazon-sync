@@ -399,3 +399,50 @@ func TestAllAccessibleDeletionOffKeepsMediaAndOwnedAlbum(t *testing.T) {
 		t.Fatalf("bounded reconciliation kept the absent relation: %v", d.albums["album-1"])
 	}
 }
+
+// Discovery owns the latest complete accessible listing. An explicit album
+// list in all_accessible mode must not reactivate a rule discovery marked
+// inaccessible, and repeated full passes must not zero that report.
+func TestExplicitAlbumListCannotUndoDiscoveryInaccessibility(t *testing.T) {
+	store, err := syncer.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	s, _ := accessibleSource()
+	d := newAlbumTarget()
+	opts := options()
+	opts.Library, opts.AlbumIDs = false, []string{"album-a", "album-b"}
+	opts.AlbumSyncMode = bridge.AlbumSyncAllAccessible
+	e := engine(t, store, s, d, opts)
+	if err := e.Once(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if st := status(t, e); st.AlbumsActive != 2 || st.AlbumsInaccessible != 0 {
+		t.Fatalf("setup: %+v", st)
+	}
+	s.albums = []bridge.Album{{ID: "album-a", Name: "Family", Count: 2}}
+	for run := range 2 {
+		if err := e.Once(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		st := status(t, e)
+		if st.AlbumsInaccessible != 1 || st.AlbumsActive != 1 || st.Errors["album_inaccessible"] != 1 {
+			t.Fatalf("run %d undid discovery inaccessibility: %+v", run, st)
+		}
+	}
+	s.albums = []bridge.Album{
+		{ID: "album-a", Name: "Family", Count: 2},
+		{ID: "album-b", Name: "Trips", Count: 2},
+	}
+	if err := e.Once(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if st := status(t, e); st.AlbumsInaccessible != 0 || st.AlbumsActive != 2 {
+		t.Fatalf("returning album did not resume: %+v", st)
+	}
+}

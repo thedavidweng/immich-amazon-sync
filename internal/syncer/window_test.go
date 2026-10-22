@@ -4,12 +4,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thedavidweng/immich-amazon-sync/internal/syncer"
+	"github.com/thedavidweng/immich-amazon-sync/internal/window"
 )
 
-func mustWindow(t *testing.T, zone, start, end string) *syncer.Window {
+func mustWindow(t *testing.T, zone, start, end string) *window.Window {
 	t.Helper()
-	w, err := syncer.NewWindow(zone, start, end)
+	w, err := window.New(zone, start, end)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +27,7 @@ func TestWindowRejectsInvalidDefinitions(t *testing.T) {
 		{"UTC", "09:60", "17:00"},
 		{"UTC", "", "17:00"},
 	} {
-		if _, err := syncer.NewWindow(tc.zone, tc.start, tc.end); err == nil {
+		if _, err := window.New(tc.zone, tc.start, tc.end); err == nil {
 			t.Fatalf("accepted invalid window %+v", tc)
 		}
 	}
@@ -157,7 +157,7 @@ func TestWindowUsesLocalWallClockAcrossDSTFallRepeat(t *testing.T) {
 }
 
 func TestNoWindowIsAlwaysOpen(t *testing.T) {
-	var w *syncer.Window
+	var w *window.Window
 	if !w.Open(time.Now()) {
 		t.Fatal("absent window was closed")
 	}

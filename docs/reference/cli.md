@@ -8,7 +8,7 @@ immich-amazon-sync [--config PATH] [--account ID] [--json] COMMAND
 | --- | --- |
 | `serve` | Run the local service and scheduled backups; stop with SIGTERM. |
 | `serve --setup --config PATH` | Explicit first UI setup with a mounted admin secret and a new writable config path. |
-| `status` | Read-only durable status for the selected accounts from the local ledger. No remote calls, no sync pass, no state mutation beyond the first-time account row. |
+| `status` | Read-only durable status for the selected accounts from the local ledger. No remote calls, no sync pass, no state mutation: it takes no writer lock and never migrates, cleans staging or creates an absent ledger, so it can run beside `serve`. |
 | `sync once` | Start/resume a bounded explicit full-scan pass; can write media, managed membership, add-only favorite stars and -- only when explicitly enabled -- Amazon trashing. |
 | `deletions plan` | Read-only manifest of assets pending deletion propagation: count, synced total, blocked reason and asset IDs. Changes nothing. |
 | `filters` | Print each account's effective eligibility policy (media types, maximum original size, RAW/archive rules, excluded tag IDs and Live Photo mode) from configuration only. Never contacts either remote or opens local state. |

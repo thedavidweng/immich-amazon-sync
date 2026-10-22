@@ -91,13 +91,22 @@ func (e *Engine) configureRules(ctx context.Context, restart bool) error {
 			return err
 		}
 	}
+	// Discovery, not an explicit rule upsert, is the authority for the latest
+	// complete accessible listing. In all_accessible mode a rule marked
+	// album_inaccessible stays stopped and reported until a later listing
+	// returns it, so an explicit album list cannot undo that evidence. An
+	// explicit mode has no discovery, so the operator's choice is tried again.
+	revive := 1
+	if e.opts.AlbumSyncMode == bridge.AlbumSyncAllAccessible {
+		revive = 0
+	}
 	for _, album := range e.opts.AlbumIDs {
-		// An album that comes back into reach is retried instead of keeping a
-		// stale inaccessibility error; the explicit scope is never widened.
 		if _, err = tx.ExecContext(ctx, `INSERT INTO rules(account_id,scope,album_id,discovered) VALUES(?,?,?,1)
-			ON CONFLICT(account_id,scope) DO UPDATE SET active=1,discovered=1,
-			error_code=CASE WHEN rules.error_code='album_inaccessible' THEN '' ELSE rules.error_code END`,
-			id, "album:"+album, album); err != nil {
+			ON CONFLICT(account_id,scope) DO UPDATE SET
+			active=CASE WHEN ?=0 AND rules.error_code='album_inaccessible' THEN rules.active ELSE 1 END,
+			discovered=CASE WHEN ?=0 AND rules.error_code='album_inaccessible' THEN rules.discovered ELSE 1 END,
+			error_code=CASE WHEN ?=1 AND rules.error_code='album_inaccessible' THEN '' ELSE rules.error_code END`,
+			id, "album:"+album, album, revive, revive, revive); err != nil {
 			return err
 		}
 	}

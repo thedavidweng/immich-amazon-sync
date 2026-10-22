@@ -14,6 +14,7 @@ import (
 	"github.com/thedavidweng/immich-amazon-sync/internal/bridge"
 	"github.com/thedavidweng/immich-amazon-sync/internal/direct"
 	"github.com/thedavidweng/immich-amazon-sync/internal/filter"
+	"github.com/thedavidweng/immich-amazon-sync/internal/window"
 )
 
 type Options struct {
@@ -223,8 +224,10 @@ func New(store *Store, source bridge.Source, target bridge.Target, opts Options)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := store.db.Exec("INSERT INTO accounts(id) VALUES(?) ON CONFLICT DO NOTHING", opts.AccountID); err != nil {
-		return nil, errors.New("storage_unavailable")
+	if !store.readOnly {
+		if _, err := store.db.Exec("INSERT INTO accounts(id) VALUES(?) ON CONFLICT DO NOTHING", opts.AccountID); err != nil {
+			return nil, errors.New("storage_unavailable")
+		}
 	}
 	return &Engine{store: store, source: source, target: target, opts: opts,
 		contents: make(map[string]*contentLock), direct: directSet}, nil
@@ -323,7 +326,7 @@ func (e *Engine) summary(ctx context.Context) (Status, error) {
 	var last *string
 	err := e.store.db.QueryRowContext(ctx, "SELECT pause_reason,last_success,error_code FROM accounts WHERE id=?",
 		e.opts.AccountID).Scan(&reason, &last, &code)
-	if err != nil {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return st, errors.New("storage_unavailable")
 	}
 	st.Paused = reason != ""
@@ -386,11 +389,11 @@ func (e *Engine) summary(ctx context.Context) (Status, error) {
 	err = e.store.db.QueryRowContext(ctx, `SELECT
 		coalesce(sum(desired=1),0),
 		coalesce(sum(observed=1),0),
-		coalesce(sum(state='pending'),0),
+		coalesce(sum(state='pending' AND `+favoriteEligibleSQL+`),0),
 		coalesce(sum(state='applied'),0),
 		coalesce(sum(state='preserved'),0),
-		coalesce(sum(state='failed'),0),
-		coalesce(sum(state='uncertain'),0),
+		coalesce(sum(state='failed' AND `+favoriteEligibleSQL+`),0),
+		coalesce(sum(state='uncertain' AND `+favoriteEligibleSQL+`),0),
 		coalesce(sum(state='unknown'),0),
 		coalesce(sum(state='conflict'),0)
 		FROM favorites WHERE account_id=?`, e.opts.AccountID).
@@ -547,7 +550,7 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 	var uploadDue, reconcileDue int
 	err = e.store.db.QueryRowContext(ctx, `SELECT
 		coalesce(sum(state IN ('pending','staged','failed')
-			AND (?=0 OR coalesce(json_extract(metadata,'$.kind'),'')!='VIDEO')),0),
+			AND `+videoHoldSQL+`),0),
 		coalesce(sum(state='unconfirmed'),0)
 		FROM assets a WHERE account_id=? AND `+e.attemptLimit("")+` AND next_at<=?
 		AND error_code!='source_changed' AND `+e.eligibleSQL(),
@@ -585,7 +588,7 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 	err = e.store.db.QueryRowContext(ctx, `SELECT min(next_at) FROM (
 		SELECT next_at FROM assets a WHERE account_id=? AND state IN ('failed','unconfirmed')
 			AND `+e.attemptLimit("")+` AND error_code!='source_changed'
-			AND (?=0 OR coalesce(json_extract(a.metadata,'$.kind'),'')!='VIDEO') AND `+e.eligibleSQL()+`
+			AND (state='unconfirmed' OR `+videoHoldSQL+`) AND `+e.eligibleSQL()+`
 		UNION ALL SELECT next_at FROM hints WHERE account_id=? AND `+e.attemptLimit("")+`
 		UNION ALL SELECT next_at FROM assets WHERE account_id=? AND state='delete_pending'
 		UNION ALL SELECT next_at FROM rules WHERE account_id=? AND active=1 AND complete=0 AND `+e.attemptLimit("")+`
@@ -630,7 +633,7 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 }
 
 // currentWindow returns the live window snapshot for this account.
-func (e *Engine) currentWindow() *Window {
+func (e *Engine) currentWindow() *window.Window {
 	if e.opts.Window == nil {
 		return nil
 	}
