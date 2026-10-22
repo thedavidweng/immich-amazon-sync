@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/thedavidweng/immich-amazon-sync/internal/bridge"
+	"github.com/thedavidweng/immich-amazon-sync/internal/direct"
 	"github.com/thedavidweng/immich-amazon-sync/internal/syncer"
 )
 
@@ -57,21 +58,32 @@ func writeOriginal(t *testing.T) (string, []byte) {
 	return path, data
 }
 
-// Both the staged upload and the reuse/reconcile decisions read the source
-// original. No path may rewrite its bytes, change its mode or touch its
+// Both upload paths - the Immich API stream staged to local scratch and the
+// direct mounted-original read - plus the reuse/reconcile decisions open the
+// source original. No path may rewrite its bytes, change its mode or touch its
 // filesystem mtime, and the uploaded body must be byte-identical to the
 // original (so embedded EXIF cannot change).
 func TestUploadPathsNeverRewriteOriginalBytesOrTimestamps(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		prepare     func(*targetFake, []byte)
-		wantUploads int
-		wantErr     bool
+		name         string
+		direct       bool
+		prepare      func(*targetFake, []byte)
+		wantUploads  int
+		wantAPIReads int
+		wantErr      bool
 	}{
 		{
-			name:        "staged-upload",
-			prepare:     func(*targetFake, []byte) {},
-			wantUploads: 1,
+			name:         "staged-upload",
+			prepare:      func(*targetFake, []byte) {},
+			wantUploads:  1,
+			wantAPIReads: 1,
+		},
+		{
+			name:         "direct-mount-upload",
+			direct:       true,
+			prepare:      func(*targetFake, []byte) {},
+			wantUploads:  1,
+			wantAPIReads: 0,
 		},
 		{
 			name: "verified-existing-reuse",
@@ -79,7 +91,8 @@ func TestUploadPathsNeverRewriteOriginalBytesOrTimestamps(t *testing.T) {
 				d.nodes = []bridge.Node{{ID: "remote-node", Name: "one.jpg",
 					MD5: contentMD5(string(data)), Size: int64(len(data)), ParentID: "other-folder"}}
 			},
-			wantUploads: 0,
+			wantUploads:  0,
+			wantAPIReads: 1,
 		},
 		{
 			name: "uncertain-write",
@@ -88,17 +101,27 @@ func TestUploadPathsNeverRewriteOriginalBytesOrTimestamps(t *testing.T) {
 					return bridge.Node{}, &bridge.Error{Code: bridge.Unavailable}
 				}
 			},
-			wantErr: true,
+			wantAPIReads: 1,
+			wantErr:      true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path, data := writeOriginal(t)
 			before := snapshotOriginal(t, path)
 			asset := originalAsset("one", data)
+			opts := options()
+			if tc.direct {
+				asset.OriginalPath = mountSource + "/original.jpg"
+				opts.DirectRoots = []direct.Root{{ImmichPath: mountSource, HostPath: filepath.Dir(path)}}
+			}
 			s := &sourceFake{identity: "source", pages: map[string]bridge.Page{
 				"": {Assets: []bridge.Asset{asset}},
-			}}
-			s.original = func(context.Context, string) (io.ReadCloser, error) { return os.Open(path) }
+			}, assets: map[string]bridge.Asset{asset.ID: asset}}
+			apiReads := 0
+			s.original = func(context.Context, string) (io.ReadCloser, error) {
+				apiReads++
+				return os.Open(path)
+			}
 			d := &targetFake{identity: "target"}
 			tc.prepare(d, data)
 
@@ -111,12 +134,15 @@ func TestUploadPathsNeverRewriteOriginalBytesOrTimestamps(t *testing.T) {
 					t.Error(err)
 				}
 			}()
-			err = engine(t, store, s, d, options()).Once(t.Context())
+			err = engine(t, store, s, d, opts).Once(t.Context())
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("sync error = %v, wantErr %v", err, tc.wantErr)
 			}
 			if len(d.bodies) != tc.wantUploads {
 				t.Fatalf("uploads = %d, want %d", len(d.bodies), tc.wantUploads)
+			}
+			if apiReads != tc.wantAPIReads {
+				t.Fatalf("API original reads = %d, want %d", apiReads, tc.wantAPIReads)
 			}
 			if tc.wantUploads == 1 && d.bodies[0] != string(data) {
 				t.Fatal("uploaded bytes differ from the original")

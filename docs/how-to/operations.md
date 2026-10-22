@@ -9,6 +9,31 @@ owner `10001:10001`, mode `0700`. A new named volume inherits that ownership
 from the image; an existing incorrectly owned volume does not. Fix its ownership
 while the service is stopped, then run the normal image as nonroot.
 
+## Limit transfer hours
+
+Each account may set one optional daily upload window in an IANA timezone:
+
+```json
+"transfer_window": {"timezone": "America/New_York", "start": "23:00", "end": "06:00"}
+```
+
+`start` is inclusive and `end` exclusive; `start` later than `end` crosses
+midnight. Omit the object for continuous transfer. Equal bounds are rejected;
+`Local` and unknown zones are rejected. The zone database is embedded, so no
+container tzdata package is required.
+
+Only new uploads pause. Scans, metadata and existing-content checks, album
+reconciliation and deletion passes keep running, and an upload already streaming
+finishes without becoming uncertain. Deferred uploads are not failures and do
+not consume retries. Status and `sync once` report `deferred`, the window's
+open/closed state, `next_opening` and `deferral_reason`; the scheduler wakes at
+the next DST-correct opening. Editing the window in the dashboard or saving the
+config applies to the next dispatch without restarting `serve` or cancelling
+in-flight streams. Two accounts with different windows stay independent.
+
+Confirm the window's local time against your own clock: `next_opening` is
+computed in the configured zone, including DST transitions.
+
 ## Back up
 
 Stop writes before archiving SQLite, its WAL/SHM files, staging and identity

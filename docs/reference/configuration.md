@@ -29,9 +29,12 @@ See [config.example.json](config.example.json) for the minimal deployment shape.
 | `album_ids` | empty | Explicit source album UUID allowlist. |
 | `library` | `false` | Deliberate whole-accessible-library choice, mutually exclusive with `album_ids`. |
 | `include_videos` | `false` | Include eligible standalone originals classified as video. |
-| `mirror_albums` | `false` | Mirror explicitly selected albums; requires `album_ids` and `library: false`. |
+| `album_sync_mode` | `off` | Album mirroring scope: `off`, `selected` (requires `album_ids` and `library: false`) or `all_accessible` (discovers every album the API key can read, including with `library: true`). |
+| `mirror_albums` | unset | Deprecated boolean form of `album_sync_mode`. `true` maps to `selected` and never to `all_accessible`; combining it with a different mode returns `album_sync_mode_conflict`. |
 | `deletions` | `false` | Propagate an Immich trash to the Amazon trash for mapped assets. Off by default; never permanently deletes. |
 | `deletions_confirmation` | unset | Must be exactly `ENABLE DELETIONS` while `deletions` is true; a missing or different phrase rejects the config with `deletion_confirmation_required`. |
+| `transfer_window` | unset | Optional daily upload window: `{"timezone":"America/New_York","start":"23:00","end":"06:00"}`. `timezone` is an IANA name; `start`/`end` are local `HH:MM` wall-clock times. `start` is inclusive, `end` is exclusive, and `start` may be later than `end` to cross midnight. Equal bounds are invalid, as are unknown or `Local` zones. Unset (or `null`) preserves continuous transfers. |
+| `direct_roots` | empty | Optional read-only mappings from an Immich-reported path prefix to a local directory. Each entry has `immich_path` and `host_path`; both must be absolute and clean, and `immich_path` must be unique. Empty means every original is downloaded from Immich. |
 
 At least one album or explicit library mode is required for each account.
 Account IDs must be unique. Zero accounts is only valid when local management
@@ -41,10 +44,47 @@ nonempty and at most 64 KiB for remote credentials; the JSON config limit is
 returns `config_invalid_json`; a rejected save leaves the previous file and
 running configuration intact. The event handler applies the stricter
 webhook-secret limit above.
-Library mode with `mirror_albums: true` returns `source_scope_conflict`; automatic
-discovery/mirroring of all visible albums is not implemented.
-For whole-accessible-library backup, explicitly set `library: true`,
-`album_ids: []` and `mirror_albums: false`. This does not bypass source permissions.
+`album_sync_mode: selected` requires `album_ids` and `library: false`.
+`album_sync_mode: all_accessible` maps each readable source album, by stable
+UUID, to its own owned destination album. It may be combined with
+`library: true` so the whole accessible library is backed up and every
+accessible album is mirrored. For whole-accessible-library backup without album
+mirroring, explicitly set `library: true`, `album_ids: []` and
+`album_sync_mode: off`. This does not bypass source permissions.
+
+Existing `mirror_albums: true` configurations keep exactly their selected album
+scope; the legacy boolean never enables `all_accessible`. Unsetting it leaves
+album mirroring off. An unknown mode returns `album_sync_mode_invalid`.
+
+`direct_roots` is opt-in and has no default mapping. Only regular files under an
+approved root are read; a missing path, an absent mount or a permission error
+falls back to the Immich API, while an unclean path, an escaping symlink or a
+non-regular file fails closed with a finite `direct_path_*` code. The mount is
+never written or retimed. Invalid entries reject the config with
+`direct_root_invalid`. See
+[direct originals](../how-to/direct-originals.md) for the Compose overlay,
+safety rules and diagnostics.
+
+`transfer_window` gates only new outbound media uploads. Metadata reads, favorite
+drift reads, album reconciliation, deletion passes and existing-content detection
+continue outside the window. An upload already streaming finishes normally; a
+closing window never marks it failed or unconfirmed. Work that cannot start is
+persisted as `deferred` (status also counts not-yet-attempted upload work as
+deferred while the window is closed), never as a failure, blocked or uncertain
+state, and it does not consume a retry. The scheduler computes the next DST-correct opening in
+the configured zone (a wall time skipped by a spring-forward transition simply
+does not open; a repeated fall-back wall time opens in both occurrences) and
+wakes for it. Editing the window applies to the next dispatch without restarting
+the service or cancelling streams. Invalid values return
+`transfer_window_timezone_invalid`, `transfer_window_time_invalid` or
+`transfer_window_bounds_invalid`. The IANA database is embedded in the binary, so
+a minimal container without system tzdata still resolves zones.
+
+`bytes_per_second` caps combined per-account byte flow: source original downloads
+(staging reads, including fallback Immich downloads) and destination uploads are
+charged together against the same limit. Each byte is counted once for the
+purpose it serves; a single asset is not counted twice for the same purpose.
+Metadata requests are not counted. Zero disables the cap.
 
 Events do not change source scope. See [event setup](../how-to/event-hints.md),
 [managed albums](../how-to/managed-albums.md) and
@@ -66,8 +106,11 @@ admin-secret path or webhook-secret path require restart. See
 
 Without `--config`, the single-account environment mode uses `IMMICH_URL`,
 `IMMICH_API_KEY_FILE`, `AMAZON_REGION`, `AMAZON_COOKIE_FILE`, comma-separated
-`ALBUM_IDS`, and `INCLUDE_VIDEOS` (`true`/`false`). Its account ID is `default`.
-Use JSON for multiple accounts and explicit library/album-mirroring options.
+`ALBUM_IDS`, `LIBRARY` (`true`/`false`), `ALBUM_SYNC_MODE` (`off`, `selected`,
+`all_accessible`) and `INCLUDE_VIDEOS` (`true`/`false`). Its account ID is
+`default`. Optional environment-mode window values are `TRANSFER_TIMEZONE`,
+`TRANSFER_WINDOW_START` and `TRANSFER_WINDOW_END`; set all three together or none.
+Use JSON for multiple accounts.
 `DATA_DIR`, `LISTEN`, `ADMIN_PASSWORD_FILE` and `WEBHOOK_SECRET_FILE` override
 their corresponding values even with a JSON file.
 
