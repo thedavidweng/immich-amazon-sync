@@ -24,9 +24,11 @@ func favoriteRoot(owner string) string {
 	return `{"id":"root-owner","isRoot":true,"kind":"FOLDER","status":"AVAILABLE","ownerId":"` + owner + `"}`
 }
 
-// The pinned SDK payloads prove that only a retained raw settings.favorite
-// boolean authorizes a decision. A missing settings object or key is
-// favorite_unconfirmed, never false.
+// A live ca account returned no settings object at all for a media node it had
+// never changed a setting on, and one PATCH made the key appear. The omission is
+// an authoritative false. Once a settings object exists, a missing favorite key
+// is still unknown, because it cannot distinguish a stored false from an
+// incomplete payload.
 func TestFavoriteReadRequiresExplicitField(t *testing.T) {
 	fixture := loadSDKFixture(t)
 	for name, want := range map[string]struct {
@@ -35,7 +37,7 @@ func TestFavoriteReadRequiresExplicitField(t *testing.T) {
 	}{
 		"favorite-true":       {value: true, present: true},
 		"favorite-false":      {value: false, present: true},
-		"favorite-absent":     {present: false},
+		"favorite-absent":     {value: false, present: true},
 		"favorite-key-absent": {present: false},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -208,7 +210,8 @@ func TestFavoriteUnstarIsExplicitAndVerified(t *testing.T) {
 		want    string
 	}{
 		"verified":        {before: "favorite-true", after: "favorite-false", patches: 1, value: false},
-		"absent-field":    {before: "favorite-absent", patches: 0, value: false, want: bridge.FavoriteUnconfirmed},
+		"absent-settings": {before: "favorite-absent", patches: 0, value: false},
+		"absent-field":    {before: "favorite-key-absent", patches: 0, value: false, want: bridge.FavoriteUnconfirmed},
 		"already-cleared": {before: "favorite-false", patches: 0, value: false},
 		"lost-response":   {before: "favorite-true", after: "favorite-true", patches: 1, value: false, want: bridge.FavoriteUnconfirmed},
 	} {
@@ -256,6 +259,42 @@ func TestFavoriteUnstarIsExplicitAndVerified(t *testing.T) {
 				t.Fatalf("unstar request did not carry an explicit false: %s", body)
 			}
 		})
+	}
+}
+
+// A node with no settings object is starrable: the absent object is a proven
+// false, the PATCH is issued once, and the re-read must show an explicit true.
+func TestFavoriteStarOnNodeWithoutSettings(t *testing.T) {
+	fixture := loadSDKFixture(t)
+	var patches atomic.Int32
+	c := newClient(t, aphotos.RegionUS, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/nodes":
+			_, _ = fmt.Fprint(w, `{"data":[`+favoriteRoot("owner")+`],"count":1}`)
+		case r.URL.Path == "/nodes/node-favorite-absent" && r.Method == http.MethodPatch:
+			patches.Add(1)
+			_, _ = w.Write(fixture.FavoritePatch)
+		case r.URL.Path == "/nodes/node-favorite-absent" && r.Method == http.MethodGet:
+			if patches.Load() == 0 {
+				_, _ = w.Write(fixture.Nodes["favorite-absent"])
+				return
+			}
+			_, _ = w.Write(bytes.ReplaceAll(fixture.Nodes["favorite-true"],
+				[]byte(`"node-favorite-true"`), []byte(`"node-favorite-absent"`)))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	})
+	if err := c.SetFavorite(t.Context(), favoriteContent(), "node-favorite-absent", true); err != nil {
+		t.Fatalf("star on a node without settings failed: %v", err)
+	}
+	if patches.Load() != 1 {
+		t.Fatalf("mutation count = %d, want 1", patches.Load())
+	}
+	value, err := c.ReadFavorite(t.Context(), favoriteContent(), "node-favorite-absent")
+	if err != nil || !value {
+		t.Fatalf("re-read = %v, %v", value, err)
 	}
 }
 

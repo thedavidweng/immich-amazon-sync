@@ -56,7 +56,7 @@ do not move. Grades describe this repository's proof, not the comparison fork's.
 | Strict dedup and verified remote identity (MD5, size, owned Node) | SHA-1 via `gpmc` | MD5/size/owned Node; `confirmed`/`existing` | Live evidence | #17 preserves |
 | Byte-identical originals; no recompression | Yes | Yes | Offline contract + live evidence | #17 preserves; #31 asserts unchanged bytes and mtimes on both upload paths |
 | Opt-in trash propagation, 500-item/10% guard, trash only | Yes | Yes (PR #15) | Live evidence (CA, 2026-10-22) | #17 regression coverage; #15 shipped |
-| Favorite reads with field-presence semantics | PR #6 tree | Presence-aware `isFavorite`; every Amazon read must prove an explicit raw `settings.favorite` | Offline contract | #18 |
+| Favorite reads with field-presence semantics | PR #6 tree | Presence-aware `isFavorite`; a `settings` object without an explicit `favorite` is `favorite_unconfirmed`, an absent `settings` object is a proven false | Offline contract + live `ca` | #18 |
 | Star new uploads and Existing Nodes | Yes | Yes, when `favorites: add_only`; verified by re-read | Offline contract | #18 |
 | Add-only mode that never unstars | Not offered | Yes (`off` is the default) | Offline contract | #18 |
 | Durable per-Node favorite outcome and independent retry | No | One row per node; a lost mutation is retried only after a fresh read | Offline contract | #18 |

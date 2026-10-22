@@ -69,9 +69,14 @@ func (c *Client) SetFavorite(ctx context.Context, content bridge.Content, nodeID
 	if err := favoriteNode(after, root, content); err != nil {
 		return &bridge.Error{Code: bridge.FavoriteUnconfirmed}
 	}
+	if _, field := favoritePresent(after); !field {
+		// The requested change must be visible as an explicit value; a payload
+		// without one cannot prove the write committed.
+		return &bridge.Error{Code: bridge.FavoriteUnconfirmed}
+	}
 	value, err := favoriteValue(after)
 	if err != nil {
-		return err
+		return &bridge.Error{Code: bridge.FavoriteUnconfirmed}
 	}
 	if value != favorite {
 		return &bridge.Error{Code: bridge.FavoriteUnconfirmed}
@@ -97,17 +102,33 @@ func favoriteNode(n, root *aphotos.Node, content bridge.Content) error {
 	return nil
 }
 
-// favoriteValue decodes only an explicit raw settings.favorite boolean. The
-// SDK's typed NodeSettings.Favorite is a plain bool, so a settings object
-// without the key decodes as a synthetic false; presence must come from Raw.
+// favoriteValue decodes the raw favorite setting. The SDK's typed
+// NodeSettings.Favorite is a plain bool, so a settings object without the key
+// decodes as a synthetic false; presence must come from Raw.
+//
+// Amazon omits the whole settings object on a node the account has never
+// changed a setting on, and that omission means "not favorited", not "unknown":
+// a live ca account returned no settings key at all for an untouched media
+// node, and one PATCH made the key appear. An absent settings object is
+// therefore an authoritative false. Once a settings object exists, a missing
+// or null favorite key is still unknown, because a partial mutation response
+// proves nothing about the stored value.
 func favoriteValue(n *aphotos.Node) (bool, error) {
 	var envelope struct {
-		Settings map[string]json.RawMessage `json:"settings"`
+		Settings json.RawMessage `json:"settings"`
 	}
 	if n == nil || json.Unmarshal(n.Raw, &envelope) != nil {
 		return false, &bridge.Error{Code: bridge.FavoriteUnconfirmed}
 	}
-	field, ok := envelope.Settings["favorite"]
+	settings := strings.TrimSpace(string(envelope.Settings))
+	if settings == "" || settings == "null" {
+		return false, nil
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(envelope.Settings, &fields) != nil {
+		return false, &bridge.Error{Code: bridge.FavoriteUnconfirmed}
+	}
+	field, ok := fields["favorite"]
 	if !ok {
 		return false, &bridge.Error{Code: bridge.FavoriteUnconfirmed}
 	}
@@ -116,6 +137,23 @@ func favoriteValue(n *aphotos.Node) (bool, error) {
 		return false, &bridge.Error{Code: bridge.FavoriteUnconfirmed}
 	}
 	return *value, nil
+}
+
+// favoritePresent reports whether the remote payload carried a settings object
+// at all, and if so whether it carried an explicit favorite key. Callers use it
+// to distinguish a proven false from a mutation response that proves nothing.
+func favoritePresent(n *aphotos.Node) (settings, field bool) {
+	var envelope struct {
+		Settings map[string]json.RawMessage `json:"settings"`
+	}
+	if n == nil || json.Unmarshal(n.Raw, &envelope) != nil {
+		return false, false
+	}
+	if envelope.Settings == nil {
+		return false, false
+	}
+	_, field = envelope.Settings["favorite"]
+	return true, field
 }
 
 // favoriteUncertain maps a mutation whose committed state is unknowable to the

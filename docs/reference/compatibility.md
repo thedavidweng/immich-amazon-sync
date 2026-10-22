@@ -302,12 +302,22 @@ star.
 The aphotos `NodeSettings.Favorite` typed value cannot prove presence: a
 `settings` object without `favorite` decodes as a synthetic false, and the SDK
 also synthesises a `NodeSettings` fallback when a PATCH response omits
-`settings`. The adapter therefore reads the retained raw payload and requires an
-explicit `settings.favorite` boolean for both the pre-write read and the
-post-write verification. A missing field is `favorite_unconfirmed`, and the PATCH
-response is never accepted as proof. A lost or timed-out mutation stays
-uncertain until a fresh read settles it; no media is uploaded again.
+`settings`. The adapter therefore reads the retained raw payload.
 
-These are offline contract grades from the pinned fixtures. A live disposable
-account has not exercised `SetFavorite`; the dated provider matrix remains
-issue #28 work.
+A live `ca` account on 2026-10-22 established the shape of an untouched Node:
+`GET /nodes/{id}` returned **no `settings` object at all** for media the account
+had never changed a setting on, and one `SetFavorite` PATCH made
+`settings: {"favorite": true}` appear. An absent `settings` object is therefore
+an authoritative false — otherwise add-only sync could never star media Amazon
+had never mutated. Once a `settings` object is present, a missing or null
+`favorite` key remains `favorite_unconfirmed`, the pre-write unstar read requires
+an explicit `true`, and the post-write verification always requires an explicit
+`favorite` field, so the PATCH response alone is never proof. A lost or timed-out
+mutation stays uncertain until a fresh read settles it; no media is uploaded
+again.
+
+Observed live on 2026-10-22 (`ca`, this service's `main` plus the SDK decode fix):
+star applied and read back as `{"favorite": true}`; a manual unstar was detected
+and re-applied; an unstar under `mirror` + `favorites_takeover` cleared the star
+and read back `{"favorite": false}`. Remaining limits: one account, one marketplace,
+synthetic PNG/MOV samples.

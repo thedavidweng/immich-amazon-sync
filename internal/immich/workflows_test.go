@@ -99,6 +99,39 @@ func TestWorkflowCapabilityDetectsVersionAndDeclaredContract(t *testing.T) {
 	}
 }
 
+// The pinned v3.3.4 contract declares name and description nullable. A live
+// account returns "description": null for a workflow created outside this
+// service, and requiring the field rejected the whole listing.
+func TestWorkflowListingAcceptsNullLabels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/server/version":
+			_, _ = fmt.Fprint(w, `{"major":3,"minor":3,"patch":3}`)
+		case "/api/workflows":
+			_, _ = fmt.Fprint(w, `[{"id":"`+workflowID+`","trigger":"AssetCreate","name":null,"description":null,`+
+				`"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z","enabled":true,"logging":false,`+
+				`"steps":[{"method":"immich-plugin-core#webhook","config":{"url":"https://example.net/x"},"enabled":true}]}]`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client, err := immich.NewWorkflows(server.URL, "key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := client.List(t.Context())
+	if err != nil {
+		t.Fatalf("null labels rejected the listing: %v", err)
+	}
+	if len(list) != 1 || list[0].ID != workflowID || list[0].Name != "" || list[0].Description != "" {
+		t.Fatalf("listing = %+v", list)
+	}
+	if len(list[0].Steps) != 1 || list[0].Steps[0].Method != workflow.Method {
+		t.Fatalf("step contract lost: %+v", list[0].Steps)
+	}
+}
+
 func TestWorkflowCreateUpdateAndDeleteUseThePinnedContract(t *testing.T) {
 	var created, updated, deleted atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

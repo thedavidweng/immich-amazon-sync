@@ -45,8 +45,13 @@ type workflowResponse struct {
 	Steps       []workflowStep `json:"steps"`
 }
 
+// workflow decodes one response. The pinned v3.3.4 contract declares name and
+// description nullable, and a live account returns "description": null for
+// workflows created outside this service, so a null is a normal absent label
+// rather than a protocol violation. The identity and ownership comparison in
+// the manager still treats the decoded empty string as "no description".
 func (w workflowResponse) workflow() (workflow.Workflow, error) {
-	if !uuid.MatchString(w.ID) || w.Name == nil || w.Description == nil {
+	if !uuid.MatchString(w.ID) {
 		return workflow.Workflow{}, &bridge.Error{Code: bridge.Protocol}
 	}
 	switch w.Trigger {
@@ -61,8 +66,15 @@ func (w workflowResponse) workflow() (workflow.Workflow, error) {
 		}
 		steps = append(steps, workflow.Step{Method: step.Method, Config: step.Config, Enabled: step.Enabled})
 	}
+	name, description := "", ""
+	if w.Name != nil {
+		name = *w.Name
+	}
+	if w.Description != nil {
+		description = *w.Description
+	}
 	return workflow.Workflow{
-		ID: w.ID, Trigger: w.Trigger, Name: *w.Name, Description: *w.Description,
+		ID: w.ID, Trigger: w.Trigger, Name: name, Description: description,
 		Enabled: w.Enabled, Logging: w.Logging, Steps: steps,
 	}, nil
 }

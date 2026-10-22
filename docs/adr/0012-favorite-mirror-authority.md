@@ -14,8 +14,13 @@ inconsistent for users who rely on the Amazon collection. An unstar is only
 legal under two conditions, both checked in the same attempt as the mutation:
 
 1. The remote read immediately before the mutation proves an explicit
-   `settings.favorite: true`. An absent field is `favorite_unconfirmed` and no
-   mutation happens, so stale or partial metadata can never clear a star.
+   `settings.favorite: true`. A `settings` object without that key, or a value
+   that is null, is `favorite_unconfirmed` and no mutation happens, so stale or
+   partial metadata can never clear a star. An absent `settings` object is
+   different: Amazon returns none for a Node it has never stored a setting for,
+   and that omission is an authoritative false rather than an unknown value. A
+   later amendment recorded the live `ca` observation that changed this
+   distinction; it does not widen unstar authority.
 2. The service holds durable authority: the row's `applied` flag records that
    this service applied and verified the star, or the account records
    `favorites_takeover: true`.

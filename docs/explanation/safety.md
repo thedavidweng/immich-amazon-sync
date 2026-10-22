@@ -61,14 +61,21 @@ single recording that lets the source clear those manual stars too. Nothing
 about a stale local observation can trigger an unstar: the value that authorizes
 it comes from the read in the same attempt.
 
-The pre-write read and the post-write verification both require an explicit raw
-`settings.favorite` field. A missing field is `favorite_unconfirmed`; the SDK's
-mutation response is never proof. A lost or timed-out mutation stays uncertain
-and is retried only after a fresh read, so a committed star or unstar settles
-without a second PATCH and no media is uploaded again. Trashed, Deleted and
-Unconfirmed Nodes are ineligible, so a source trash never resurrects or alters
-their star. Several assets or albums sharing a Node produce one durable outcome
-and one write.
+Amazon omits the whole `settings` object on a Node the account has never changed
+a setting on, and a live `ca` account confirmed that omission means "not
+favorited": no `settings` key was returned for an untouched media Node, and one
+favorite mutation made the key appear. An absent `settings` object is therefore
+an authoritative false, which is what lets an add-only sync star media Amazon has
+never touched. Once a `settings` object exists, a missing or null `favorite` key
+still yields `favorite_unconfirmed`, because it cannot distinguish a stored false
+from an incomplete payload, and the pre-write unstar read requires the explicit
+`favorite` value. The post-write verification always requires an explicit
+`favorite` field, so the SDK's mutation response is never proof. A lost or
+timed-out mutation stays uncertain and is retried only after a fresh read, so a
+committed star or unstar settles without a second PATCH and no media is uploaded
+again. Trashed, Deleted and Unconfirmed Nodes are ineligible, so a source trash
+never resurrects or alters their star. Several assets or albums sharing a Node
+produce one durable outcome and one write.
 
 Drift is repaired by a bounded audit: each settled node is re-read at most once
 per six hours, oldest first, and at most sixteen per pass. A manual unstar of a
