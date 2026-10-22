@@ -58,7 +58,7 @@ Checked with `gh api repos/ImAleeexx/immich-gphotos/pulls/<n>`; `merged` was
 | Authoritative mirror/unstar with consent | PR #6 tree | No | Not yet tested | #19 |
 | Shared-Node conflict, drift repair, read-before-retry | No | No | Not yet tested | #19 |
 | Trusted read-only direct originals with API fallback | PR #5 tree (mtime re-date) | No | Not yet tested | #23 |
-| Multi-album selected-album mirroring | Yes | Yes | Live evidence | #17 preserves |
+| Explicit selected-album mirroring | Yes | Yes | Live evidence (one album) | #17 preserves |
 | All-accessible album discovery and mirroring | Yes | No | Not yet tested | #24 |
 | Album rename/removal safeguards | Google-specific | Owned map + bounded membership guard | Offline contract | #17 preserves; #24 extends |
 | Destination album capacity handling | 20,000-item split | No assumed limit | Unsupported (20k not ported) | #24 only after verified evidence |
@@ -73,7 +73,7 @@ Checked with `gh api repos/ImAleeexx/immich-gphotos/pulls/<n>`; `merged` was
 | Capture date for missing EXIF | PR #5 re-dates direct reads | Preserves EXIF; no source writes | Unsupported (no verified SDK setter) | #31 |
 | Apple Live Photo still + MOV original-pair preservation | PR #7 muxes a derived Google Motion Photo | Still-only; hidden MOV excluded | Offline contract (planned) | #26 |
 | Native Apple Live Photo pairing and playback | No | No | Unsupported until disposable samples prove it | #30 |
-| Google/Samsung Motion Photo mux | Yes (PR #7) | No conversion path | Unsupported (deliberately not ported) | — |
+| Google/Samsung Motion Photo mux | Yes (PR #7) | No conversion path | Unsupported (deliberately not ported) | #26 keeps original pairs; #30 is the only native-pairing experiment |
 | Managed multi-account local UI | Yes | Yes | Offline contract | #17 preserves |
 | Prometheus `/metrics` with low cardinality | Yes | No | Not yet tested | #27 |
 | Health/readiness independent of Amazon | Variable | Yes | Offline contract | #17 preserves |
