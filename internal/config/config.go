@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/thedavidweng/amazon-photos/pkg/aphotos"
+	"github.com/thedavidweng/immich-amazon-sync/internal/direct"
 )
 
 type Config struct {
@@ -45,8 +46,28 @@ type Account struct {
 	// requires DeletionConfirmation to equal DeletionConfirmationPhrase.
 	Deletions            bool   `json:"deletions"`
 	DeletionConfirmation string `json:"deletions_confirmation,omitempty"`
-	apiKey               string
-	cookie               string
+	// DirectRoots maps source-reported original paths onto pre-approved
+	// read-only local roots. Empty (the default, and for every existing
+	// account) keeps every original on the Immich API.
+	DirectRoots []DirectRoot `json:"direct_roots,omitempty"`
+	apiKey      string
+	cookie      string
+}
+
+// DirectRoot is one read-only mapping. Paths must be absolute and clean; the
+// local root is never created, written or retimed by this service.
+type DirectRoot struct {
+	ImmichPath string `json:"immich_path"`
+	HostPath   string `json:"host_path"`
+}
+
+// Roots converts the configured mapping into the validated resolver seam.
+func (a Account) Roots() []direct.Root {
+	roots := make([]direct.Root, 0, len(a.DirectRoots))
+	for _, root := range a.DirectRoots {
+		roots = append(roots, direct.Root{ImmichPath: root.ImmichPath, HostPath: root.HostPath})
+	}
+	return roots
 }
 
 // DeletionConfirmationPhrase is the exact text a configuration must contain to
@@ -171,6 +192,9 @@ func (c Config) Validate() error {
 		}
 		if account.Deletions && account.DeletionConfirmation != DeletionConfirmationPhrase {
 			return errors.New("deletion_confirmation_required")
+		}
+		if _, err := direct.New(account.Roots()); err != nil {
+			return errors.New("direct_root_invalid")
 		}
 		for _, id := range account.AlbumIDs {
 			if !identifier.MatchString(id) {

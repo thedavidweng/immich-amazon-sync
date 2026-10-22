@@ -24,6 +24,11 @@ type Asset struct {
 	FileModifiedAt time.Time `json:"file_modified_at"`
 	LivePhotoVideo bool      `json:"live_photo_video"`
 	ExcludedReason string    `json:"excluded_reason,omitempty"`
+	// OriginalPath is the absolute path the source reports for this original.
+	// It is transient by design: it is never marshalled into the durable asset
+	// metadata, never logged and only used to resolve one approved read-only
+	// mount. Callers must re-read it instead of trusting a stored copy.
+	OriginalPath string `json:"-"`
 }
 
 type Scope struct {

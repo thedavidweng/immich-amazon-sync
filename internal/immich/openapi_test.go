@@ -88,6 +88,7 @@ func TestPinnedOfficialOpenAPIContract(t *testing.T) {
 		"AssetResponseDto": {
 			"id": "string", "originalFileName": "string", "checksum": "string", "type": "string",
 			"libraryId": "string", "visibility": "string", "isOffline": "boolean", "isTrashed": "boolean",
+			"originalPath":  "string",
 			"fileCreatedAt": "string", "updatedAt": "string", "livePhotoVideoId": "string",
 		},
 		"ExifResponseDto": {"fileSizeInByte": "integer"},
