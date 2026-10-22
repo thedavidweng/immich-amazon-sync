@@ -19,6 +19,17 @@ album, rule or account does not remove its cloud backup. Optional media deletion
 is deferred to [ticket #8](https://github.com/thedavidweng/immich-amazon-sync/issues/8).
 Managed album membership is separate from media.
 
+An original that already exists elsewhere in the same Amazon account (another
+folder, or only inside an album) is reused instead of uploaded again. Reuse
+requires exactly one AVAILABLE, owned node with matching MD5 and byte size,
+re-read by ID; the staging file is released, the node mapping is kept and a
+requested album membership is still applied. Status counts that asset as
+`existing`, not `confirmed`. Zero or multiple matches, mismatched metadata,
+unproven ownership and incomplete pagination are never reused and never counted
+as `existing`; a fresh asset still uploads only when the complete lookup proves
+no copy, while an uncertain write stays `unconfirmed` unless one verified match
+is found.
+
 ## Compose quickstart
 
 Requires Docker Engine with Compose v2+ and buildx, on Linux amd64 or arm64.

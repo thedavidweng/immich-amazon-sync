@@ -15,7 +15,7 @@ issue. Stop the daemon before running another CLI process on the same volume.
 | `rate_limited` | Respect Retry-After/backoff; do not create a second worker instance to bypass it. |
 | `remote_unavailable` | Check container DNS/network and configured source URL. This is not deletion evidence. |
 | `remote_protocol` | Capture only finite diagnostic fields and deployed versions; pagination/schema incompatibility must not become an empty album. |
-| `content_conflict` | A filename or HTTP 409 is not content equality. Investigate confirmed remote MD5/size/identity. |
+| `content_conflict` | A filename or HTTP 409 is not content equality. The service re-queries the whole account by MD5; a zero match after a 409 stays explicit rather than becoming a backup claim. Investigate confirmed remote MD5/size/identity. |
 | `upload_unconfirmed` / unconfirmed count | Retain the state volume and staged original. Reconcile remote metadata; do not force a new upload or rename. |
 | `album_unconfirmed` | Album creation may have committed without a known returned ID. Preserve state; retry/restart cannot safely adopt by name or recreate it. |
 | `membership_guard` | Verify source scope/counts and snapshots. Empty or excessive removals are blocked; there is no guard override. |
@@ -24,6 +24,17 @@ issue. Stop the daemon before running another CLI process on the same volume.
 | `webhook_unavailable` | Check the secret path/readability, minimum 32 trimmed bytes and maximum 4 KiB file size. |
 | `source_changed` | Source content evidence (SHA-1, size, or filesystem modification time) no longer agrees with the recorded original. Preserve confirmed/uncertain mappings; retry does not clear this conflict. A metadata-only Immich edit does not trigger it. |
 | Local storage/lock failure | Stop the competing writer, fix volume ownership/capacity, and retry. Never remove a live process's lock. |
+
+A photo whose only Amazon copy already lives in another folder or only inside
+an album is reconciled through the controlled account-wide MD5 lookup. Exactly
+one AVAILABLE, owned node with matching MD5 and size is reused: its staging file
+is released, the durable node mapping is kept and a requested album membership
+is still applied. The status counts that asset as `existing`, not `confirmed`.
+Zero matches on a fresh asset mean no copy was found, so the normal upload
+proceeds; after an uncertain write, zero matches keep it `unconfirmed`. Multiple
+matches, mismatched metadata, unproven ownership and incomplete pagination are
+never reused: a fresh asset fails closed with the diagnostic, and an uncertain
+write stays `unconfirmed`.
 
 For `unconfirmed`, the write may have committed before its response was lost.
 Even a currently empty search result cannot prove noncommit: remote indexing

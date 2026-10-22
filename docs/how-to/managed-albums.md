@@ -18,9 +18,12 @@ Source renames keep the same mapped target ID. Same-name existing Amazon albums
 are not adopted.
 
 Eligible originals shared by selected albums reuse confirmed media within that
-account; each album relation is independent. A failed association retries the
-relationship without another media upload. Safe additions can proceed during
-incomplete historical backfill.
+account; each album relation is independent. A verified copy that already exists
+elsewhere in the account (another folder, or only inside an album) is reused too
+and counted as `existing`; its node mapping is durable, so the membership is
+applied without downloading or uploading the original again. A failed
+association retries the relationship without another media upload. Safe
+additions can proceed during incomplete historical backfill.
 
 If album creation may have committed without a known returned ID,
 `album_unconfirmed` remains visible across retry and restart. The service does

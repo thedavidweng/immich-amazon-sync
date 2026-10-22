@@ -6,11 +6,11 @@ live-account success.
 
 | Boundary | Pin/evidence | Limit |
 | --- | --- | --- |
-| Immich stable | `v3.3.4`, `69e0cb8606137c4f8dc0e7207a672ff8be39f358`, released October 20, 2026 | Official contract/source inspection and offline adapter fixtures; no real server tested for this delivery. |
+| Immich stable | `v3.3.4`, `69e0cb8606137c4f8dc0e7207a672ff8be39f358`, released October 20, 2026 | Official contract/source inspection and offline adapter fixtures; a live `ca` run used Immich `3.3.3`, not this pin. |
 | Immich comparison | `v2.0.0`, `e4234af3b3bd32f5dd12a2b0808158339deded43` | Offline owned-album/library contracts include timeline and archive; v2 shared albums are unsupported. Other v2/v3 releases are not individually verified. |
 | Immich main | `166e93559f123313cf9cb4e7324c4ee30e21c618`, OpenAPI says `3.3.0-rc.0` | Stale development metadata, not the stable release number or minimum supported version. |
 | aphotos SDK | `v0.1.4` | Released tag containing the corrections from SDK PR #13: strict list/final-status validation and typed transient Retry-After, retaining GetNode auth/rate-error preservation. |
-| Local runtime | Offline Go, CLI and container contracts | No real Amazon upload, album mutation, format playback or credential renewal verified. |
+| Local runtime | Offline Go, CLI and container contracts plus one live `ca` acceptance run | Real Amazon upload, node re-read, album creation and membership verified once for one account and one Immich album; format playback, credential renewal and multi-account behavior remain unverified. |
 
 Primary sources: [stable release](https://github.com/immich-app/immich/releases/tag/v3.3.4),
 [stable OpenAPI](https://github.com/immich-app/immich/blob/69e0cb8606137c4f8dc0e7207a672ff8be39f358/open-api/immich-openapi-specs.json),
@@ -109,7 +109,7 @@ controls accepted region codes.
 | Code | Marketplace | SDK evidence | This service's live evidence |
 | --- | --- | --- | --- |
 | `us`, `com` | United States | `verified` upstream | untested |
-| `ca` | Canada | `experimental` | untested |
+| `ca` | Canada | `experimental` | partial, one account: uploads re-read and confirmed, album created and populated; see [live evidence](#canada-live-evidence) |
 | `uk`, `co.uk` | United Kingdom | `experimental` | untested |
 | `jp`, `co.jp` | Japan | `experimental` | untested |
 | `at be bg ch cy cz de dk ee es fi fr gr hr hu ie is it li lt lu lv mt nl no pl pt ro se si sk` | Individual supported European marketplaces | `experimental` | untested |
@@ -120,6 +120,26 @@ Successful `doctor` reads do not upgrade a region's write evidence.
 Validate each marketplace/media/album operation with disposable data before
 relying on it. Record service and upstream versions, date, operation and result
 without credentials. Echo Show refresh/playback remains a device behavior.
+
+### Canada live evidence
+
+One live `ca` account was exercised on 2026-10-21 with Immich `3.3.3` and this
+service on `main`: nine JPEG originals uploaded, each re-read by node ID with
+matching MD5, size, `AVAILABLE` status, owner and target parent; one Amazon
+album was created through the returned ID and its membership was read back.
+`doctor` reported `region=ca`, `evidence=experimental` and
+`target_writes=untested`, because it performs no write.
+
+Limits of that evidence: one account, one Immich user, one album, images only,
+largest original about 12 MiB, no video, no credential renewal and no second
+Amazon marketplace. It does not establish general `ca` compatibility.
+
+The same run reproduced the content-conflict defect tracked by
+[issue #13](https://github.com/thedavidweng/immich-amazon-sync/issues/13): two
+assets already existed in the account under an album parent, so the
+target-scoped lookup found nothing and the upload was recorded `unconfirmed`.
+That was a service defect, not a region incompatibility, and it is not evidence
+of successful `ca` compatibility either way.
 
 ## Originals and metadata
 

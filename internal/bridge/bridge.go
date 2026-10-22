@@ -57,31 +57,69 @@ type Content struct {
 	ParentID string // Empty identifies the authenticated root.
 }
 
+// Placement is the verified location of a media node relative to the requested
+// target parent. It is derived by re-reading the node and its parents, never
+// from a lookup hit, filename or HTTP status.
+type Placement string
+
+const (
+	PlacementTarget Placement = "target" // In the requested target folder.
+	PlacementFolder Placement = "folder" // In another owned folder.
+	PlacementAlbum  Placement = "album"  // Only reachable through owned visual collections.
+)
+
+// Node is media whose content, status, ownership and placement were verified.
+// ParentID is the verified folder parent; empty identifies the authenticated
+// root unless AlbumOnly is set.
 type Node struct {
-	ID       string
-	Name     string
-	MD5      string
-	Size     int64
-	ParentID string // Empty identifies the authenticated root, verified by the adapter.
+	ID        string
+	Name      string
+	MD5       string
+	Size      int64
+	ParentID  string
+	AlbumOnly bool
 }
 
-type Capabilities struct {
-	Region   string `json:"region"`
-	Evidence string `json:"evidence"`
-	Identity string `json:"identity"`
+// Placement reports the node's verified location relative to target.
+// target empty identifies the authenticated root.
+func (n Node) Placement(target string) Placement {
+	switch {
+	case n.AlbumOnly:
+		return PlacementAlbum
+	case n.ParentID == target:
+		return PlacementTarget
+	default:
+		return PlacementFolder
+	}
 }
 
 // Target deliberately has no media deletion operation.
 type Target interface {
 	Probe(context.Context) (Capabilities, error)
+	// Find is the strict target-scoped lookup. It may only return verified
+	// nodes already placed at the requested parent, and must prove a complete
+	// zero-or-one page.
 	Find(context.Context, Content) ([]Node, error)
+	// FindExisting performs the controlled account-wide MD5 lookup. A zero ID
+	// means the complete enumeration proved that no candidate exists. Multiple
+	// matches, mismatched metadata, unproven ownership and incomplete
+	// pagination are errors, never absence and never success.
+	FindExisting(context.Context, Content) (Node, error)
 	Upload(context.Context, Content, io.Reader) (Node, error)
+	// GetNode re-reads one known node and verifies its content, ownership and
+	// placement. It never adopts a node by name.
 	GetNode(context.Context, string) (Node, error)
 	CreateAlbum(context.Context, string) (string, error)
 	RenameAlbum(context.Context, string, string) error
 	AlbumMembers(context.Context, string) ([]string, error)
 	AddMembers(context.Context, string, []string) error
 	RemoveMembers(context.Context, string, []string) error
+}
+
+type Capabilities struct {
+	Region   string `json:"region"`
+	Evidence string `json:"evidence"`
+	Identity string `json:"identity"`
 }
 
 type Error struct {

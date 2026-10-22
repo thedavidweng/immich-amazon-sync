@@ -33,6 +33,7 @@ type Status struct {
 	Failed                  int            `json:"failed"`
 	Blocked                 int            `json:"blocked"`
 	Skipped                 int            `json:"skipped"`
+	Existing                int            `json:"existing"`
 	Scanning                int            `json:"scanning"`
 	Paused                  bool           `json:"paused"`
 	PauseReason             string         `json:"pause_reason,omitempty"`
@@ -201,6 +202,8 @@ func (e *Engine) summary(ctx context.Context) (Status, error) {
 			st.Blocked += count
 		case "skipped":
 			st.Skipped += count
+		case "existing":
+			st.Existing += count
 		}
 		if code != "" && state != "skipped" {
 			st.Errors[code] += count

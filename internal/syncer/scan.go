@@ -241,7 +241,7 @@ func (e *Engine) discover(ctx context.Context, tx *sql.Tx, a bridge.Asset, metad
 	changed := digest != "" && ((a.SHA1 != "" && checksum != a.SHA1) ||
 		(a.Size >= 0 && a.Size != size) ||
 		(a.SHA1 == "" && !old.FileModifiedAt.Equal(a.FileModifiedAt)))
-	safeSkip := a.ExcludedReason != "" && state != "confirmed" && state != "running" && state != "unconfirmed"
+	safeSkip := a.ExcludedReason != "" && state != "confirmed" && state != "existing" && state != "running" && state != "unconfirmed"
 	if changed && !safeSkip {
 		// Preserve the original metadata and confirmed/uncertain content evidence.
 		_, err = tx.ExecContext(ctx, "UPDATE assets SET error_code='source_changed' WHERE account_id=? AND id=?",
@@ -275,7 +275,7 @@ func (e *Engine) finishScan(ctx context.Context) error {
 		return err
 	}
 	err = e.store.db.QueryRowContext(ctx, `SELECT count(*) FROM assets a WHERE account_id=?
-		AND (state NOT IN ('confirmed','skipped') OR error_code='source_changed') AND `+eligibleSQL,
+		AND (state NOT IN ('confirmed','existing','skipped') OR error_code='source_changed') AND `+eligibleSQL,
 		e.opts.AccountID).Scan(&outstanding)
 	if err != nil || unfinished != 0 || outstanding != 0 {
 		return err
