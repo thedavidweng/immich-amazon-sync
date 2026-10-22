@@ -1255,3 +1255,40 @@ func TestMetadataEditDoesNotPoisonChecksumlessAsset(t *testing.T) {
 		t.Fatalf("file modification lost the confirmed mapping: %+v", st)
 	}
 }
+
+// A source_changed conflict is a statement about the current evidence, not a
+// permanent verdict: once the source reports the recorded content again the
+// conflict must clear so the asset is no longer blocked.
+func TestSourceChangedConflictClearsWhenSourceSettles(t *testing.T) {
+	s := &sourceFake{identity: "source", data: map[string]string{"one": "hello"}}
+	a := photo("one")
+	a.SHA1 = ""
+	a.FileModifiedAt = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	s.pages = map[string]bridge.Page{"": {Assets: []bridge.Asset{a}}}
+	d := &targetFake{identity: "target"}
+	store, err := syncer.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	e := engine(t, store, s, d, options())
+	if err := e.Once(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	changed := a
+	changed.FileModifiedAt = a.FileModifiedAt.Add(time.Hour)
+	s.pages[""] = bridge.Page{Assets: []bridge.Asset{changed}}
+	if err := e.Once(t.Context()); err == nil || err.Error() != "source_changed" {
+		t.Fatalf("file modification was ignored: %v", err)
+	}
+	if st := status(t, e); st.Confirmed != 1 || st.Errors["source_changed"] != 1 {
+		t.Fatalf("conflict was not recorded: %+v", st)
+	}
+	s.pages[""] = bridge.Page{Assets: []bridge.Asset{a}}
+	if err := e.Once(t.Context()); err != nil {
+		t.Fatalf("stale source_changed blocked recovery: %v", err)
+	}
+	if st := status(t, e); st.Confirmed != 1 || st.Errors["source_changed"] != 0 || len(d.nodes) != 1 {
+		t.Fatalf("settled source kept the conflict: %+v nodes=%d", st, len(d.nodes))
+	}
+}

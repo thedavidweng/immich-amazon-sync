@@ -328,7 +328,10 @@ func (e *Engine) discover(ctx context.Context, tx *sql.Tx, a bridge.Asset, metad
 			target = "pending"
 		}
 	}
-	reset := !protected && (exclusion != "" || state == "skipped" || metadataChanged)
+	// A settled source clears the content conflict: the staged digest was never
+	// recorded, so agreeing evidence is simply current again. Filters otherwise
+	// own only unsettled work.
+	reset := code == "source_changed" || (!protected && (exclusion != "" || state == "skipped" || metadataChanged))
 	if reset {
 		code, attempts = "", 0
 	}
