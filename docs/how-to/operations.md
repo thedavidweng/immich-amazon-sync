@@ -53,7 +53,9 @@ scrape:
 `GET /metrics` returns Prometheus text exposition and `GET /status` returns the
 same durable report as `status --json`. Both answer `404` while metrics are
 disabled, and both require `Authorization: Bearer <token>` when a token file is
-configured. Labels are the hashed account plus finite state, code, reason,
+configured. The container image sets `LISTEN=0.0.0.0:8080`, so enabling metrics
+there requires `METRICS_TOKEN_FILE` (or a loopback `LISTEN` override). Labels are
+the hashed account plus finite state, code, reason,
 category and mode values, so no filename, asset UUID, raw account name, URL or
 secret is exposed.
 

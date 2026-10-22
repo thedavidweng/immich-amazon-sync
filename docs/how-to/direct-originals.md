@@ -96,11 +96,12 @@ are confined with `os.Root`, so `..` and symlink escapes cannot reach outside it
 `sync once --json` and the scheduled cycle status include a `direct` object:
 
 ```json
-"direct": {"reads": 120, "bytes_avoided": 42949672960,
+"direct": {"reads": 120, "bytes_avoided": 42949672960, "api_bytes": 5368709120,
            "fallbacks": {"missing": 2}, "failures": {"path_escape": 1}}
 ```
 
-`bytes_avoided` counts bytes served from disk instead of downloaded. Counters are
+`bytes_avoided` counts bytes served from disk instead of downloaded; `api_bytes`
+counts originals downloaded from the Immich API. Counters are
 process-local and reset on restart. `doctor` prints
 `direct_roots=<available>/<configured>` per account; it never prints a path.
 `job_progress` log lines add `read_source` (`direct` or `api`) when an original

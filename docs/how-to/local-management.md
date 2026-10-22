@@ -95,9 +95,13 @@ With no explicit config path or with `--account`, saving config is disabled so
 a filtered view cannot overwrite unselected accounts. A read-only bind mount
 also prevents saving even when an explicit path is supplied.
 
-The overview shows account pause state, aggregate queue counts, finite error
-codes and last successful reconciliation. Account actions pause/resume work,
-retry eligible pending work or run read-only doctor diagnostics. Retry is not a
+The overview shows account pause state, aggregate queue counts, album and
+association backlog, finite error codes, process-local direct/API read counters,
+the effective retry bounds and last successful reconciliation. The editor also
+exposes optional bounded retry tuning and Live Photo mode. Account actions
+pause/resume work, retry eligible pending work or run read-only doctor
+diagnostics; managed accounts additionally offer a read-only Workflow run-log
+view. Retry is not a
 force-upload operation and cannot bypass uncertainty. Removing an account
 changes configuration only; it keeps local history and cloud media. Every UI
 save requires mounted source/destination credential paths for all accounts.
