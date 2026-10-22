@@ -81,6 +81,12 @@ func (c *Client) albumMetadata(ctx context.Context, id, version string) (albumRe
 	return a, nil
 }
 
+type tagResponse struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
 type assetResponse struct {
 	ID               string          `json:"id"`
 	Name             string          `json:"originalFileName"`
@@ -90,8 +96,12 @@ type assetResponse struct {
 	TakenAt          time.Time       `json:"fileCreatedAt"`
 	FileModifiedAt   time.Time       `json:"fileModifiedAt"`
 	LivePhotoVideoID string          `json:"livePhotoVideoId"`
+	OriginalPath     string          `json:"originalPath"`
 	LibraryID        json.RawMessage `json:"libraryId"`
 	Visibility       string          `json:"visibility"`
+	Favorite         *bool           `json:"isFavorite"`
+	Archived         *bool           `json:"isArchived"`
+	Tags             json.RawMessage `json:"tags"`
 	Offline          *bool           `json:"isOffline"`
 	Trashed          *bool           `json:"isTrashed"`
 	Exif             *struct {
@@ -141,6 +151,18 @@ func (a assetResponse) asset() (bridge.Asset, error) {
 			sha1 = a.Checksum
 		}
 	}
+	livePhotoID := ""
+	if a.LivePhotoVideoID != "" {
+		// A malformed or self-referential link is a contract violation, never a
+		// guess. Only a still owns a companion; a link on any other media kind
+		// is ignored rather than acting on it.
+		if a.LivePhotoVideoID == a.ID || !uuid.MatchString(a.LivePhotoVideoID) {
+			return bridge.Asset{}, &bridge.Error{Code: bridge.Protocol}
+		}
+		if a.Kind == "IMAGE" {
+			livePhotoID = a.LivePhotoVideoID
+		}
+	}
 	size := int64(-1)
 	if a.Exif != nil && a.Exif.Size != nil {
 		size = *a.Exif.Size
@@ -148,11 +170,32 @@ func (a assetResponse) asset() (bridge.Asset, error) {
 			return bridge.Asset{}, &bridge.Error{Code: bridge.Protocol}
 		}
 	}
+	archived := a.Visibility == "archive"
+	if a.Archived != nil && *a.Archived {
+		archived = true
+	}
+	// The pinned contract makes tags optional. Absence is unknown provenance,
+	// never an authoritative empty list; a present array (including []) is.
+	var tags []bridge.Tag
+	if len(a.Tags) != 0 {
+		var raw []tagResponse
+		if string(a.Tags) == "null" || json.Unmarshal(a.Tags, &raw) != nil {
+			return bridge.Asset{}, &bridge.Error{Code: bridge.Protocol}
+		}
+		tags = make([]bridge.Tag, 0, len(raw))
+		for _, tag := range raw {
+			if !uuid.MatchString(tag.ID) {
+				return bridge.Asset{}, &bridge.Error{Code: bridge.Protocol}
+			}
+			tags = append(tags, bridge.Tag{ID: tag.ID, Name: tag.Name, Value: tag.Value})
+		}
+	}
 	return bridge.Asset{
 		ID: a.ID, Name: a.Name, MIME: a.MIME, Kind: a.Kind, Size: size,
 		SHA1: sha1, TakenAt: a.TakenAt, FileModifiedAt: a.FileModifiedAt,
-		LivePhotoVideo: a.Kind == "VIDEO" && a.Visibility == "hidden",
-		ExcludedReason: reason,
+		LivePhotoVideo: a.Kind == "VIDEO" && a.Visibility == "hidden", LivePhotoID: livePhotoID,
+		Favorite: a.Favorite, Archived: archived, Tags: tags,
+		ExcludedReason: reason, OriginalPath: a.OriginalPath,
 	}, nil
 }
 

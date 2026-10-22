@@ -3,7 +3,8 @@
 A self-hosted, one-way backup service: **Immich originals -> durable SQLite
 queue -> aphotos Go SDK -> Amazon Photos**. Run one container with one persistent
 data volume. Select source albums by ID; whole-library backup requires an
-explicit choice.
+explicit choice. Album mirroring is off by default and can be scoped to those
+selected albums or to every album the API key can read.
 
 Amazon Photos has no official public API. This service uses an unofficial SDK;
 sessions expire and upstream behavior can change. Keep an independent backup.
@@ -13,6 +14,16 @@ Eligible external-library originals and assets with unknown source checksum
 provenance use MD5 and byte size computed from the staged original; their source
 checksum is not treated as a verified byte checksum. Review the
 [compatibility limits](docs/reference/compatibility.md) before deployment.
+
+The backup contract is the **original bytes**. There is no quality selector,
+Storage Saver mode or recompression path. Amazon reports observed photo, video
+and other usage by category, which doctor, status and the local dashboard show
+with its calculation time; subscription capacity, remaining bytes and Prime
+entitlement remain explicitly unknown. An optional per-account video advisory
+threshold can warn or hold new video uploads without pausing photos. A real
+quota rejection is a distinct finite error and never misreported as rate
+limiting; staged originals stay durable and resume without a blind retry. See
+[storage usage and quota](docs/reference/compatibility.md#storage-usage-and-quota).
 
 Media is never permanently deleted from Amazon by this service. Removing a source
 asset, album, rule or account does not remove its cloud backup. Optional
@@ -35,6 +46,61 @@ unproven ownership and incomplete pagination are never reused and never counted
 as `existing`; a fresh asset still uploads only when the complete lookup proves
 no copy, while an uncertain write stays `unconfirmed` unless one verified match
 is found.
+
+Favorite sync is separately opt-in. With `favorites: add_only` on an account, a
+verified node whose source asset explicitly reports favorite is starred; an
+absent source field is unknown and writes nothing, and the service never
+unstars. `favorites: mirror` also clears a star, but only one this service
+applied and only after a fresh read proves the explicit remote value.
+`favorites_takeover: true` (mirror only) records source authority over stars
+applied manually on the Amazon side; without it those stars are preserved. Two
+local accounts that resolve to one Amazon node with contradictory wishes report
+`shared_target_conflict` and neither writes. Every mutation is confirmed by an
+authoritative Amazon re-read of an explicit `settings.favorite` field, a lost
+mutation is retried only after a fresh read, and a bounded audit repairs drift.
+Favorite state and counters are separate from media states.
+Each account can optionally limit new uploads to one daily window in an IANA
+timezone, including windows that cross midnight. Outside it, scans and metadata
+checks continue, an upload already running finishes, and waiting work is
+reported as `deferred` rather than failed. The scheduler wakes at the next
+DST-correct opening, and editing the window applies without restart. See
+[transfer hour limits](docs/how-to/operations.md#limit-transfer-hours).
+
+Apple Live Photos are preserved as original pairs only when explicitly enabled.
+With `live_photo_mode: original_pair` on an account, a still's hidden MOV
+companion is backed up as a second, independent original with its own hash and
+Node; nothing is muxed, converted or paired remotely, and a missing or
+ineligible companion is reported as `pair_incomplete` rather than a full Live
+Photo backup. The default `still_only` keeps the historical hidden-MOV
+exclusion, and switching modes never re-uploads, overwrites or trashes a Node.
+See [Live Photo originals](docs/reference/configuration.md#live-photo-originals).
+
+Optional read-only originals: an account can approve a mapping from Immich's
+reported original paths to a local directory mounted read-only, so eligible
+originals are staged from disk with zero Immich downloads. It is off by default,
+never writes to or retimes the mount, verifies bytes against the recorded size
+and checksum, and falls back to the Immich API when the mount is absent. Path
+escapes and non-regular files fail closed. See
+[direct originals](docs/how-to/direct-originals.md).
+
+Eligibility filters are validated per account and default to today's behaviour:
+images only, archive included. Optional rules skip camera RAW, originals above a
+byte limit, excluded tags and archived media. Every rejection is a durable,
+reevaluable exclusion rather than a permanent state, so a policy, tag or album
+change requeues the asset without a full rescan. Filters never delete media,
+remove an album relation or authorize trash. See
+[eligibility filters](docs/reference/configuration.md#eligibility-filters).
+
+Managed Workflow onboarding is a separate per-account opt-in with its own Immich
+credential. Without it, native Workflow hints stay manual and polling continues.
+When enabled, the service creates, verifies, updates and removes only the single
+Workflow it owns, and falls back to polling with a finite notice on Immich v2 or
+missing grants. See [managed Workflows](docs/how-to/managed-workflows.md).
+
+Optional Prometheus `/metrics` and `/status` share the private listener, are off
+by default and are loopback-only or bearer-token gated. Per-account retry tuning
+is bounded and never authorizes replaying an unconfirmed write. See
+[status and metrics](docs/reference/status.md).
 
 ## Compose quickstart
 
@@ -95,9 +161,13 @@ Do not expose the dashboard publicly; publish only on host loopback.
 | Look up JSON fields and environment variables | [Configuration](docs/reference/configuration.md) |
 | Look up CLI, exits and health behavior | [CLI](docs/reference/cli.md) |
 | Set up trusted event hints and incremental polling | [Event hints](docs/how-to/event-hints.md) |
+| Onboard native Workflow hints | [Managed Workflows](docs/how-to/managed-workflows.md) |
+| Choose what is eligible for backup | [Eligibility filters](docs/reference/configuration.md#eligibility-filters) |
+| Expose optional metrics or tune retries | [Status and metrics](docs/reference/status.md) |
 | Understand managed album membership and uncertainty | [Managed albums](docs/how-to/managed-albums.md) |
 | Interpret progress counters and scheduling | [Status](docs/reference/status.md) |
 | Assess versions, regions and media limitations | [Compatibility evidence](docs/reference/compatibility.md) |
+| Compare capability parity and evidence grades | [Parity baseline](docs/reference/parity.md) |
 | Understand identities and deletion safety | [Safety model](docs/explanation/safety.md) |
 | Understand deployment and upstream contract choices | [ADRs](docs/adr/) |
 

@@ -49,6 +49,14 @@ func (s metadataSDK) MoveToTrash(ctx context.Context, nodeIDs []string) error {
 	return err
 }
 
+func (s metadataSDK) SetFavorite(ctx context.Context, nodeIDs []string, favorite bool) error {
+	_, err := metadataCall(ctx, func(ctx context.Context) (struct{}, error) {
+		_, err := s.Client.SetFavorite(ctx, nodeIDs, favorite)
+		return struct{}{}, err
+	})
+	return err
+}
+
 func (s metadataSDK) QueryNodes(ctx context.Context, opts aphotos.NodeQueryOptions) (*aphotos.Page[aphotos.Node], error) {
 	return metadataCall(ctx, func(ctx context.Context) (*aphotos.Page[aphotos.Node], error) {
 		return s.Client.QueryNodes(ctx, opts)
@@ -87,6 +95,10 @@ func (s metadataSDK) RemoveAlbumMembers(ctx context.Context, id string, members 
 	return err
 }
 
+func (s metadataSDK) GetUsage(ctx context.Context) (*aphotos.Usage, error) {
+	return metadataCall(ctx, s.Client.GetUsage)
+}
+
 func New(region, cookie string) (*Client, error) {
 	cookie = strings.TrimSpace(cookie)
 	if strings.ContainsAny(cookie, "\r\n") {
@@ -121,13 +133,42 @@ func NewWithClient(sdk *aphotos.Client) (*Client, error) {
 	return &Client{sdk: metadataSDK{sdk}}, nil
 }
 
+// CaptureDateCapability is the capture-date write support proven by the pinned
+// aphotos release. v0.1.5 exposes ContentDate and EXIF date fields only as
+// response data and has no capture-date setter, so the finite answer is
+// metadata_not_supported. Reporting supported requires a released SDK
+// operation plus an authoritative read-back verification; rewriting original
+// bytes or timestamps is never an acceptable substitute.
+const CaptureDateCapability = bridge.MetadataNotSupported
+
 func (c *Client) Probe(ctx context.Context) (bridge.Capabilities, error) {
 	root, err := c.root(ctx)
 	if err != nil {
 		return bridge.Capabilities{}, err
 	}
 	rc := c.sdk.RegionConfig()
-	return bridge.Capabilities{Region: string(rc.Region), Evidence: string(rc.Evidence), Identity: root.ID}, nil
+	return bridge.Capabilities{Region: string(rc.Region), Evidence: string(rc.Evidence), Identity: root.ID,
+		CaptureDate: CaptureDateCapability}, nil
+}
+
+// Usage exposes only the SDK's categorized observation. LastCalculated stays
+// zero when the provider omitted it; it is never replaced with "now".
+func (c *Client) Usage(ctx context.Context) (bridge.Usage, error) {
+	usage, err := c.sdk.GetUsage(ctx)
+	if err != nil {
+		return bridge.Usage{}, classify(err)
+	}
+	if usage == nil {
+		return bridge.Usage{}, &bridge.Error{Code: bridge.Protocol}
+	}
+	categories := make(map[string]bridge.UsageCategory, len(usage.Categories))
+	for name, category := range usage.Categories {
+		categories[name] = bridge.UsageCategory{
+			Billable: bridge.UsageBucket{Bytes: category.Billable.Bytes, Count: category.Billable.Count},
+			Total:    bridge.UsageBucket{Bytes: category.Total.Bytes, Count: category.Total.Count},
+		}
+	}
+	return bridge.Usage{LastCalculated: usage.LastCalculated, Categories: categories}, nil
 }
 
 func (c *Client) root(ctx context.Context) (*aphotos.Node, error) {
@@ -158,27 +199,60 @@ func classify(err error) error {
 	}
 	var auth *aphotos.AuthenticationError
 	var permission *aphotos.PermissionError
+	var invalid *aphotos.InvalidFilterError
 	var rate *aphotos.RateLimitError
 	var missing *aphotos.NotFoundError
 	var conflict *aphotos.ConflictError
 	var transient *aphotos.TransientNetworkError
 	var partial *aphotos.PartialResultError
-	code := bridge.Protocol
 	switch {
 	case errors.As(err, &auth):
-		code = bridge.Authentication
-	case errors.As(err, &permission):
-		code = bridge.Permission
+		return &bridge.Error{Code: bridge.Authentication}
 	case errors.As(err, &rate):
 		return &bridge.Error{Code: bridge.RateLimit, RetryAfter: rate.RetryAfter}
-	case errors.As(err, &missing):
-		code = bridge.NotFound
-	case errors.As(err, &conflict):
-		code = bridge.Conflict
-	case errors.As(err, &partial):
-		code = bridge.Unconfirmed
 	case errors.As(err, &transient):
+		// 507 is an explicit capacity rejection, not a transient network
+		// failure. Other 5xx responses remain retryable.
+		if transient.StatusCode == http.StatusInsufficientStorage {
+			return &bridge.Error{Code: bridge.Quota}
+		}
 		return &bridge.Error{Code: bridge.Unavailable, RetryAfter: transient.RetryAfter}
+	case errors.As(err, &permission):
+		if quotaMessage(permission.Message) {
+			return &bridge.Error{Code: bridge.Quota}
+		}
+		return &bridge.Error{Code: bridge.Permission}
+	case errors.As(err, &invalid):
+		if quotaMessage(invalid.Message) {
+			return &bridge.Error{Code: bridge.Quota}
+		}
+		return &bridge.Error{Code: bridge.Protocol}
+	case errors.As(err, &conflict):
+		if quotaMessage(conflict.Message) {
+			return &bridge.Error{Code: bridge.Quota}
+		}
+		return &bridge.Error{Code: bridge.Conflict}
+	case errors.As(err, &missing):
+		return &bridge.Error{Code: bridge.NotFound}
+	case errors.As(err, &partial):
+		return &bridge.Error{Code: bridge.Unconfirmed}
 	}
-	return &bridge.Error{Code: code}
+	return &bridge.Error{Code: bridge.Protocol}
+}
+
+// quotaMessage recognises an explicit capacity rejection carried by an
+// otherwise generic HTTP error class. The message is inspected only to choose a
+// finite code; it is never logged, stored or returned to a caller.
+func quotaMessage(message string) bool {
+	lowered := strings.ToLower(message)
+	for _, marker := range []string{
+		"quota", "storage full", "storage limit", "storage capacity",
+		"out of storage", "insufficient storage", "not enough storage",
+		"out of space", "space limit", "not enough space",
+	} {
+		if strings.Contains(lowered, marker) {
+			return true
+		}
+	}
+	return false
 }

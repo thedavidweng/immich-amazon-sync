@@ -170,6 +170,7 @@ func TestMalformedPagesCannotProveCompletion(t *testing.T) {
 const photoJSON = `{"id":"` + assetID + `","type":"IMAGE","originalFileName":"photo.heic",
 	"originalMimeType":"image/heic","checksum":"qZk+NkcGgWq6PiVxeFDCbJzQ2J0=",
 	"libraryId":null,"visibility":"timeline","isOffline":false,"isTrashed":false,
+	"originalPath":"/immich/upload/library/photo.heic",
 	"exifInfo":{"fileSizeInByte":3},"fileCreatedAt":"2026-10-01T12:00:00Z",
 	"fileModifiedAt":"2026-10-01T11:00:00Z",
 	"updatedAt":"2026-10-02T12:00:00Z","livePhotoVideoId":"33333333-3333-4333-8333-333333333333"}`
@@ -243,6 +244,9 @@ func TestAlbumDiscoveryAndOriginalContract(t *testing.T) {
 		t.Fatalf("page: %+v, %v", page, err)
 	}
 	a := page.Assets[0]
+	if a.OriginalPath != "/immich/upload/library/photo.heic" {
+		t.Fatalf("transient original path: %+v", a)
+	}
 	if a.SHA1 != "qZk+NkcGgWq6PiVxeFDCbJzQ2J0=" || a.Size != 3 ||
 		a.Kind != "IMAGE" || a.MIME != "image/heic" || a.LivePhotoVideo ||
 		a.TakenAt.Format(time.RFC3339) != "2026-10-01T12:00:00Z" ||
@@ -254,7 +258,8 @@ func TestAlbumDiscoveryAndOriginalContract(t *testing.T) {
 		t.Fatalf("last page: %+v %v", last, err)
 	}
 	detail, err := c.Asset(t.Context(), assetID)
-	if err != nil || detail != a {
+	if err != nil || detail.ID != a.ID || detail.Size != a.Size || detail.Kind != a.Kind ||
+		detail.Archived != a.Archived || len(detail.Tags) != len(a.Tags) {
 		t.Fatalf("detail: %+v %v", detail, err)
 	}
 	stream, err := c.Original(t.Context(), assetID)
@@ -300,6 +305,43 @@ func TestExcludedAssetsRemainInPagesWithoutExcludingTheirStill(t *testing.T) {
 				if page.Assets[1].SHA1 != "" {
 					t.Fatal("non-content checksum advertised as byte SHA1")
 				}
+			}
+		})
+	}
+}
+
+func TestTagProvenanceAndArchivePresenceAreDecoded(t *testing.T) {
+	const tag = `"tags":[{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","name":"Private","value":"private","createdAt":"2026-10-01T00:00:00Z","updatedAt":"2026-10-01T00:00:00Z"}]`
+	anchor := `"livePhotoVideoId":"33333333-3333-4333-8333-333333333333"`
+	for name, tt := range map[string]struct {
+		body     string
+		tags     int
+		known    bool
+		archived bool
+		invalid  bool
+	}{
+		"tags present":   {strings.Replace(photoJSON, anchor, tag+","+anchor, 1), 1, true, false, false},
+		"tags empty":     {strings.Replace(photoJSON, anchor, `"tags":[],`+anchor, 1), 0, true, false, false},
+		"tags absent":    {photoJSON, 0, false, false, false},
+		"tags null":      {strings.Replace(photoJSON, anchor, `"tags":null,`+anchor, 1), 0, false, false, true},
+		"archived":       {strings.Replace(photoJSON, `"visibility":"timeline"`, `"visibility":"archive"`, 1), 0, false, true, false},
+		"isArchived set": {strings.Replace(photoJSON, `"visibility":"timeline"`, `"visibility":"timeline","isArchived":true`, 1), 0, false, true, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = fmt.Fprint(w, tt.body)
+			}))
+			defer srv.Close()
+			c, _ := immich.New(srv.URL, "secret")
+			a, err := c.Asset(t.Context(), assetID)
+			if tt.invalid {
+				if err == nil {
+					t.Fatal("invalid tag provenance was accepted")
+				}
+				return
+			}
+			if err != nil || len(a.Tags) != tt.tags || (a.Tags != nil) != tt.known || a.Archived != tt.archived {
+				t.Fatalf("tags=%v known=%t archived=%t, %v", a.Tags, a.Tags != nil, a.Archived, err)
 			}
 		})
 	}

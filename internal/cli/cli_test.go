@@ -171,12 +171,15 @@ func TestSyncOnceContinuesAfterAccountFailureAndReportsAggregateExit(t *testing.
 		if r.URL.Hostname() == "127.0.0.1" {
 			return original.RoundTrip(r)
 		}
-		if r.Method != http.MethodGet || !strings.HasSuffix(r.URL.Path, "/nodes") {
+		body := `{"data":[{"id":"root","kind":"FOLDER","status":"AVAILABLE","isRoot":true,"ownerId":"owner"}],"count":1}`
+		if strings.HasSuffix(r.URL.Path, "/account/usage") {
+			body = `{"lastCalculated":"2026-10-20T08:30:00.000Z","photo":{"billable":{"bytes":1,"count":1},"total":{"bytes":1,"count":1}},"video":{"billable":{"bytes":0,"count":0},"total":{"bytes":0,"count":0}},"other":{"billable":{"bytes":0,"count":0},"total":{"bytes":0,"count":0}}}`
+		} else if r.Method != http.MethodGet || !strings.HasSuffix(r.URL.Path, "/nodes") {
 			t.Errorf("unexpected Amazon request: %s %s", r.Method, r.URL.Path)
 		}
 		return &http.Response{
 			StatusCode: 200, Request: r, Header: make(http.Header),
-			Body: io.NopCloser(strings.NewReader(`{"data":[{"id":"root","kind":"FOLDER","status":"AVAILABLE","isRoot":true,"ownerId":"owner"}],"count":1}`)),
+			Body: io.NopCloser(strings.NewReader(body)),
 		}, nil
 	})
 	defer func() { http.DefaultTransport = original }()
@@ -270,5 +273,141 @@ func TestDeletionsPlanIsReadOnlyAndReportsAnEmptyManifest(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "data", "sync.sqlite")); err != nil {
 		t.Fatalf("plan did not open local state read-only: %v", err)
+	}
+}
+
+// CLI status exposes the favorites setting and its independent counters without
+// mixing them into media states.
+func TestSyncOnceStatusExposesFavorites(t *testing.T) {
+	dir := t.TempDir()
+	key, cookie := filepath.Join(dir, "key"), filepath.Join(dir, "cookie")
+	for path, value := range map[string]string{
+		key: "private-key", cookie: "session-id=test; ubid-main=test; at-main=test",
+	} {
+		if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := filepath.Join(dir, "config.json")
+	document := `{"data_dir":"` + dir + `/data","listen":"127.0.0.1:18081","scan_interval":"15m",
+		"workers":1,"max_staging_bytes":1024,"max_staging_files":1,"log_level":"info",
+		"accounts":[{"id":"home","immich_url":"http://127.0.0.1:1","immich_api_key_file":"` + key + `",
+		"amazon_region":"us","amazon_cookie_file":"` + cookie + `","album_ids":["album"],
+		"favorites":"add_only"}]}`
+	if err := os.WriteFile(cfg, []byte(document), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	exit := cli.Execute(t.Context(), []string{"--config", cfg, "sync", "once", "--json"}, &out, &errOut, "dev")
+	var report struct {
+		Accounts []struct {
+			Status struct {
+				FavoritesMode      string `json:"favorites_mode"`
+				FavoritesAuthority string `json:"favorites_authority"`
+				Desired            int    `json:"favorites_desired"`
+				Pending            int    `json:"favorites_pending"`
+				Applied            int    `json:"favorites_applied"`
+				Preserved          int    `json:"favorites_preserved"`
+				Failed             int    `json:"favorites_failed"`
+				Uncertain          int    `json:"favorites_uncertain"`
+				Unknown            int    `json:"favorites_unknown"`
+				Conflict           int    `json:"favorites_conflict"`
+				Unconfirmed        int    `json:"unconfirmed"`
+				Confirmed          int    `json:"confirmed"`
+			} `json:"status"`
+		} `json:"accounts"`
+	}
+	if exit != 1 || json.Unmarshal(out.Bytes(), &report) != nil || len(report.Accounts) != 1 {
+		t.Fatalf("exit=%d out=%q stderr=%q", exit, out.String(), errOut.String())
+	}
+	st := report.Accounts[0].Status
+	if st.FavoritesMode != "add_only" || st.FavoritesAuthority != "star_only" || st.Desired != 0 ||
+		st.Pending != 0 || st.Applied != 0 || st.Preserved != 0 ||
+		st.Failed != 0 || st.Uncertain != 0 || st.Unknown != 0 || st.Conflict != 0 {
+		t.Fatalf("favorites state leaked into or out of media counts: %+v", st)
+	}
+	if st.Unconfirmed != 0 || st.Confirmed != 0 {
+		t.Fatalf("media counts changed: %+v", st)
+	}
+
+	out.Reset()
+	errOut.Reset()
+	exit = cli.Execute(t.Context(), []string{"--config", cfg, "sync", "once"}, &out, &errOut, "dev")
+	if exit != 1 || !strings.Contains(out.String(), "favorites_mode=add_only") ||
+		!strings.Contains(out.String(), "favorites_authority=star_only") ||
+		!strings.Contains(out.String(), "favorites_applied=0") ||
+		!strings.Contains(out.String(), "favorites_conflict=0") {
+		t.Fatalf("human status lacks favorites: exit=%d out=%q stderr=%q", exit, out.String(), errOut.String())
+	}
+}
+
+func TestFiltersCommandShowsEffectivePolicyWithoutRemoteCalls(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	tag := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	body := `{"data_dir":"` + filepath.Join(dir, "state") + `","accounts":[{"id":"home","immich_url":"http://127.0.0.1:1","immich_api_key_file":"/missing","amazon_region":"us","amazon_cookie_file":"/missing","album_ids":["album-one"],"filters":{"media_types":["image","video"],"max_original_bytes":100,"skip_raw":true,"include_archived":false,"excluded_tags":["` + tag + `"]}}]}`
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	exit := cli.Execute(t.Context(), []string{"filters", "--config", path, "--json"}, &out, &errOut, "dev")
+	var report struct {
+		Accounts []struct {
+			Account string `json:"account"`
+			Filters struct {
+				MediaTypes       []string `json:"media_types"`
+				MaxOriginalBytes int64    `json:"max_original_bytes"`
+				SkipRAW          bool     `json:"skip_raw"`
+				IncludeArchived  bool     `json:"include_archived"`
+				ExcludedTags     []string `json:"excluded_tags"`
+			} `json:"filters"`
+		} `json:"accounts"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", exit, out.String(), errOut.String())
+	}
+	if exit != 0 || len(report.Accounts) != 1 || report.Accounts[0].Account != "home" ||
+		len(report.Accounts[0].Filters.MediaTypes) != 2 || report.Accounts[0].Filters.MaxOriginalBytes != 100 ||
+		!report.Accounts[0].Filters.SkipRAW || report.Accounts[0].Filters.IncludeArchived ||
+		len(report.Accounts[0].Filters.ExcludedTags) != 1 {
+		t.Fatalf("effective policy: %+v exit=%d stderr=%q", report, exit, errOut.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "state")); !os.IsNotExist(err) {
+		t.Fatal("filters command opened local sync state")
+	}
+
+	out.Reset()
+	exit = cli.Execute(t.Context(), []string{"filters", "--config", path}, &out, &errOut, "dev")
+	if exit != 0 || !strings.Contains(out.String(), "media_types=image,video") ||
+		!strings.Contains(out.String(), "skip_raw=true") {
+		t.Fatalf("text policy: exit=%d stdout=%q stderr=%q", exit, out.String(), errOut.String())
+	}
+}
+
+func TestFiltersCommandShowsLivePhotoModeWithoutRemoteCalls(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	body := `{"data_dir":"` + filepath.Join(dir, "state") + `","accounts":[{"id":"home","immich_url":"http://127.0.0.1:1","immich_api_key_file":"/missing","amazon_region":"us","amazon_cookie_file":"/missing","album_ids":["album-one"],"live_photo_mode":"original_pair"}]}`
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	exit := cli.Execute(t.Context(), []string{"filters", "--config", path, "--json"}, &out, &errOut, "dev")
+	var report struct {
+		Accounts []struct {
+			Account       string `json:"account"`
+			LivePhotoMode string `json:"live_photo_mode"`
+		} `json:"accounts"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", exit, out.String(), errOut.String())
+	}
+	if exit != 0 || len(report.Accounts) != 1 || report.Accounts[0].LivePhotoMode != "original_pair" {
+		t.Fatalf("effective live photo mode: %+v exit=%d stderr=%q", report, exit, errOut.String())
+	}
+	out.Reset()
+	exit = cli.Execute(t.Context(), []string{"filters", "--config", path}, &out, &errOut, "dev")
+	if exit != 0 || !strings.Contains(out.String(), "live_photo_mode=original_pair") {
+		t.Fatalf("text live photo mode: exit=%d stdout=%q stderr=%q", exit, out.String(), errOut.String())
 	}
 }

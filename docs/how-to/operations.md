@@ -9,6 +9,62 @@ owner `10001:10001`, mode `0700`. A new named volume inherits that ownership
 from the image; an existing incorrectly owned volume does not. Fix its ownership
 while the service is stopped, then run the normal image as nonroot.
 
+## Limit transfer hours
+
+Each account may set one optional daily upload window in an IANA timezone:
+
+```json
+"transfer_window": {"timezone": "America/New_York", "start": "23:00", "end": "06:00"}
+```
+
+`start` is inclusive and `end` exclusive; `start` later than `end` crosses
+midnight. Omit the object for continuous transfer. Equal bounds are rejected;
+`Local` and unknown zones are rejected. The zone database is embedded, so no
+container tzdata package is required.
+
+Only new uploads pause. Scans, metadata and existing-content checks, album
+reconciliation and deletion passes keep running, and an upload already streaming
+finishes without becoming uncertain. Deferred uploads are not failures and do
+not consume retries. Status and `sync once` report `deferred`, the window's
+open/closed state, `next_opening` and `deferral_reason`; the scheduler wakes at
+the next DST-correct opening. Editing the window in the dashboard or saving the
+config applies to the next dispatch without restarting `serve` or cancelling
+in-flight streams. Two accounts with different windows stay independent.
+
+Confirm the window's local time against your own clock: `next_opening` is
+computed in the configured zone, including DST transitions.
+
+## Monitor metrics
+
+Metrics are optional and off by default. Set `metrics: true` and keep the
+listener private; a loopback `listen` address needs no further configuration:
+
+```json
+{"listen": "127.0.0.1:8080", "metrics": true}
+```
+
+To bind a non-loopback address, mount a bearer token and require it on every
+scrape:
+
+```json
+{"listen": "0.0.0.0:8080", "metrics": true, "metrics_token_file": "/run/secrets/metrics_token"}
+```
+
+`GET /metrics` returns Prometheus text exposition and `GET /status` returns the
+same durable report as `status --json`. Both answer `404` while metrics are
+disabled, and both require `Authorization: Bearer <token>` when a token file is
+configured. The container image sets `LISTEN=0.0.0.0:8080`, so enabling metrics
+there requires `METRICS_TOKEN_FILE` (or a loopback `LISTEN` override). Labels are
+the hashed account plus finite state, code, reason,
+category and mode values, so no filename, asset UUID, raw account name, URL or
+secret is exposed.
+
+Durable counts come from the ledger. Direct/API byte counters and direct-read
+fallback/failure counters are process-local and reset when the process
+restarts. Health and readiness never depend on Amazon availability, and a
+scrape failure does not pause backups. Do not infer a subscription cap or
+remaining capacity from usage counters; they are observations only.
+
 ## Back up
 
 Stop writes before archiving SQLite, its WAL/SHM files, staging and identity
@@ -67,9 +123,27 @@ restore the matching backup/image together rather than editing SQLite by hand.
 
 The P1 upgrade migrates SQLite schema 1 to 2 in place, preserving confirmed media
 and account history while adding durable hints, incremental progress and album
-relationships. Take the stopped complete-volume backup before first startup
-with the new binary. To roll back, restore that pre-upgrade volume together with
-its matching binary/config; an older binary cannot read the newer schema.
+relationships. Later transactional steps add album scope/origin columns (4),
+managed Workflow ownership (5), favorite state (6), explicit filter exclusions
+(7), the normalized categorized usage snapshot (8), the favorite drift-audit
+column (9), and the Live Photo pair ledger with its applied per-account mode
+(10). Historical mappings, cursors, rules, album ownership,
+confirmed/existing state, deletion state, staging references and unconfirmed
+intents are preserved, and no migration widens scope or enables a new write. The
+upgrade path is exercised from every checked-in prior fixture under
+`internal/syncer/testdata`; the container smoke also migrates a checked-in
+version-3 ledger and proves its mapping survives. The real deployed ledger in
+this project was schema 2, and a copy of it upgraded on 2026-10-22 with all
+seven rows, their states and their node mappings intact and every new feature
+still off.
+
+An unknown schema version fails closed. This binary refuses a ledger whose
+`user_version` is newer than schema 10, or otherwise out of range, with the
+finite `unsupported_schema` code and exit 4. It does not rewrite the version or
+attempt a partial migration, so a downgrade needs the matching backup and image.
+Take the stopped complete-volume backup before first startup with the new binary.
+To roll back, restore that pre-upgrade volume together with its matching
+binary/config; an older binary cannot read the newer schema.
 Do not delete migration state, queues or album intents to force a downgrade.
 
 When migrating hosts, move the stopped complete data archive, config and secrets.

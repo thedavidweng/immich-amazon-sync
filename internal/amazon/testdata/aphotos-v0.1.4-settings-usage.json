@@ -1,0 +1,149 @@
+{
+  "x-source": {
+    "sdk": "github.com/thedavidweng/amazon-photos",
+    "version": "v0.1.4",
+    "tag_commit": "366da81406f806924af6d9a3934564a6c3d84e73",
+    "files": [
+      "pkg/aphotos/models.go",
+      "pkg/aphotos/settings.go",
+      "pkg/aphotos/account.go"
+    ],
+    "captured": "2026-10-22",
+    "note": "Response bodies synthesized from the pinned SDK types and HTTP contract, not captured account payloads. They pin favorite-field presence, the synthetic mutation fallback, and the categorized usage shape."
+  },
+  "nodes": {
+    "favorite-absent": {
+      "id": "node-favorite-absent",
+      "name": "photo.jpg",
+      "kind": "FILE",
+      "status": "AVAILABLE",
+      "ownerId": "owner",
+      "isRoot": false,
+      "parents": ["storage-root"],
+      "createdDate": "2026-10-01T12:00:00.000Z",
+      "modifiedDate": "2026-10-01T12:00:00.000Z",
+      "contentProperties": {
+        "version": 1,
+        "size": 3,
+        "md5": "900150983cd24fb0d6963f7d28e17f72",
+        "contentType": "image/jpeg"
+      }
+    },
+    "favorite-false": {
+      "id": "node-favorite-false",
+      "name": "photo.jpg",
+      "kind": "FILE",
+      "status": "AVAILABLE",
+      "ownerId": "owner",
+      "isRoot": false,
+      "parents": ["storage-root"],
+      "createdDate": "2026-10-01T12:00:00.000Z",
+      "modifiedDate": "2026-10-01T12:00:00.000Z",
+      "contentProperties": {
+        "version": 1,
+        "size": 3,
+        "md5": "900150983cd24fb0d6963f7d28e17f72",
+        "contentType": "image/jpeg"
+      },
+      "settings": {
+        "favorite": false,
+        "hidden": false
+      }
+    },
+    "favorite-true": {
+      "id": "node-favorite-true",
+      "name": "photo.jpg",
+      "kind": "FILE",
+      "status": "AVAILABLE",
+      "ownerId": "owner",
+      "isRoot": false,
+      "parents": ["storage-root"],
+      "createdDate": "2026-10-01T12:00:00.000Z",
+      "modifiedDate": "2026-10-01T12:00:00.000Z",
+      "contentProperties": {
+        "version": 1,
+        "size": 3,
+        "md5": "900150983cd24fb0d6963f7d28e17f72",
+        "contentType": "image/jpeg"
+      },
+      "settings": {
+        "favorite": true,
+        "hidden": false
+      }
+    },
+    "favorite-key-absent": {
+      "id": "node-favorite-key-absent",
+      "name": "photo.jpg",
+      "kind": "FILE",
+      "status": "AVAILABLE",
+      "ownerId": "owner",
+      "isRoot": false,
+      "parents": ["storage-root"],
+      "createdDate": "2026-10-01T12:00:00.000Z",
+      "modifiedDate": "2026-10-01T12:00:00.000Z",
+      "contentProperties": {
+        "version": 1,
+        "size": 3,
+        "md5": "900150983cd24fb0d6963f7d28e17f72",
+        "contentType": "image/jpeg"
+      },
+      "settings": {
+        "hidden": false
+      }
+    }
+  },
+  "favorite-patch-without-settings": {
+    "id": "node-favorite-absent",
+    "name": "photo.jpg",
+    "kind": "FILE",
+    "status": "AVAILABLE",
+    "ownerId": "owner",
+    "isRoot": false,
+    "parents": ["storage-root"],
+    "createdDate": "2026-10-01T12:00:00.000Z",
+    "modifiedDate": "2026-10-01T12:00:00.000Z",
+    "contentProperties": {
+      "version": 1,
+      "size": 3,
+      "md5": "900150983cd24fb0d6963f7d28e17f72",
+      "contentType": "image/jpeg"
+    }
+  },
+  "usage": {
+    "lastCalculated": "2026-10-20T08:30:00.000Z",
+    "photo": {
+      "billable": {"bytes": 123456789, "count": 42},
+      "total": {"bytes": 234567890, "count": 50}
+    },
+    "video": {
+      "billable": {"bytes": 987654321, "count": 3},
+      "total": {"bytes": 987654321, "count": 3}
+    },
+    "other": {
+      "billable": {"bytes": 1024, "count": 1},
+      "total": {"bytes": 2048, "count": 2}
+    },
+    "doc": {
+      "billable": {"bytes": 10, "count": 1},
+      "total": {"bytes": 20, "count": 2}
+    },
+    "audio": {
+      "billable": {"bytes": 5, "count": 1},
+      "total": {"bytes": 5, "count": 1}
+    }
+  },
+  "usage-without-last-calculated": {
+    "photo": {
+      "billable": {"bytes": 1, "count": 1},
+      "total": {"bytes": 1, "count": 1}
+    },
+    "video": {
+      "billable": {"bytes": 0, "count": 0},
+      "total": {"bytes": 0, "count": 0}
+    },
+    "other": {
+      "billable": {"bytes": 0, "count": 0},
+      "total": {"bytes": 0, "count": 0}
+    }
+  }
+}

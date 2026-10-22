@@ -22,20 +22,32 @@ import (
 
 type sourceFake struct {
 	bridge.Source
-	identity string
-	pages    map[string]bridge.Page
-	assets   map[string]bridge.Asset
-	data     map[string]string
-	original func(context.Context, string) (io.ReadCloser, error)
-	page     func(context.Context, bridge.Scope, string) (bridge.Page, error)
-	album    func(context.Context, string) (bridge.Album, error)
-	authErr  error
+	identity   string
+	pages      map[string]bridge.Page
+	scoped     map[string]bridge.Page
+	albums     []bridge.Album
+	assets     map[string]bridge.Asset
+	data       map[string]string
+	original   func(context.Context, string) (io.ReadCloser, error)
+	page       func(context.Context, bridge.Scope, string) (bridge.Page, error)
+	album      func(context.Context, string) (bridge.Album, error)
+	authErr    error
+	pageCalls  int
+	assetCalls int
 }
 
 func (s *sourceFake) Identity(context.Context) (string, error) { return s.identity, s.authErr }
+func (s *sourceFake) Albums(context.Context) ([]bridge.Album, error) {
+	return s.albums, s.authErr
+}
 func (s *sourceFake) Album(ctx context.Context, id string) (bridge.Album, error) {
 	if s.album != nil {
 		return s.album(ctx, id)
+	}
+	for _, album := range s.albums {
+		if album.ID == id {
+			return album, nil
+		}
 	}
 	count := 0
 	for _, p := range s.pages {
@@ -44,12 +56,17 @@ func (s *sourceFake) Album(ctx context.Context, id string) (bridge.Album, error)
 	return bridge.Album{ID: id, Count: count}, nil
 }
 func (s *sourceFake) Assets(ctx context.Context, scope bridge.Scope, cursor string) (bridge.Page, error) {
+	s.pageCalls++
 	if s.page != nil {
 		return s.page(ctx, scope, cursor)
+	}
+	if s.scoped != nil {
+		return s.scoped[scope.AlbumID+"\x00"+cursor], nil
 	}
 	return s.pages[cursor], nil
 }
 func (s *sourceFake) Asset(_ context.Context, id string) (bridge.Asset, error) {
+	s.assetCalls++
 	return s.assets[id], nil
 }
 func (s *sourceFake) Original(ctx context.Context, id string) (io.ReadCloser, error) {
@@ -62,6 +79,8 @@ func (s *sourceFake) Original(ctx context.Context, id string) (io.ReadCloser, er
 type targetFake struct {
 	bridge.Target
 	identity  string
+	usage     bridge.Usage
+	usageErr  error
 	mu        sync.Mutex
 	nodes     []bridge.Node
 	bodies    []string
@@ -73,10 +92,52 @@ type targetFake struct {
 	trashed   []string
 	authErr   error
 	lookedAll int
+	favorites map[string]bool
+	readFav   func(context.Context, bridge.Content, string) (bool, error)
+	setFav    func(context.Context, bridge.Content, string) error
+	favWrites []string
+}
+
+// ReadFavorite models an authoritative read that only proves an explicit field
+// when the test populated one; an unknown node is unconfirmed, never false.
+func (t *targetFake) ReadFavorite(ctx context.Context, c bridge.Content, id string) (bool, error) {
+	if t.readFav != nil {
+		return t.readFav(ctx, c, id)
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	// A known node models a payload with an explicit settings.favorite field;
+	// only tests that need an absent field override readFav.
+	for _, n := range t.nodes {
+		if n.ID == id {
+			return t.favorites[id], nil
+		}
+	}
+	return false, &bridge.Error{Code: bridge.NotFound}
+}
+
+// SetFavorite models one SDK mutation followed by the engine's re-read. The
+// recorded write names the node; favorites holds the resulting remote value.
+func (t *targetFake) SetFavorite(ctx context.Context, c bridge.Content, id string, favorite bool) error {
+	if t.setFav != nil {
+		return t.setFav(ctx, c, id)
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.favorites == nil {
+		t.favorites = map[string]bool{}
+	}
+	t.favWrites = append(t.favWrites, id)
+	t.favorites[id] = favorite
+	return nil
 }
 
 func (t *targetFake) Probe(context.Context) (bridge.Capabilities, error) {
 	return bridge.Capabilities{Identity: t.identity}, t.authErr
+}
+
+func (t *targetFake) Usage(context.Context) (bridge.Usage, error) {
+	return t.usage, t.usageErr
 }
 
 // fakeFind models the strict target lookup: only nodes at the requested parent.
@@ -558,23 +619,32 @@ func TestExplicitRateLimitRespectsRetryAfterAndCanResume(t *testing.T) {
 	if err := e.Once(context.Background()); err == nil || err.Error() != bridge.RateLimit {
 		t.Fatalf("expected explicit rate limit, got %v", err)
 	}
-	if err := e.Once(context.Background()); err != nil {
-		t.Fatal(err)
+	st := status(t, e)
+	if st.Confirmed != 0 || st.Errors[bridge.RateLimit] == 0 {
+		t.Fatalf("rate limit was not recorded durably: %+v", st)
 	}
-	if st := status(t, e); st.Confirmed == 0 {
-		if st.NextAttempt == nil {
-			t.Fatal("rate limit omitted retry deadline")
+	// The retry is either scheduled (a future deadline) or already runnable.
+	// Asserting a deadline unconditionally raced the 150ms delay on a loaded
+	// machine: by the time status was read, the deadline had passed and the
+	// work was simply due again.
+	if st.NextAttempt == nil && !st.WorkRemaining {
+		t.Fatal("rate limit left neither a retry deadline nor runnable work")
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for st.Confirmed == 0 && time.Now().Before(deadline) {
+		if st.NextAttempt != nil {
+			time.Sleep(max(0, time.Until(*st.NextAttempt)) + time.Millisecond)
 		}
-		time.Sleep(max(0, time.Until(*st.NextAttempt)) + time.Millisecond)
 		if err := e.Once(context.Background()); err != nil {
 			t.Fatal(err)
 		}
+		st = status(t, e)
 	}
-	if len(attempts) == 2 && attempts[1].Sub(attempts[0]) < delay {
+	if st.Confirmed != 1 || len(attempts) != 2 {
+		t.Fatalf("explicitly rejected write could not resume: %d %+v", len(attempts), st)
+	}
+	if attempts[1].Sub(attempts[0]) < delay {
 		t.Fatal("Retry-After was ignored")
-	}
-	if len(attempts) != 2 || status(t, e).Confirmed != 1 {
-		t.Fatalf("explicitly rejected write could not resume: %d %+v", len(attempts), status(t, e))
 	}
 }
 
@@ -1198,5 +1268,42 @@ func TestMetadataEditDoesNotPoisonChecksumlessAsset(t *testing.T) {
 	}
 	if st := status(t, e); st.Confirmed != 1 || st.Errors["source_changed"] != 1 || len(d.nodes) != 1 {
 		t.Fatalf("file modification lost the confirmed mapping: %+v", st)
+	}
+}
+
+// A source_changed conflict is a statement about the current evidence, not a
+// permanent verdict: once the source reports the recorded content again the
+// conflict must clear so the asset is no longer blocked.
+func TestSourceChangedConflictClearsWhenSourceSettles(t *testing.T) {
+	s := &sourceFake{identity: "source", data: map[string]string{"one": "hello"}}
+	a := photo("one")
+	a.SHA1 = ""
+	a.FileModifiedAt = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	s.pages = map[string]bridge.Page{"": {Assets: []bridge.Asset{a}}}
+	d := &targetFake{identity: "target"}
+	store, err := syncer.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	e := engine(t, store, s, d, options())
+	if err := e.Once(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	changed := a
+	changed.FileModifiedAt = a.FileModifiedAt.Add(time.Hour)
+	s.pages[""] = bridge.Page{Assets: []bridge.Asset{changed}}
+	if err := e.Once(t.Context()); err == nil || err.Error() != "source_changed" {
+		t.Fatalf("file modification was ignored: %v", err)
+	}
+	if st := status(t, e); st.Confirmed != 1 || st.Errors["source_changed"] != 1 {
+		t.Fatalf("conflict was not recorded: %+v", st)
+	}
+	s.pages[""] = bridge.Page{Assets: []bridge.Asset{a}}
+	if err := e.Once(t.Context()); err != nil {
+		t.Fatalf("stale source_changed blocked recovery: %v", err)
+	}
+	if st := status(t, e); st.Confirmed != 1 || st.Errors["source_changed"] != 0 || len(d.nodes) != 1 {
+		t.Fatalf("settled source kept the conflict: %+v nodes=%d", st, len(d.nodes))
 	}
 }

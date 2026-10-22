@@ -25,6 +25,19 @@ type Diagnostic struct {
 	Name, Code string
 }
 
+// WorkflowOrphan is a persisted workflow whose account is no longer configured.
+type WorkflowOrphan struct {
+	Account, State, Code string
+}
+
+// WorkflowLog is redacted aggregate run diagnostics for an owned Workflow.
+type WorkflowLog struct {
+	Account           string
+	Completed, Halted int
+	Error             int
+	Last              string
+}
+
 // Backend keeps account state and cloud access in the service runtime.
 type Backend interface {
 	Config() config.Config
@@ -34,6 +47,8 @@ type Backend interface {
 	Pause(context.Context, string, bool) error
 	Retry(context.Context, string) error
 	Diagnose(context.Context, string) ([]Diagnostic, error)
+	WorkflowLogs(context.Context, string, int) ([]WorkflowLog, error)
+	OrphanWorkflows(context.Context) ([]WorkflowOrphan, error)
 	Code(error) string
 }
 
@@ -94,7 +109,7 @@ func New(backend Backend, options Options) (http.Handler, error) {
 	d.mux.HandleFunc("GET /accounts/{id}/edit", d.accountPage)
 	d.mux.HandleFunc("POST /accounts/save", d.saveAccount)
 	d.mux.HandleFunc("POST /accounts/discover", d.discover)
-	for _, action := range []string{"pause", "resume", "retry", "remove", "doctor"} {
+	for _, action := range []string{"pause", "resume", "retry", "remove", "doctor", "workflow-logs"} {
 		d.mux.HandleFunc("POST /accounts/{id}/"+action, d.accountAction(action))
 	}
 	return d, nil
@@ -368,8 +383,9 @@ func (d *dashboard) index(w http.ResponseWriter, r *http.Request) {
 	for _, account := range d.backend.Config().Accounts {
 		status, err := d.backend.Status(r.Context(), account.ID)
 		view.Accounts = append(view.Accounts, accountView{
-			Account: account, Status: status, Code: d.backend.Code(err),
+			Account: account, Policy: account.Policy(), Status: status, Code: d.backend.Code(err),
 		})
 	}
+	view.Orphans, _ = d.backend.OrphanWorkflows(r.Context())
 	d.render(w, "index", view)
 }

@@ -18,7 +18,7 @@ import (
 	"github.com/thedavidweng/immich-amazon-sync/internal/bridge"
 )
 
-func newClient(t *testing.T, region aphotos.Region, handler http.HandlerFunc) *amazon.Client {
+func newSDK(t *testing.T, region aphotos.Region, handler http.HandlerFunc) *aphotos.Client {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
@@ -42,6 +42,12 @@ func newClient(t *testing.T, region aphotos.Region, handler http.HandlerFunc) *a
 			t.Error(err)
 		}
 	})
+	return sdk
+}
+
+func newClient(t *testing.T, region aphotos.Region, handler http.HandlerFunc) *amazon.Client {
+	t.Helper()
+	sdk := newSDK(t, region, handler)
 	c, err := amazon.NewWithClient(sdk)
 	if err != nil {
 		t.Fatal(err)

@@ -1,0 +1,26 @@
+# Optional overlay: read Immich originals from a read-only mount.
+#
+#   docker compose -f compose.yaml -f compose.direct.yaml up -d
+#
+# Create the host directory first and make it readable by the image's nonroot
+# UID/GID 10001. The service only ever opens regular files for reading; it
+# never writes to, creates in, or retimes this mount. An absent mount is safe:
+# every original falls back to the Immich API.
+#
+# The account configuration must approve the same mapping, for example:
+#
+#   "direct_roots": [
+#     {"immich_path": "/photos", "host_path": "/originals"}
+#   ]
+#
+# "/photos" is the prefix Immich itself reports in each asset's originalPath.
+# The image stays read-only and the process stays nonroot.
+services:
+  sync:
+    volumes:
+      - type: bind
+        source: ${IMMICH_ORIGINALS:-./immich-originals}
+        target: /originals
+        read_only: true
+        bind:
+          create_host_path: false

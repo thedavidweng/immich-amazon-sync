@@ -25,8 +25,13 @@ Both v2 album metadata reads must request `withoutAssets=true`; v2 otherwise
 embeds all assets and defeats bounded discovery. The pinned v3 metadata
 response omits embedded assets and has no such query parameter.
 
-Pin the public aphotos SDK to released tag `v0.1.4`, published through
-[SDK PR #13](https://github.com/thedavidweng/amazon-photos/pull/13).
+Pin the public aphotos SDK to released tag `v0.1.5`, published through
+[SDK PR #15](https://github.com/thedavidweng/amazon-photos/pull/15). `v0.1.5`
+adds tolerant video-bitrate decoding: Amazon returns that field as a JSON float,
+and `v0.1.4` rejected the whole node, hiding every video from `GetNode` and
+search. `v0.1.4`'s corrections from
+[SDK PR #13](https://github.com/thedavidweng/amazon-photos/pull/13) remain the
+baseline this ticket's list, status and retry rules were written against.
 The release includes strict list and final-status validation, preserves
 GetNode auth/rate-error propagation, and retains parsed Retry-After delays.
 Use the released SDK, not a duplicate HTTP client or local workaround.
@@ -71,7 +76,11 @@ byte-checksum mismatch remains an error.
 
 Preserving an original preserves its embedded EXIF and any embedded motion
 bytes. It does not copy Immich-only timestamp edits: the SDK has no public
-upload capture-date field/setter. Apple Live Photo hidden MOV companions are
+upload capture-date field/setter, so doctor and status report the finite
+`metadata_not_supported` capability and Amazon's inferred date can differ from
+Immich's capture date. If a later SDK release adds a setter, require an
+authoritative read-back before reporting `supported`; never rewrite EXIF or
+filesystem mtimes instead. Apple Live Photo hidden MOV companions are
 separate assets and may not be enumerated with the still. Do not claim complete
 paired-original backup or Amazon Live Photo playback without a separate tested
 companion policy. HEIC/RAW/video acceptance and all regional/album mutations

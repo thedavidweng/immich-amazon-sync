@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"time"
 
 	"github.com/thedavidweng/immich-amazon-sync/internal/bridge"
 )
@@ -58,8 +57,8 @@ func (e *Engine) processHints(ctx context.Context, limit int) error {
 		var id string
 		var priority, version, attempts int
 		err := e.store.db.QueryRowContext(ctx, `SELECT asset_id,priority,version,attempts FROM hints WHERE account_id=?
-			AND attempts<5 AND next_at<=unixepoch('subsec')*1000 ORDER BY priority DESC,asset_id LIMIT 1`,
-			e.opts.AccountID).Scan(&id, &priority, &version, &attempts)
+			AND `+e.attemptLimit("")+` AND next_at<=? ORDER BY priority DESC,asset_id LIMIT 1`,
+			e.opts.AccountID, e.opts.Now().UnixMilli()).Scan(&id, &priority, &version, &attempts)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
@@ -69,7 +68,7 @@ func (e *Engine) processHints(ctx context.Context, limit int) error {
 		if err := e.resolveHint(ctx, id, priority, version); err != nil {
 			_, dbErr := e.store.db.ExecContext(context.WithoutCancel(ctx), `UPDATE hints SET attempts=attempts+1,
 				error_code=?,next_at=? WHERE account_id=? AND asset_id=? AND version=?`,
-				errorCode(err), time.Now().Add(retryDelay(attempts, err)).UnixMilli(), e.opts.AccountID, id, version)
+				errorCode(err), e.opts.Now().Add(e.retryDelay(attempts, err)).UnixMilli(), e.opts.AccountID, id, version)
 			if dbErr != nil {
 				return errors.New("storage_unavailable")
 			}

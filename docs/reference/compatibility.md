@@ -2,21 +2,23 @@
 
 Research baseline: **October 20, 2026, America/Vancouver**. Acquisition crossed
 October 21 UTC. These pins describe inspected contracts; they do not establish
-live-account success.
+live-account success. The capability-by-capability comparison against the
+combined `immich-gphotos` baseline, with its evidence grades and delivering
+tickets, is in [parity.md](parity.md).
 
 | Boundary | Pin/evidence | Limit |
 | --- | --- | --- |
 | Immich stable | `v3.3.4`, `69e0cb8606137c4f8dc0e7207a672ff8be39f358`, released October 20, 2026 | Official contract/source inspection and offline adapter fixtures; a live `ca` run used Immich `3.3.3`, not this pin. |
 | Immich comparison | `v2.0.0`, `e4234af3b3bd32f5dd12a2b0808158339deded43` | Offline owned-album/library contracts include timeline and archive; v2 shared albums are unsupported. Other v2/v3 releases are not individually verified. |
 | Immich main | `166e93559f123313cf9cb4e7324c4ee30e21c618`, OpenAPI says `3.3.0-rc.0` | Stale development metadata, not the stable release number or minimum supported version. |
-| aphotos SDK | `v0.1.4` | Released tag containing the corrections from SDK PR #13: strict list/final-status validation and typed transient Retry-After, retaining GetNode auth/rate-error preservation. |
+| aphotos SDK | `v0.1.5` | Released tag. Carries the `v0.1.4` corrections from SDK PR #13 (strict list/final-status validation, typed transient Retry-After, GetNode auth/rate-error preservation) plus tolerant video-bitrate decoding from SDK PR #15, without which a live video node failed to decode at all. |
 | Local runtime | Offline Go, CLI and container contracts plus one live `ca` acceptance run | Real Amazon upload, node re-read, album creation, membership, account-wide MD5 reuse and opt-in trash propagation verified once for one account and one Immich album; format playback, credential renewal and multi-account behavior remain unverified. |
 
 Primary sources: [stable release](https://github.com/immich-app/immich/releases/tag/v3.3.4),
 [stable OpenAPI](https://github.com/immich-app/immich/blob/69e0cb8606137c4f8dc0e7207a672ff8be39f358/open-api/immich-openapi-specs.json),
 [v2 OpenAPI](https://github.com/immich-app/immich/blob/e4234af3b3bd32f5dd12a2b0808158339deded43/open-api/immich-openapi-specs.json),
-[SDK GetNode](https://github.com/thedavidweng/amazon-photos/blob/v0.1.4/pkg/aphotos/account.go),
-[SDK v0.1.4](https://github.com/thedavidweng/amazon-photos/releases/tag/v0.1.4).
+[SDK GetNode](https://github.com/thedavidweng/amazon-photos/blob/v0.1.5/pkg/aphotos/account.go),
+[SDK v0.1.5](https://github.com/thedavidweng/amazon-photos/releases/tag/v0.1.5).
 The SDK pin is a released tag.
 The adapter owns the pinned offline contract check; CI runs it through
 `go test ./...`, without a second mutable upstream download.
@@ -61,6 +63,65 @@ Original downloads and SDK uploads retain the caller context without a fixed
 whole-media deadline. Each post-upload metadata verification gets a fresh
 30-second deadline; a long media transfer does not consume that allowance.
 
+## Storage usage and quota
+
+`aphotos v0.1.5` exposes `GetUsage`, whose categorized `billable`/`total`
+observations and `lastCalculated` are pinned by the offline fixture. It does not
+expose a subscription cap, remaining bytes or Prime eligibility. This service
+therefore reports observed `photo`, `video` and `other` usage (plus any
+additional provider category) next to `capacity: unknown` and
+`entitlement: unknown`. A zero billable photo count, a marketplace code or low
+usage never proves Prime.
+
+The optional per-account `video_usage_threshold_bytes` compares a user-provided
+budget with fresh observed billable video bytes. `hold_videos_at_threshold`
+stops dispatching new video uploads at or above it; photos and metadata work
+continue, and staged originals stay durable. A stale or unavailable usage read
+cannot activate the hold.
+
+A quota rejection is classified as `storage_quota_exceeded` only from an
+explicit typed non-429 response: HTTP 400, 403 or 409 carrying a capacity
+marker, or HTTP 507. HTTP 429 remains `rate_limited`; 401 and a 403 without a
+capacity marker remain authentication/permission errors. The rejected upload
+keeps its staged original. A later run re-reads the target before uploading, so
+an uncertain write is never replayed and capacity restoration is accepted only
+when new work succeeds. Real-account quota behavior is not yet tested; this is
+an offline contract.
+
+Original bytes are the backup contract. There is no quality selector, Storage
+Saver simulation or recompression path.
+
+## Schema and upgrade
+
+The ledger schema is versioned with SQLite `user_version`. This head understands
+versions 1 through 10 and refuses every other value — a newer volume opened by an
+older binary, or an out-of-range header value — with the finite
+`unsupported_schema` code and storage exit 4. A refused open does not rewrite the
+version or migrate partially; restore the matching image and backup instead of
+editing SQLite by hand. Each step is one transaction and only adds state:
+1→2 durable hints, incremental progress and album relationships; 3→4 album
+origin/discovery columns; 4→5 managed Workflow ownership; 5→6 favorite state;
+6→7 explicit filter exclusions; 7→8 the usage observation; 8→9 the favorite
+drift audit; 9→10 the Live Photo pair ledger and applied per-account mode.
+
+Offline tests upgrade every checked-in fixture (`v1`, `v3`–`v9`). They assert
+that confirmed and Existing mappings, account identity, rules and scan cursors,
+album ownership and memberships, deletion states, staging references and
+unconfirmed intents survive, while favorite, Live Photo pair, album-mirroring,
+transfer-window, usage-hold, managed Workflow and direct-read scope stay off.
+The container smoke repeats a version-3 migration and the future-schema refusal
+on amd64 and arm64.
+
+On 2026-10-22 a copy of the real deployed ledger — schema **2**, seven assets,
+three `confirmed` with node mappings and three with none, two `failed` and two
+`unconfirmed` — was opened by the release build. A read-only `status` refused it
+with `schema_migration_required` and left the file untouched; the first writable
+command migrated it to 10, kept all seven rows in their original states with
+their node mappings, created no favorite, pair or workflow row, and reported
+`favorites_mode: off`, `live_photo_mode: still_only` and
+`album_sync_mode: off`. Evidence grade: offline contract, dual-architecture
+container smoke and one real-ledger upgrade on a copy.
+
 ## Immich contract
 
 Polling uses `/api/server/version`, `/api/users/me`, `/api/albums`,
@@ -94,10 +155,14 @@ against the configured source scope. See [event HTTP reference](events.md).
 Acceptance is covered by offline contracts, not a real Immich Workflow run.
 
 Events provide acceleration hints. There is no established upstream durable
-acknowledgment/replay guarantee or album-membership event. Registration is manual;
-the service does not create Workflows through its read-only Source seam. Keep
-the polling key read-only and [configure the native step](../how-to/event-hints.md)
-separately. Polling remains necessary. Owned album mapping and bounded relation
+acknowledgment/replay guarantee or album-membership event. Registration can stay
+manual; the read-only Source seam never writes. The optional
+[managed onboarding](../how-to/managed-workflows.md) uses a separate credential
+and only the pinned v3.3.4 endpoints, `/api-keys/me` and `/workflows/triggers`
+for capability detection; `PUT /workflows/{id}` is the documented update
+operation even though upstream marks it deprecated in favour of an undocumented
+`PATCH`. Immich v2 and missing grants fall back to polling with a notice. Keep
+the polling key read-only. Polling remains necessary. Owned album mapping and bounded relation
 reconciliation are implemented with offline tests; real Amazon album behavior
 and regional writes remain unverified.
 
@@ -186,18 +251,78 @@ hard delete (asset that never becomes trashed) and no large-library behaviour
 were observed; Amazon's trash retention window and permanent deletion were not
 exercised.
 
+### Parity feature live evidence (2026-10-22, `ca`)
+
+One real `ca` account ran every new remote capability of this release against a
+disposable Immich album holding synthetic samples: two generated PNGs, one
+generated MOV, and one linked still/MOV Live Photo pair. The account was not
+disposable; samples, the album and the workflow were created for this run and
+are removed or trashed afterwards. No personal media was uploaded.
+
+| Operation | Result |
+| --- | --- |
+| Categorized usage read | Observed photo `1061364657222` bytes / `122101` items and video `1669539224` billable bytes / `39` items with a provider `lastCalculated`; capacity and entitlement stayed `unknown`. |
+| Favorite read on an untouched node | `GET /nodes/{id}` returned **no `settings` object**. Treating that omission as unknown blocked every add-only star; the fix makes it an authoritative false. |
+| Favorite star | Applied through the SDK, then read back as `{"favorite": true}`. |
+| Unstar under `mirror` + `favorites_takeover` | Applied, then read back as `{"favorite": false}`. |
+| Manual star under `mirror` without takeover | `preserved`; no write was issued and the remote star stayed. |
+| Source unstar under `mirror` | The service cleared its own star and the remote value became `false`; a later source re-star was re-applied. |
+| Closed transfer window | Four uploads `deferred`, `next_opening` computed for `America/Vancouver`, no dispatch, no failure or unconfirmed state. |
+| Open transfer window | The same work became four `confirmed` Nodes. |
+| Read-only direct mount | Four originals read from the approved mount, `bytes_avoided=5706`, `api_bytes=0`; MD5 and size matched the API path. |
+| Live Photo original pair | Still and MOV uploaded as two Nodes with distinct MD5s (`a0eabe…`/`105` bytes and `28eb1f…`/`5414` bytes); the pair reported `complete`. |
+| Managed Workflow create | One owned Workflow created, read back and verified; a second run reported `verify` and created nothing. |
+| Owned Workflow update | A callback rotation updated only the persisted owned ID. |
+| Owned Workflow removal | Owned Workflow deleted; an unrelated Google workflow was untouched. |
+| Metrics and read-only status | `/metrics` and `/status` returned 200 behind the loopback listener, with hashed account labels and no paths, secrets or asset IDs; `status` read the ledger while `serve` held the writer lock. |
+
+Defects this run found and fixed, both now covered by regression tests:
+
+1. **SDK v0.1.4 rejected every video node.** Amazon returns
+   `contentProperties.video.bitrate` as a JSON float (`22368.0`); the `int64`
+   field failed the whole decode, so `GetNode` and search returned
+   `remote protocol error` and a real video was invisible. Fixed in
+   [SDK PR #15](https://github.com/thedavidweng/amazon-photos/pull/15) and
+   released as `v0.1.5`.
+2. **Favorites treated a missing `settings` object as unknown.** Add-only could
+   not star media Amazon had never mutated. An absent object is now a proven
+   false; a `settings` object without a `favorite` key stays
+   `favorite_unconfirmed`.
+3. **Managed Workflow rejected nullable labels.** The pinned contract declares
+   `name` and `description` nullable, and a live account returns
+   `"description": null` for workflows created elsewhere, so listing failed with
+   `remote_protocol` and registration could not see its own Workflow.
+
+Limits: one account, one marketplace, synthetic samples, images and one short
+H.264 MOV only. Echo Show playback, a real iPhone Live Photo pair, native
+Apple Live Photo linking, HEIC/RAW rendering and the absolute 500-item deletion
+bound were not exercised. Native pairing remains untested: the unofficial API
+exposes no linking operation, and this run's pair is preserved as two separate
+Nodes, not as a playable Live Photo.
+
 ## Originals and metadata
 
 | Media/metadata | Intended handling | Evidence/limitation |
 | --- | --- | --- |
 | Eligible image original | Stream original bytes, stage within bounds, compute full MD5/size, verify remote evidence | Offline contracts; individual formats and Amazon rendering untested. |
-| Standalone video | Explicit `include_videos`; no transcoding | Quota, accepted codecs and playback require real-account testing. |
+| Standalone video | Explicit `filters.media_types` including `video`; no transcoding | Quota, accepted codecs and playback require real-account testing. |
 | HEIC/HEIF, RAW | Preserve eligible original bytes without claiming preview support | Experimental/unverified format behavior. |
 | Android embedded Motion Photo | Original image retains embedded motion bytes | No Amazon motion-playback guarantee. |
-| Apple Live Photo | Still and hidden MOV can be separate originals | Still-only backup does not preserve the complete pair; no full Live Photo claim. |
+| Apple Live Photo | Still and hidden MOV can be separate originals | `live_photo_mode: original_pair` uploads both originals unchanged with independent hashes and Nodes. Amazon's published iOS Live Photo format support is separate from unproven SDK linking and playback: the service writes no pairing metadata and never claims playback. A missing or ineligible companion reports `pair_incomplete`. |
 | Hidden/locked/trashed/offline media | Excluded or explicitly reported as unsupported | Only an explicit `isTrashed` observation, with opt-in propagation and a re-verified node, can move a mapped node to the Amazon trash. Hidden, locked and offline states never do. |
 | Embedded EXIF | Preserved inside unchanged original bytes | No metadata rewriting. |
-| Immich-only capture-date edits | Not written separately by the current SDK | Amazon inferred dates can differ. |
+| Source original bytes and filesystem mtimes | Read-only on every upload path | Staged and direct originals are never rewritten: no `utime`, no EXIF rewrite, no recompression. Tests assert unchanged bytes and mtimes. |
+| Immich-only capture-date edits | Not written separately by the pinned SDK; doctor and status report `capture_date=metadata_not_supported` | Amazon infers the displayed date from the original bytes. When a capture date exists only in Immich metadata, or the original has no usable EXIF date, Amazon's displayed date can differ from Immich's capture date. |
+
+Capture-date support is a capability, not an assumption. The pinned `aphotos`
+v0.1.4 release exposes `contentDate` and the EXIF date properties only as
+response data; its upload request, settings PATCH and rename cannot set them.
+`doctor` and the status object therefore report the finite
+`capture_date=metadata_not_supported` and the service never claims that an
+Immich-only date edit is mirrored. If a future release adds a setter, it must be
+proven by that released SDK and verified by an authoritative read-back of the
+resulting node before `supported` is reported. Rewriting original bytes, EXIF or
+filesystem timestamps is never an acceptable substitute.
 
 Immich's public `checksum` is base64 SHA-1 bytes, never Amazon MD5. Current
 external-library imports may use `SHA1("path:" + normalizedPath)`; the public
@@ -216,3 +341,40 @@ edits that move `updatedAt` do not mark the asset as changed.
 Sources: [library checksum assignment](https://github.com/immich-app/immich/blob/69e0cb8606137c4f8dc0e7207a672ff8be39f358/server/src/services/library.service.ts),
 [Live/Motion linking](https://github.com/immich-app/immich/blob/69e0cb8606137c4f8dc0e7207a672ff8be39f358/server/src/services/metadata.service.ts),
 [SDK upload fields](https://github.com/thedavidweng/amazon-photos/blob/v0.1.4/pkg/aphotos/upload.go).
+
+## Favorite contracts
+
+Immich `AssetResponseDto` at the pinned version requires a non-nullable
+`isFavorite`, and the pinned example fixture also covers an absent field. The
+adapter maps absence to unknown (`Favorite == nil`) and never to false. A source
+without the field therefore performs no favorite write and reports
+`favorites_unknown`.
+
+Both directions use the SDK's single `SetFavorite(ctx, nodeIDs, bool)` call;
+the service never reimplements the PATCH. An unstar is issued only against an
+explicit remote true and is verified by a re-read that must show an explicit
+false, so the payload's presence semantics gate unstar exactly as they gate a
+star.
+
+The aphotos `NodeSettings.Favorite` typed value cannot prove presence: a
+`settings` object without `favorite` decodes as a synthetic false, and the SDK
+also synthesises a `NodeSettings` fallback when a PATCH response omits
+`settings`. The adapter therefore reads the retained raw payload.
+
+A live `ca` account on 2026-10-22 established the shape of an untouched Node:
+`GET /nodes/{id}` returned **no `settings` object at all** for media the account
+had never changed a setting on, and one `SetFavorite` PATCH made
+`settings: {"favorite": true}` appear. An absent `settings` object is therefore
+an authoritative false — otherwise add-only sync could never star media Amazon
+had never mutated. Once a `settings` object is present, a missing or null
+`favorite` key remains `favorite_unconfirmed`, the pre-write unstar read requires
+an explicit `true`, and the post-write verification always requires an explicit
+`favorite` field, so the PATCH response alone is never proof. A lost or timed-out
+mutation stays uncertain until a fresh read settles it; no media is uploaded
+again.
+
+Observed live on 2026-10-22 (`ca`, this service's `main` plus the SDK decode fix):
+star applied and read back as `{"favorite": true}`; a manual unstar was detected
+and re-applied; an unstar under `mirror` + `favorites_takeover` cleared the star
+and read back `{"favorite": false}`. Remaining limits: one account, one marketplace,
+synthetic PNG/MOV samples.

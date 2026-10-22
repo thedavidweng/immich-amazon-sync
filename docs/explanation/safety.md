@@ -34,9 +34,73 @@ Node or another album's membership. Incomplete scans and uncertain target album
 ownership cannot authorize removals.
 Only returned IDs from this service's own album creation establish ownership.
 An unknown-ID create remains uncertain; a same-name album is insufficient.
+All-accessible mirroring discovers albums from the complete accessible listing
+and keys each one by its stable source UUID. A failed listing changes nothing;
+an album missing from a successful listing stops mirroring without clearing its
+owned destination album, node mappings or memberships, and is never treated as
+deletion evidence. Renames keep the owned identity.
 Safe additions can proceed during backfill, but removals require a completed
 baseline, nonempty desired set and the
 [fixed membership guard](../how-to/managed-albums.md#understand-removal-guards).
+
+## Favorite writes
+
+Favorite sync is opt-in per account; `off` is the default for every account and
+no migration or upgrade enables it. When `favorites: add_only` is set, a
+verified Node mapped from a `confirmed` or `existing` asset is starred only if
+the source explicitly reports `isFavorite: true`. An omitted source field is
+unknown and cannot authorize a write, and add-only never unstars.
+
+`favorites: mirror` adds an unstar, but only under durable authority: the star
+must have been applied by this service and verified earlier, and the unstar is
+issued only after a fresh read proves an explicit remote `settings.favorite:
+true` immediately before the mutation. A star this service did not apply is
+preserved, so manually curated Amazon favorites survive enabling mirror on
+`existing` Nodes. `favorites_takeover: true`, legal only with mirror, is the
+single recording that lets the source clear those manual stars too. Nothing
+about a stale local observation can trigger an unstar: the value that authorizes
+it comes from the read in the same attempt.
+
+Amazon omits the whole `settings` object on a Node the account has never changed
+a setting on, and a live `ca` account confirmed that omission means "not
+favorited": no `settings` key was returned for an untouched media Node, and one
+favorite mutation made the key appear. An absent `settings` object is therefore
+an authoritative false, which is what lets an add-only sync star media Amazon has
+never touched. Once a `settings` object exists, a missing or null `favorite` key
+still yields `favorite_unconfirmed`, because it cannot distinguish a stored false
+from an incomplete payload, and the pre-write unstar read requires the explicit
+`favorite` value. The post-write verification always requires an explicit
+`favorite` field, so the SDK's mutation response is never proof. A lost or
+timed-out mutation stays uncertain and is retried only after a fresh read, so a
+committed star or unstar settles without a second PATCH and no media is uploaded
+again. Trashed, Deleted and Unconfirmed Nodes are ineligible, so a source trash
+never resurrects or alters their star. Several assets or albums sharing a Node
+produce one durable outcome and one write.
+
+Drift is repaired by a bounded audit: each settled node is re-read at most once
+per six hours, oldest first, and at most sixteen per pass. A manual unstar of a
+star the source still wants is re-starred; with takeover, a manual re-star is
+cleared. An outage during the audit becomes an ordinary per-node retry with
+backoff, so a restart or a remote outage converges without a retry storm.
+
+Two local accounts can resolve to the same Amazon identity. When they record
+contradictory wishes for a shared Node, both stop writing it and report
+`shared_target_conflict` instead of alternating PATCH requests. The conflict is
+derived on every pass and withdraws as soon as one source wish changes; it never
+counts as deletion evidence or affects media state.
+## Originals and capture time
+
+Every upload path only reads the source original and writes a separate staging
+copy. The service never rewrites original bytes, calls `utime`, or edits EXIF to
+influence Amazon metadata; tests assert bytes and filesystem mtimes are
+unchanged on the staged and direct-mount upload, verified-reuse and
+uncertain-write paths.
+Embedded EXIF travels inside the unchanged bytes. Immich-only capture-date edits
+are not mirrored: the pinned SDK has no capture-date setter, so `doctor` and
+status report `capture_date=metadata_not_supported`. Amazon can therefore display
+a different date than Immich for such files and for originals without a usable
+EXIF date. A future setter requires a released SDK operation and an authoritative
+read-back; rewriting originals is never a substitute.
 
 ## Deletion propagation
 
@@ -78,6 +142,25 @@ a source snapshot. See [progress and scheduling](../reference/status.md) and
 the [event/membership decision](../adr/0005-durable-hints-and-owned-membership.md).
 Read [contract decisions](../adr/0003-upstream-contract-boundaries.md) for the
 researched checksum, media-pair and pagination limits.
+
+Live Photo handling is a choice between preserving the still alone and
+preserving both originals. `original_pair` uploads the still and the hidden MOV
+separately; it never muxes, converts or re-derives either file, so a recorded
+hash always describes the bytes that were staged. Pair bookkeeping is durable,
+separate from media state, and never deletion evidence: switching modes withdraws
+or adopts the relationship without re-uploading, overwriting or trashing a Node.
+A companion that is missing or ineligible is reported as `pair_incomplete`
+instead of a silent partial claim.
+
+Read-only mounts are optional input only. An approved `direct_roots` mapping lets
+an eligible original be staged from disk instead of downloaded, but the service
+never writes to, creates in or retimes that mount. The staged bytes are verified
+against the recorded size and checksum, the file is re-stated after the read, and
+a mutation yields `source_changed` rather than a recorded digest. Paths are
+confined with `os.Root`, so traversal and symlink escapes fail closed instead of
+falling back. Absent, out-of-root, missing or unreadable paths use the Immich API
+stream, so a broken mount degrades to the previous behaviour. See
+[direct originals](../how-to/direct-originals.md).
 
 Local health is deliberately independent of remote service availability.
 Restarting a healthy local database because Amazon is offline does not fix

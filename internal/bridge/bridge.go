@@ -13,6 +13,43 @@ type Album struct {
 	Count int    `json:"count"`
 }
 
+type Tag struct {
+	ID    string `json:"id"`
+	Name  string `json:"name,omitempty"`
+	Value string `json:"value,omitempty"`
+}
+
+// AlbumSyncMode is the configured album mirroring scope. Off performs no
+// album writes. Selected mirrors exactly the explicitly configured albums.
+// AllAccessible mirrors every album the caller can read, discovered by its
+// stable source UUID; it never adopts a destination album by name.
+type AlbumSyncMode string
+
+const (
+	AlbumSyncOff           AlbumSyncMode = "off"
+	AlbumSyncSelected      AlbumSyncMode = "selected"
+	AlbumSyncAllAccessible AlbumSyncMode = "all_accessible"
+)
+
+func (m AlbumSyncMode) Valid() bool {
+	return m == AlbumSyncOff || m == AlbumSyncSelected || m == AlbumSyncAllAccessible
+}
+
+// LivePhotoMode is the per-account policy for Apple Live Photo originals.
+// StillOnly never follows the companion relationship, preserving the historical
+// behavior. OriginalPair backs up the still and the hidden MOV Immich reports as
+// its companion as two independent originals; it never muxes or converts them.
+type LivePhotoMode string
+
+const (
+	LivePhotoStillOnly    LivePhotoMode = "still_only"
+	LivePhotoOriginalPair LivePhotoMode = "original_pair"
+)
+
+func (m LivePhotoMode) Valid() bool {
+	return m == LivePhotoStillOnly || m == LivePhotoOriginalPair
+}
+
 type Asset struct {
 	ID             string    `json:"id"`
 	Name           string    `json:"name"`
@@ -23,7 +60,23 @@ type Asset struct {
 	TakenAt        time.Time `json:"taken_at"`
 	FileModifiedAt time.Time `json:"file_modified_at"`
 	LivePhotoVideo bool      `json:"live_photo_video"`
-	ExcludedReason string    `json:"excluded_reason,omitempty"`
+	// LivePhotoID is the companion VIDEO asset a still references through
+	// Immich's livePhotoVideoId. It is set on the still only; the companion is
+	// a separate Asset with no companion of its own.
+	LivePhotoID string `json:"live_photo_id,omitempty"`
+	Archived    bool   `json:"archived"`
+	// Tags is nil when the source did not provide tag provenance. An empty,
+	// non-nil slice is authoritative "no tags".
+	Tags           []Tag  `json:"tags"`
+	ExcludedReason string `json:"excluded_reason,omitempty"`
+	// Favorite is the source's explicit favorite setting. Nil means the source
+	// omitted or did not support the field: unknown, never false.
+	Favorite *bool `json:"favorite,omitempty"`
+	// OriginalPath is the absolute path the source reports for this original.
+	// It is transient by design: it is never marshalled into the durable asset
+	// metadata, never logged and only used to resolve one approved read-only
+	// mount. Callers must re-read it instead of trusting a stored copy.
+	OriginalPath string `json:"-"`
 }
 
 type Scope struct {
@@ -59,6 +112,27 @@ type Content struct {
 	MD5      string
 	TakenAt  time.Time
 	ParentID string // Empty identifies the authenticated root.
+}
+
+// UsageBucket is one observed byte and item count. It is measured usage, never
+// a subscription cap or remaining capacity.
+type UsageBucket struct {
+	Bytes int64 `json:"bytes"`
+	Count int64 `json:"count"`
+}
+
+// UsageCategory is the billable and total observation for one media category.
+type UsageCategory struct {
+	Billable UsageBucket `json:"billable"`
+	Total    UsageBucket `json:"total"`
+}
+
+// Usage is the provider's categorized storage observation. LastCalculated is
+// the provider's own timestamp; zero means the provider did not report one.
+// Neither field establishes an entitlement, quota or remaining capacity.
+type Usage struct {
+	LastCalculated time.Time                `json:"last_calculated"`
+	Categories     map[string]UsageCategory `json:"categories"`
 }
 
 // Placement is the verified location of a media node relative to the requested
@@ -118,17 +192,34 @@ type Target interface {
 	// supply the durable node mapping and the content evidence it was verified
 	// with; a mismatch is an error, not a best-effort delete.
 	Trash(context.Context, Content, string) error
+	// ReadFavorite re-reads one verified, owned node and returns its favorite
+	// setting. The payload must contain an explicit settings.favorite boolean;
+	// otherwise the read fails with FavoriteUnconfirmed and is never false.
+	ReadFavorite(context.Context, Content, string) (bool, error)
+	// SetFavorite ensures one verified, owned node carries the requested
+	// favorite value. It reads the authoritative favorite field first, performs
+	// at most one SDK mutation, and re-reads the outcome; the mutation response
+	// is never proof. An explicit remote value must be present before either
+	// direction is mutated, so a payload without the field never authorizes an
+	// unstar. Callers decide this service's authority to unstar.
+	SetFavorite(context.Context, Content, string, bool) error
 	CreateAlbum(context.Context, string) (string, error)
 	RenameAlbum(context.Context, string, string) error
 	AlbumMembers(context.Context, string) ([]string, error)
 	AddMembers(context.Context, string, []string) error
 	RemoveMembers(context.Context, string, []string) error
+	// Usage reads observed categorized storage. It must not infer a
+	// subscription entitlement, cap or remaining capacity.
+	Usage(context.Context) (Usage, error)
 }
 
 type Capabilities struct {
 	Region   string `json:"region"`
 	Evidence string `json:"evidence"`
 	Identity string `json:"identity"`
+	// CaptureDate is the finite capture-date write capability of the target.
+	// It is a static property of the released SDK, not a remote discovery.
+	CaptureDate string `json:"capture_date"`
 }
 
 type Error struct {
@@ -143,10 +234,22 @@ const (
 	Authentication = "authentication_required"
 	Permission     = "permission_denied"
 	RateLimit      = "rate_limited"
+	Quota          = "storage_quota_exceeded"
 	Unavailable    = "remote_unavailable"
 	NotFound       = "not_found"
 	Conflict       = "content_conflict"
 	Unconfirmed    = "upload_unconfirmed"
-	Protocol       = "remote_protocol"
-	Unsupported    = "unsupported_media"
+	// FavoriteUnconfirmed covers an absent settings.favorite field and a
+	// favorite mutation whose committed state is not yet proven.
+	FavoriteUnconfirmed = "favorite_unconfirmed"
+	Protocol            = "remote_protocol"
+	Unsupported         = "unsupported_media"
+)
+
+// Capture-date capability codes. Supported is only legal for an operation
+// proven by the released SDK and verified by an authoritative read-back; an
+// absent operation is MetadataNotSupported, never an implied success.
+const (
+	MetadataSupported    = "supported"
+	MetadataNotSupported = "metadata_not_supported"
 )

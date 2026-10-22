@@ -5,12 +5,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 
 	"github.com/thedavidweng/immich-amazon-sync/internal/admin"
 	"github.com/thedavidweng/immich-amazon-sync/internal/bridge"
 	"github.com/thedavidweng/immich-amazon-sync/internal/config"
 	"github.com/thedavidweng/immich-amazon-sync/internal/immich"
+	"github.com/thedavidweng/immich-amazon-sync/internal/workflow"
 )
 
 // SetupConfig is an explicit bootstrap, never a missing-file fallback.
@@ -134,12 +136,58 @@ func (b *adminBackend) Diagnose(ctx context.Context, id string) ([]admin.Diagnos
 			admin.Diagnostic{Name: "write_evidence", Code: account.Evidence},
 			admin.Diagnostic{Name: "target_writes", Code: account.TargetWrites},
 			admin.Diagnostic{Name: "original_read", Code: account.OriginalRead},
+			admin.Diagnostic{Name: "usage_capacity", Code: account.Usage.Capacity},
+			admin.Diagnostic{Name: "usage_entitlement", Code: account.Usage.Entitlement},
+			admin.Diagnostic{Name: "capture_date", Code: account.CaptureDate},
 		)
+		if account.Workflow != "" {
+			checks = append(checks, admin.Diagnostic{Name: "workflow", Code: account.Workflow})
+		}
+		if account.Usage.State != "unavailable" {
+			for _, category := range []struct {
+				name  string
+				value int64
+			}{
+				{"usage_photo_bytes", account.Usage.Photo().Billable.Bytes},
+				{"usage_video_bytes", account.Usage.Video().Billable.Bytes},
+				{"usage_other_bytes", account.Usage.Other().Billable.Bytes},
+			} {
+				checks = append(checks, admin.Diagnostic{Name: category.name, Code: strconv.FormatInt(category.value, 10)})
+			}
+		}
 		for _, check := range account.Checks {
 			checks = append(checks, admin.Diagnostic{Name: check.Name, Code: check.Code})
 		}
 	}
 	return checks, err
+}
+
+func (b *adminBackend) WorkflowLogs(ctx context.Context, id string, limit int) ([]admin.WorkflowLog, error) {
+	reports, err := b.Service.WorkflowLogs(ctx, id, limit)
+	logs := make([]admin.WorkflowLog, 0, len(reports))
+	for _, report := range reports {
+		entry := admin.WorkflowLog{Account: report.Account, Completed: report.Completed,
+			Halted: report.Halted, Error: report.Error}
+		if report.Last != nil {
+			entry.Last = report.Last.UTC().Format("2006-01-02 15:04:05 MST")
+		}
+		logs = append(logs, entry)
+	}
+	return logs, err
+}
+
+func (b *adminBackend) OrphanWorkflows(ctx context.Context) ([]admin.WorkflowOrphan, error) {
+	reports, err := b.WorkflowStatus(ctx, "")
+	var orphans []admin.WorkflowOrphan
+	for _, report := range reports {
+		if report.Configured || report.State == "" || report.State == workflow.StateRemoved {
+			continue
+		}
+		orphans = append(orphans, admin.WorkflowOrphan{
+			Account: report.Account, State: report.State, Code: report.Code,
+		})
+	}
+	return orphans, err
 }
 
 func (b *adminBackend) Code(err error) string {

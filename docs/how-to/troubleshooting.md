@@ -8,6 +8,9 @@ issue. Stop the daemon before running another CLI process on the same volume.
 | Symptom/code | Action |
 | --- | --- |
 | `config_invalid_json` | Use JSON, remove unknown fields and trailing values; compare the reference example. |
+| `metrics_listener_public` / `metrics_token_invalid` | Metrics need a loopback `listen` or a mounted `metrics_token_file`; the token file is only legal with `metrics: true`. |
+| `metrics_unavailable` | The configured metrics token file is unreadable or empty at request time. The endpoint fails closed while backups continue. |
+| `retry_max_attempts_invalid` / `retry_max_delay_invalid` | The per-account `retry` block is outside 1..10 attempts or 1s..5m. Retry tuning is bounded by code and never re-enables an uncertain write. |
 | `source_scope_required` | Select explicit album IDs, or deliberately enable library mode; these scopes cannot be combined. |
 | `secret_unreadable` | Check the exact mount path and UID 10001 file readability. Recreate after atomic credential replacement. |
 | `authentication_required` | Renew the same identity's credential; preserve the queue and account binding. |
@@ -21,9 +24,17 @@ issue. Stop the daemon before running another CLI process on the same volume.
 | `membership_guard` | Verify source scope/counts and snapshots. Empty or excessive removals are blocked; there is no guard override. |
 | `invalid_event` | Check UUIDv4, native type/trigger, top-level fields and 64 KiB body limit; see the event contract. |
 | `webhook_unauthorized` | Check the configured account ID and bearer header against the mounted shared secret. |
-| `webhook_unavailable` | Check the secret path/readability, minimum 32 trimmed bytes and maximum 4 KiB file size. |
+| `webhook_unavailable` | Check the secret path/readability, minimum 32 trimmed bytes and maximum 4 KiB file size, or configure a managed Workflow for the account. |
+| `workflow_version_unsupported` / `workflow_permission_missing` / `workflow_trigger_unsupported` | Managed Workflow capability notice, not a media failure. Polling continues. Fix the separate key's Workflow scopes or use a v3.x server, then run `workflow register --apply --force`. |
+| `workflow_unconfirmed` | A create or update may have committed. The next cycle reconciles by reading; never delete or recreate the Remote Workflow manually. |
+| `workflow_not_owned` / `workflow_ambiguous` | The persisted UUID no longer matches this service's marker, or more than one exact match exists. Nothing is mutated. Inspect Immich, keep unrelated workflows, and resolve duplicates before re-applying. |
+| `workflow_cleanup_failed` | Best-effort removal of a disabled or removed account's owned Workflow failed. Re-add the account with its mounted Workflow key, keep `managed_workflow: false`, and run `workflow remove --apply`. |
+| `workflow_secret_unavailable` | The generated secret file is missing or invalid; apply regenerates it with mode `0600`. |
 | `source_changed` | Source content evidence (SHA-1, size, or filesystem modification time) no longer agrees with the recorded original. Preserve confirmed/uncertain mappings; retry does not clear this conflict. A metadata-only Immich edit does not trigger it. |
 | `deletion_guard` | The pending pass exceeds 500 assets or 10% of the mapped library, so nothing was trashed. Inspect `deletions plan`; restore Immich assets or accept a smaller trash before retrying. Disable propagation to withdraw all pending intents. |
+| `pair_incomplete` | `live_photo_mode: original_pair` is on but a still's hidden MOV companion is missing, trashed, offline or excluded by a filter. The still is still backed up and no full Live Photo claim is made. Run `sync once --json` and inspect `exclusions`/`pairs_incomplete`; restoring the companion in Immich, relaxing the blocking filter or switching to `still_only` clears the report. Retry re-evaluates incomplete pairs without re-uploading anything. |
+| `shared_target_conflict` | Two local accounts resolve to the same Amazon identity and record contradictory favorite wishes for one shared node. Neither account writes that node until one source wish changes or the account is disabled; no media is re-uploaded. |
+| `favorite_unconfirmed` | The Amazon payload contained a `settings` object without an explicit `favorite` value, or a favorite mutation could not be verified by re-read. A payload with no `settings` object at all is a proven false and is not this error. No media is re-uploaded; the node stays uncertain and retries only after a fresh read. |
 | Deletion trash failure | The asset stays `deletion_pending` with a finite error and retries with backoff. The Amazon node was not confirmed trashed; inspect credentials, ownership and connectivity. |
 | Local storage/lock failure | Stop the competing writer, fix volume ownership/capacity, and retry. Never remove a live process's lock. |
 

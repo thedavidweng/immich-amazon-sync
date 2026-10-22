@@ -31,9 +31,17 @@ compute actual content MD5 and size. A byte-SHA1 mismatch with known provenance
 must still fail. Unknown original size is `-1`; absent MIME remains empty and
 the media kind remains authoritative.
 
+`originalPath` is read as a transient field. It is never persisted in the asset
+metadata, never logged and only used to resolve one approved read-only mount;
+callers re-read it per transfer instead of trusting a stored copy.
+
 Hidden, locked, trashed, offline, AUDIO and OTHER entries remain in discovery
 pages with finite `ExcludedReason` values for callers to skip. Archive remains
 eligible. `LivePhotoVideo` describes a hidden VIDEO only, never the still image
-which references a companion. Downloading the original still preserves embedded
-Android motion data but does not guarantee preservation of a separate Apple MOV
-or Amazon Live Photo playback. No pairing or transcoding is performed.
+which references a companion; `LivePhotoID` is that still's `livePhotoVideoId`
+link, and it is never set on other media kinds. Downloading the original still
+preserves embedded Android motion data but does not guarantee preservation of a
+separate Apple MOV or Amazon Live Photo playback. The adapter never pairs or
+transcodes; following the companion link is the caller's explicit policy. A
+malformed or self-referential link is a protocol error, while a link reported on
+non-image media is ignored.

@@ -1,6 +1,6 @@
 # 0005: Durable event hints and bounded owned membership
 
-Status: accepted. Date: 2026-10-20.
+Status: accepted. Date: 2026-10-20. Amended by ADR 0008 for album scope modes.
 
 Accept compact asset-ID hints and native Immich `AssetV1` Workflow envelopes on
 `POST /events/{account}`. Use a separate mounted bearer secret reread per request,

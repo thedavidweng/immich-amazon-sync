@@ -7,11 +7,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/thedavidweng/immich-amazon-sync/internal/config"
+	"github.com/thedavidweng/immich-amazon-sync/internal/filter"
 	"github.com/thedavidweng/immich-amazon-sync/internal/service"
+	"github.com/thedavidweng/immich-amazon-sync/internal/syncer"
 )
 
 type failure struct {
@@ -150,6 +155,25 @@ func Execute(ctx context.Context, args []string, out, errOut io.Writer, version 
 		parent.AddCommand(&cobra.Command{Use: child, Short: name + " " + child, Args: cobra.NoArgs, RunE: run})
 		root.AddCommand(parent)
 	}
+	root.AddCommand(&cobra.Command{
+		Use: "status", Short: "Show durable status without contacting either remote", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := load()
+			if err != nil {
+				return operational(err)
+			}
+			runtime, err := service.OpenReadOnly(cfg, io.Discard)
+			if err != nil {
+				return operational(err)
+			}
+			report, reportErr := runtime.StatusReport(cmd.Context(), "")
+			closeErr := runtime.Close()
+			if err := printReport(out, report, asJSON); err != nil {
+				return err
+			}
+			return operational(errors.Join(reportErr, closeErr))
+		},
+	})
 	deletions := &cobra.Command{Use: "deletions", RunE: func(*cobra.Command, []string) error { return usage }}
 	deletions.AddCommand(&cobra.Command{
 		Use: "plan", Short: "Show the pending deletion manifest without changing anything", Args: cobra.NoArgs,
@@ -171,6 +195,17 @@ func Execute(ctx context.Context, args []string, out, errOut io.Writer, version 
 		},
 	})
 	root.AddCommand(deletions)
+	root.AddCommand(&cobra.Command{
+		Use: "filters", Short: "Show the effective eligibility policy for configured accounts", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := load()
+			if err != nil {
+				return operational(err)
+			}
+			return printFilters(cmd.OutOrStdout(), cfg, asJSON)
+		},
+	})
+	addWorkflowCommands(root, load, out, func() string { return accountID }, func() bool { return asJSON })
 	if err := root.ExecuteContext(ctx); err != nil {
 		if errors.Is(err, versionPrinted) {
 			return 0
@@ -202,10 +237,153 @@ func printReport(out io.Writer, report service.Report, asJSON bool) error {
 		return outputError(json.NewEncoder(out).Encode(report))
 	}
 	for _, account := range report.Accounts {
-		if _, err := fmt.Fprintf(out, "%s %s confirmed=%d existing=%d deleted=%d deletion_pending=%d pending=%d failed=%d unconfirmed=%d\n",
-			account.Account, account.Code, account.Status.Confirmed, account.Status.Existing,
+		excluded := 0
+		for _, count := range account.Status.Exclusions {
+			excluded += count
+		}
+		if _, err := fmt.Fprintf(out, "%s %s album_sync_mode=%s live_photo_mode=%s pairs_complete=%d pairs_incomplete=%d confirmed=%d existing=%d deleted=%d deletion_pending=%d pending=%d failed=%d unconfirmed=%d deferred=%d albums_active=%d albums_inaccessible=%d excluded=%d favorites_mode=%s favorites_authority=%s favorites_desired=%d favorites_observed=%d favorites_applied=%d favorites_preserved=%d favorites_pending=%d favorites_failed=%d favorites_uncertain=%d favorites_unknown=%d favorites_conflict=%d",
+			account.Account, account.Code, account.Status.AlbumSyncMode,
+			account.Status.LivePhotoMode, account.Status.PairsComplete, account.Status.PairsIncomplete,
+			account.Status.Confirmed, account.Status.Existing,
 			account.Status.Deleted, account.Status.DeletePending, account.Status.Pending,
-			account.Status.Failed, account.Status.Unconfirmed); err != nil {
+			account.Status.Failed, account.Status.Unconfirmed, account.Status.Deferred,
+			account.Status.AlbumsActive, account.Status.AlbumsInaccessible, excluded,
+			account.Status.FavoritesMode, account.Status.FavoritesAuthority, account.Status.FavoritesDesired,
+			account.Status.FavoritesObserved, account.Status.FavoritesApplied, account.Status.FavoritesPreserved,
+			account.Status.FavoritesPending, account.Status.FavoritesFailed, account.Status.FavoritesUncertain,
+			account.Status.FavoritesUnknown, account.Status.FavoritesConflict); err != nil {
+			return outputError(err)
+		}
+		if window := account.Status.TransferWindow; window != nil {
+			state := "open"
+			if !window.Open {
+				state = "closed"
+			}
+			if _, err := fmt.Fprintf(out, " window=%s %s-%s %s", window.Timezone, window.Start, window.End, state); err != nil {
+				return outputError(err)
+			}
+			if window.NextOpening != nil {
+				if _, err := fmt.Fprintf(out, " next_opening=%s", window.NextOpening.UTC().Format(time.RFC3339)); err != nil {
+					return outputError(err)
+				}
+			}
+		}
+		if account.Status.DeferralReason != "" {
+			if _, err := fmt.Fprintf(out, " deferral_reason=%s", account.Status.DeferralReason); err != nil {
+				return outputError(err)
+			}
+		}
+		if account.Status.NextAttempt != nil {
+			if _, err := fmt.Fprintf(out, " next_attempt=%s", account.Status.NextAttempt.UTC().Format(time.RFC3339)); err != nil {
+				return outputError(err)
+			}
+		}
+		if _, err := fmt.Fprintln(out); err != nil {
+			return outputError(err)
+		}
+		if _, err := fmt.Fprintf(out, "  albums active=%d pending=%d failed=%d unconfirmed=%d inaccessible=%d associations pending=%d failed=%d unconfirmed=%d events pending=%d failed=%d scanning=%d\n",
+			account.Status.AlbumsActive, account.Status.AlbumsPending, account.Status.AlbumsFailed,
+			account.Status.AlbumsUnconfirmed, account.Status.AlbumsInaccessible,
+			account.Status.AssociationsPending, account.Status.AssociationsFailed,
+			account.Status.AssociationsUnconfirmed, account.Status.EventsPending,
+			account.Status.EventsFailed, account.Status.Scanning); err != nil {
+			return outputError(err)
+		}
+		if _, err := fmt.Fprintf(out, "  retry max_attempts=%d max_delay_ms=%d\n",
+			account.Status.MaxAttempts, account.Status.RetryMaxDelayMS); err != nil {
+			return outputError(err)
+		}
+		if _, err := fmt.Fprintf(out, "  direct reads=%d bytes=%d api_bytes=%d\n",
+			account.Status.Direct.Reads, account.Status.Direct.BytesAvoided, account.Status.Direct.APIBytes); err != nil {
+			return outputError(err)
+		}
+		if err := printCounts(out, "  exclusion", account.Status.Exclusions); err != nil {
+			return outputError(err)
+		}
+		if err := printCounts(out, "  error", account.Status.Errors); err != nil {
+			return outputError(err)
+		}
+		if err := printCounts(out, "  direct_fallback", account.Status.Direct.Fallbacks); err != nil {
+			return outputError(err)
+		}
+		if err := printCounts(out, "  direct_failure", account.Status.Direct.Failures); err != nil {
+			return outputError(err)
+		}
+		if account.Status.Workflow != "" {
+			if _, err := fmt.Fprintf(out, "  workflow=%s code=%s\n", account.Status.Workflow, orNone(account.Status.WorkflowCode)); err != nil {
+				return outputError(err)
+			}
+		}
+		if err := printUsage(out, "usage", account.Status.Usage); err != nil {
+			return outputError(err)
+		}
+	}
+	return nil
+}
+
+// printCounts emits one deterministic line per nonzero finite code or reason.
+func printCounts(out io.Writer, prefix string, counts map[string]int) error {
+	keys := make([]string, 0, len(counts))
+	for key, count := range counts {
+		if count > 0 {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if _, err := fmt.Fprintf(out, "%s %s=%d\n", prefix, key, counts[key]); err != nil {
+			return outputError(err)
+		}
+	}
+	return nil
+}
+
+// printFilters exposes the effective rules without contacting either remote.
+func printFilters(out io.Writer, cfg config.Config, asJSON bool) error {
+	type entry struct {
+		Account       string        `json:"account"`
+		Filters       filter.Policy `json:"filters"`
+		LivePhotoMode string        `json:"live_photo_mode"`
+	}
+	entries := make([]entry, 0, len(cfg.Accounts))
+	for _, account := range cfg.Accounts {
+		entries = append(entries, entry{Account: account.ID, Filters: account.Policy(), LivePhotoMode: string(account.PairMode())})
+	}
+	if asJSON {
+		return outputError(json.NewEncoder(out).Encode(map[string]any{"accounts": entries}))
+	}
+	for _, item := range entries {
+		tags := "-"
+		if len(item.Filters.ExcludedTags) > 0 {
+			tags = strings.Join(item.Filters.ExcludedTags, ",")
+		}
+		if _, err := fmt.Fprintf(out, "%s media_types=%s max_original_bytes=%d skip_raw=%t include_archived=%t excluded_tags=%s live_photo_mode=%s\n",
+			item.Account, strings.Join(item.Filters.MediaTypes, ","), item.Filters.MaxOriginalBytes,
+			item.Filters.SkipRAW, item.Filters.ArchivedIncluded(), tags, item.LivePhotoMode); err != nil {
+			return outputError(err)
+		}
+	}
+	return nil
+}
+
+func printUsage(out io.Writer, prefix string, usage syncer.UsageStatus) error {
+	calculated := "unknown"
+	if usage.LastCalculated != nil {
+		calculated = usage.LastCalculated.Format(time.RFC3339)
+	}
+	if _, err := fmt.Fprintf(out, "%s state=%s capacity=%s entitlement=%s last_calculated=%s error_code=%s video_threshold_bytes=%d video_threshold_exceeded=%t video_hold=%t quota_hold=%t\n",
+		prefix, usage.State, usage.Capacity, usage.Entitlement, calculated, usage.ErrorCode,
+		usage.VideoThresholdBytes, usage.VideoThresholdExceeded, usage.VideoHold, usage.QuotaHold); err != nil {
+		return outputError(err)
+	}
+	if usage.State == "unavailable" {
+		return nil
+	}
+	for _, name := range []string{"photo", "video", "other"} {
+		category := usage.Categories[name]
+		if _, err := fmt.Fprintf(out, "%s %s billable_bytes=%d billable_count=%d total_bytes=%d total_count=%d\n",
+			prefix, name, category.Billable.Bytes, category.Billable.Count,
+			category.Total.Bytes, category.Total.Count); err != nil {
 			return outputError(err)
 		}
 	}
@@ -238,8 +416,14 @@ func printDiagnosis(out io.Writer, report service.DoctorReport, asJSON bool) err
 		return outputError(err)
 	}
 	for _, account := range report.Accounts {
-		if _, err := fmt.Fprintf(out, "%s version=%s region=%s evidence=%s target_writes=%s original_read=%s\n",
-			account.Account, account.Version, account.Region, account.Evidence, account.TargetWrites, account.OriginalRead); err != nil {
+		if _, err := fmt.Fprintf(out, "%s version=%s region=%s evidence=%s target_writes=%s original_read=%s workflow=%s direct_roots=%d/%d capture_date=%s retry_max_attempts=%d retry_max_delay_ms=%d\n",
+			account.Account, account.Version, account.Region, account.Evidence, account.TargetWrites,
+			account.OriginalRead, orNone(account.Workflow),
+			account.DirectRoots.Available, account.DirectRoots.Configured,
+			account.CaptureDate, account.MaxAttempts, account.RetryDelayMS); err != nil {
+			return outputError(err)
+		}
+		if err := printUsage(out, "  usage", account.Usage); err != nil {
 			return outputError(err)
 		}
 		for _, check := range account.Checks {

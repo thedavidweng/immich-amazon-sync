@@ -66,6 +66,10 @@ func (e *Engine) validateScopes(ctx context.Context) error {
 	return nil
 }
 
+// configureRules activates exactly the scopes implied by the current mode.
+// discovered reports whether this cycle read the complete accessible album
+// listing. A bounded continuation keeps previously discovered rules active
+// instead of stopping an in-flight album scan.
 func (e *Engine) configureRules(ctx context.Context, restart bool) error {
 	tx, err := e.store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -81,18 +85,34 @@ func (e *Engine) configureRules(ctx context.Context, restart bool) error {
 	if _, err = tx.ExecContext(ctx, "UPDATE rules SET active=0 WHERE account_id=?", id); err != nil {
 		return err
 	}
-	albums := e.opts.AlbumIDs
 	if e.opts.Library {
-		albums = []string{""}
-	}
-	for _, album := range albums {
-		scope := "album:" + album
-		if e.opts.Library {
-			scope = "library"
+		if _, err = tx.ExecContext(ctx, `INSERT INTO rules(account_id,scope,album_id) VALUES(?,'library','')
+			ON CONFLICT(account_id,scope) DO UPDATE SET active=1`, id); err != nil {
+			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO rules(account_id,scope,album_id) VALUES(?,?,?)
-			ON CONFLICT(account_id,scope) DO UPDATE SET active=1`, id, scope, album)
-		if err != nil {
+	}
+	// Discovery, not an explicit rule upsert, is the authority for the latest
+	// complete accessible listing. In all_accessible mode a rule marked
+	// album_inaccessible stays stopped and reported until a later listing
+	// returns it, so an explicit album list cannot undo that evidence. An
+	// explicit mode has no discovery, so the operator's choice is tried again.
+	revive := 1
+	if e.opts.AlbumSyncMode == bridge.AlbumSyncAllAccessible {
+		revive = 0
+	}
+	for _, album := range e.opts.AlbumIDs {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO rules(account_id,scope,album_id,discovered) VALUES(?,?,?,1)
+			ON CONFLICT(account_id,scope) DO UPDATE SET
+			active=CASE WHEN ?=0 AND rules.error_code='album_inaccessible' THEN rules.active ELSE 1 END,
+			discovered=CASE WHEN ?=0 AND rules.error_code='album_inaccessible' THEN rules.discovered ELSE 1 END,
+			error_code=CASE WHEN ?=1 AND rules.error_code='album_inaccessible' THEN '' ELSE rules.error_code END`,
+			id, "album:"+album, album, revive, revive, revive); err != nil {
+			return err
+		}
+	}
+	if e.opts.AlbumSyncMode == bridge.AlbumSyncAllAccessible {
+		if _, err = tx.ExecContext(ctx, `UPDATE rules SET active=1
+			WHERE account_id=? AND origin='discovered' AND discovered=1`, id); err != nil {
 			return err
 		}
 	}
@@ -234,14 +254,42 @@ func (e *Engine) scanPage(ctx context.Context) (bool, error) {
 }
 
 func (e *Engine) discover(ctx context.Context, tx *sql.Tx, a bridge.Asset, metadata string) error {
-	var oldMetadata, digest, checksum, node, state, prior string
+	var oldMetadata, digest, checksum, node, state, prior, code, stage string
 	var size int64
-	err := tx.QueryRowContext(ctx, "SELECT metadata,md5,sha1,size,state,node_id,prior_state FROM assets WHERE account_id=? AND id=?",
-		e.opts.AccountID, a.ID).Scan(&oldMetadata, &digest, &checksum, &size, &state, &node, &prior)
+	var attempts int
+	favorite := -1
+	if a.Favorite != nil {
+		favorite = 0
+		if *a.Favorite {
+			favorite = 1
+		}
+	}
+	err := tx.QueryRowContext(ctx, "SELECT metadata,md5,sha1,size,state,node_id,prior_state,error_code,attempts,stage_name FROM assets WHERE account_id=? AND id=?",
+		e.opts.AccountID, a.ID).Scan(&oldMetadata, &digest, &checksum, &size, &state, &node, &prior, &code, &attempts, &stage)
+	// An opted-in source trash retires the relationship instead of reporting it
+	// incomplete; with propagation off the pair stays untouched.
+	retire := e.opts.Deletions && a.ExcludedReason == "trashed"
 	if errors.Is(err, sql.ErrNoRows) {
-		_, err = tx.ExecContext(ctx, "INSERT INTO assets(account_id,id,metadata) VALUES(?,?,?)", e.opts.AccountID, a.ID, metadata)
+		companion, err := e.companionIn(ctx, tx, a)
+		if err != nil {
+			return err
+		}
+		exclusion := e.exclusion(a, companion)
+		target := "pending"
+		if exclusion != "" {
+			target = "skipped"
+		}
+		_, err = tx.ExecContext(ctx, "INSERT INTO assets(account_id,id,metadata,state,exclusion,favorite) VALUES(?,?,?,?,?,?)",
+			e.opts.AccountID, a.ID, metadata, target, exclusion, favorite)
+		if err != nil {
+			return err
+		}
+		return e.discoverPair(ctx, tx, a, exclusion, retire)
+	}
+	if err != nil {
 		return err
 	}
+	companion, err := e.companionIn(ctx, tx, a)
 	if err != nil {
 		return err
 	}
@@ -283,19 +331,87 @@ func (e *Engine) discover(ctx context.Context, tx *sql.Tx, a bridge.Asset, metad
 			e.opts.AccountID, a.ID)
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE assets SET metadata=?,
-		state=CASE WHEN state='skipped' OR (md5='' AND metadata!=?) THEN 'pending' ELSE state END,
-		error_code=CASE WHEN state='skipped' OR error_code='source_changed' OR (md5='' AND metadata!=?) THEN '' ELSE error_code END,
-		attempts=CASE WHEN state='skipped' OR (md5='' AND metadata!=?) THEN 0 ELSE attempts END
-		WHERE account_id=? AND id=?`, metadata, metadata, metadata, metadata, e.opts.AccountID, a.ID)
-	return err
+	// Filters only manage unsettled work. A confirmed or Existing mapping is
+	// never downgraded, so a policy change cannot remove media or Membership.
+	protected := state == "confirmed" || state == "existing" || state == "running" ||
+		state == "unconfirmed" || state == "delete_pending" || state == "deleted"
+	exclusion, target := "", state
+	metadataChanged := false
+	if !protected {
+		exclusion = e.exclusion(a, companion)
+		metadataChanged = metadata != oldMetadata && digest == ""
+		switch {
+		case exclusion != "":
+			// A staged original is released by transfer's skip path, which owns
+			// the staging file. Marking it skipped here would orphan that file.
+			if stage == "" {
+				target = "skipped"
+			}
+		case state == "skipped" || metadataChanged:
+			target = "pending"
+		}
+	}
+	// A settled source clears the content conflict: the staged digest was never
+	// recorded, so agreeing evidence is simply current again. Filters otherwise
+	// own only unsettled work.
+	reset := code == "source_changed" || (!protected && (exclusion != "" || state == "skipped" || metadataChanged))
+	if reset {
+		code, attempts = "", 0
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE assets SET metadata=?,favorite=?,state=?,exclusion=?,error_code=?,attempts=?,
+		next_at=CASE WHEN ? THEN 0 ELSE next_at END WHERE account_id=? AND id=?`,
+		metadata, favorite, target, exclusion, code, attempts, reset, e.opts.AccountID, a.ID)
+	if err != nil {
+		return err
+	}
+	return e.discoverPair(ctx, tx, a, exclusion, retire)
+}
+
+// exclusion classifies an Asset for durable, non-destructive exclusion. Source
+// conditions win over policy rules so counts name the actual reason. A resolved
+// Live Photo companion treats its hidden visibility as the pair mechanism and is
+// exempt from the standalone media-type rule only.
+func (e *Engine) exclusion(a bridge.Asset, companion bool) string {
+	if companion {
+		if a.ExcludedReason != "" && a.ExcludedReason != "hidden" {
+			return sourceExclusion(a.ExcludedReason)
+		}
+		return e.companionExclusion(a)
+	}
+	if a.ExcludedReason != "" {
+		return sourceExclusion(a.ExcludedReason)
+	}
+	return e.opts.Filters.Exclude(a)
+}
+
+// companionIn reports whether this asset is the resolved companion of a still.
+func (e *Engine) companionIn(ctx context.Context, tx *sql.Tx, a bridge.Asset) (bool, error) {
+	if !e.pairsOn() || !a.LivePhotoVideo {
+		return false, nil
+	}
+	var count int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM live_pairs
+		WHERE account_id=? AND companion_id=?`,
+		e.opts.AccountID, a.ID).Scan(&count); err != nil {
+		return false, err
+	}
+	return count != 0, nil
+}
+
+func sourceExclusion(reason string) string {
+	switch reason {
+	case "hidden", "locked", "offline", "trashed", "unsupported_type",
+		"external_library_checksum", "unknown_checksum_provenance":
+		return reason
+	}
+	return "source_excluded"
 }
 
 func (e *Engine) scanError(ctx context.Context, r rule, err error) error {
 	code := errorCode(err)
 	_, dbErr := e.store.db.ExecContext(context.WithoutCancel(ctx), `UPDATE rules SET error_code=?,attempts=attempts+1,
 		next_at=? WHERE account_id=? AND scope=?`, code,
-		time.Now().Add(retryDelay(4, err)).UnixMilli(), e.opts.AccountID, r.scope)
+		e.opts.Now().Add(e.retryDelay(4, err)).UnixMilli(), e.opts.AccountID, r.scope)
 	if dbErr != nil {
 		return dbErr
 	}
@@ -310,7 +426,7 @@ func (e *Engine) finishScan(ctx context.Context) error {
 		return err
 	}
 	err = e.store.db.QueryRowContext(ctx, `SELECT count(*) FROM assets a WHERE account_id=?
-		AND (state NOT IN ('confirmed','existing','skipped','deleted') OR error_code='source_changed') AND `+eligibleSQL,
+		AND (state NOT IN ('confirmed','existing','skipped','deleted') OR error_code='source_changed') AND `+e.eligibleSQL(),
 		e.opts.AccountID).Scan(&outstanding)
 	if err != nil || unfinished != 0 || outstanding != 0 {
 		return err
@@ -321,10 +437,19 @@ func (e *Engine) finishScan(ctx context.Context) error {
 		e.opts.AccountID, e.opts.AccountID).Scan(&outstanding); err != nil || outstanding != 0 {
 		return err
 	}
-	if e.opts.MirrorAlbums {
+	if e.mirrorsAlbums() {
 		err = e.store.db.QueryRowContext(ctx, `SELECT count(*) FROM rules r LEFT JOIN albums a
 			ON a.account_id=r.account_id AND a.scope=r.scope WHERE r.account_id=? AND r.active=1 AND r.album_id!=''
+			AND r.error_code=''
 			AND (a.target_id IS NULL OR a.target_id='' OR a.complete_generation!=r.generation OR a.error_code!='')`,
+			e.opts.AccountID).Scan(&outstanding)
+		if err != nil || outstanding != 0 {
+			return err
+		}
+	}
+	if e.favoritesOn() {
+		err = e.store.db.QueryRowContext(ctx, `SELECT count(*) FROM favorites
+			WHERE account_id=? AND state IN ('pending','failed','uncertain') AND `+favoriteEligibleSQL,
 			e.opts.AccountID).Scan(&outstanding)
 		if err != nil || outstanding != 0 {
 			return err

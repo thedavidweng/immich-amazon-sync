@@ -7,6 +7,7 @@
   "max_staging_files": 2,
   "bytes_per_second": 0,
   "log_level": "info",
+  "metrics": false,
   "accounts": [
     {
       "id": "home",
@@ -16,10 +17,26 @@
       "amazon_cookie_file": "/run/secrets/amazon_cookie",
       "album_ids": ["11111111-1111-4111-8111-111111111111"],
       "library": false,
-      "include_videos": false,
-      "mirror_albums": false,
+      "filters": {
+        "media_types": ["image"],
+        "max_original_bytes": 0,
+        "skip_raw": false,
+        "include_archived": true,
+        "excluded_tags": []
+      },
+      "video_usage_threshold_bytes": 0,
+      "hold_videos_at_threshold": false,
+      "album_sync_mode": "off",
       "deletions": false,
-      "deletions_confirmation": ""
+      "deletions_confirmation": "",
+      "favorites": "off",
+      "live_photo_mode": "still_only",
+      "favorites_takeover": false,
+      "managed_workflow": false,
+      "immich_workflow_api_key_file": "/run/secrets/immich_workflow_key",
+      "workflow_callback_url": "https://sync.example.org/events/home",
+      "workflow_secret_file": "/run/secrets/workflow_secret",
+      "retry": {"max_attempts": 5, "max_delay": "30s"}
     }
   ]
 }

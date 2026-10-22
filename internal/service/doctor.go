@@ -12,7 +12,9 @@ import (
 	"github.com/thedavidweng/immich-amazon-sync/internal/amazon"
 	"github.com/thedavidweng/immich-amazon-sync/internal/bridge"
 	"github.com/thedavidweng/immich-amazon-sync/internal/config"
+	"github.com/thedavidweng/immich-amazon-sync/internal/direct"
 	"github.com/thedavidweng/immich-amazon-sync/internal/immich"
+	"github.com/thedavidweng/immich-amazon-sync/internal/syncer"
 )
 
 type Check struct {
@@ -21,13 +23,26 @@ type Check struct {
 }
 
 type AccountDiagnosis struct {
-	Account      string  `json:"account"`
-	Version      string  `json:"version,omitempty"`
-	Region       string  `json:"region,omitempty"`
-	Evidence     string  `json:"evidence,omitempty"`
-	TargetWrites string  `json:"target_writes"`
-	OriginalRead string  `json:"original_read"`
-	Checks       []Check `json:"checks"`
+	Account      string             `json:"account"`
+	Version      string             `json:"version,omitempty"`
+	Region       string             `json:"region,omitempty"`
+	Evidence     string             `json:"evidence,omitempty"`
+	TargetWrites string             `json:"target_writes"`
+	OriginalRead string             `json:"original_read"`
+	CaptureDate  string             `json:"capture_date"`
+	Workflow     string             `json:"workflow,omitempty"`
+	DirectRoots  DirectRoots        `json:"direct_roots"`
+	Usage        syncer.UsageStatus `json:"usage"`
+	MaxAttempts  int                `json:"max_attempts"`
+	RetryDelayMS int64              `json:"retry_max_delay_ms"`
+	Checks       []Check            `json:"checks"`
+}
+
+// DirectRoots counts approved read-only mappings and the subset that is
+// currently openable. Root identities are never reported.
+type DirectRoots struct {
+	Configured int `json:"configured"`
+	Available  int `json:"available"`
 }
 
 type DoctorReport struct {
@@ -71,6 +86,8 @@ func Diagnose(ctx context.Context, cfg config.Config, id string) (DoctorReport, 
 func diagnoseAccount(ctx context.Context, account config.Account) (AccountDiagnosis, error) {
 	report := AccountDiagnosis{
 		Account: AccountHash(account.ID), TargetWrites: "untested", OriginalRead: "untested",
+		CaptureDate: amazon.CaptureDateCapability,
+		MaxAttempts: account.RetryMaxAttempts(), RetryDelayMS: account.RetryMaxDelay().Milliseconds(),
 		Checks: []Check{},
 	}
 	var errs []error
@@ -78,6 +95,11 @@ func diagnoseAccount(ctx context.Context, account config.Account) (AccountDiagno
 		report.Checks = append(report.Checks, Check{Name: name, Code: Code(err)})
 		errs = append(errs, err)
 	}
+	roots, rootsErr := direct.New(account.Roots())
+	if rootsErr == nil {
+		report.DirectRoots.Configured, report.DirectRoots.Available = roots.Check()
+	}
+	record("direct_roots", rootsErr)
 	secrets, err := account.Secrets()
 	record("credentials", err)
 	if err != nil {
@@ -131,9 +153,42 @@ func diagnoseAccount(ctx context.Context, account config.Account) (AccountDiagno
 			capabilities, err = target.Probe(ctx)
 			if err == nil {
 				report.Region, report.Evidence = capabilities.Region, capabilities.Evidence
+				if capabilities.CaptureDate != "" {
+					report.CaptureDate = capabilities.CaptureDate
+				}
 			}
 		}
 		record("amazon_read", err)
+		if err == nil {
+			var usage bridge.Usage
+			usage, err = target.Usage(ctx)
+			report.Usage = syncer.DescribeUsage(usage, err, account.VideoUsageThresholdBytes,
+				account.HoldVideosAtThreshold, time.Now())
+			record("amazon_usage", err)
+		} else {
+			report.Usage = syncer.DescribeUsage(bridge.Usage{}, err, account.VideoUsageThresholdBytes,
+				account.HoldVideosAtThreshold, time.Now())
+		}
+	}
+	if account.WorkflowAPIKeyFile != "" {
+		key, err := account.WorkflowKey()
+		record("workflow_credentials", err)
+		if err == nil {
+			client, clientErr := immich.NewWorkflows(account.ImmichURL, key)
+			record("workflow_configuration", clientErr)
+			if clientErr == nil {
+				capability, capabilityErr := client.Capability(ctx)
+				record("workflow_capability", capabilityErr)
+				switch {
+				case capabilityErr != nil:
+					report.Workflow = Code(capabilityErr)
+				case capability.Supported:
+					report.Workflow = "managed"
+				default:
+					report.Workflow = capability.Reason
+				}
+			}
+		}
 	}
 	return report, errors.Join(errs...)
 }

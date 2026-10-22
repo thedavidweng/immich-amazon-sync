@@ -8,10 +8,17 @@ immich-amazon-sync [--config PATH] [--account ID] [--json] COMMAND
 | --- | --- |
 | `serve` | Run the local service and scheduled backups; stop with SIGTERM. |
 | `serve --setup --config PATH` | Explicit first UI setup with a mounted admin secret and a new writable config path. |
-| `sync once` | Start/resume a bounded explicit full-scan pass; can write media, managed membership and -- only when explicitly enabled -- Amazon trashing. |
+| `status` | Read-only durable status for the selected accounts from the local ledger. No remote calls, no sync pass, no state mutation: it takes no writer lock and never migrates, cleans staging or creates an absent ledger, so it can run beside `serve`. |
+| `sync once` | Start/resume a bounded explicit full-scan pass; can write media, managed membership, add-only favorite stars and -- only when explicitly enabled -- Amazon trashing. |
 | `deletions plan` | Read-only manifest of assets pending deletion propagation: count, synced total, blocked reason and asset IDs. Changes nothing. |
+| `filters` | Print each account's effective eligibility policy (media types, maximum original size, RAW/archive rules, excluded tag IDs and Live Photo mode) from configuration only. Never contacts either remote or opens local state. |
 | `albums list` | Read accessible source album IDs, names and counts. |
-| `doctor` | Read-only remote diagnostics and local storage checks; no upload or album creation. |
+| `workflow status` | Read-only persisted managed-Workflow state, contract and finite code; no remote calls. |
+| `workflow register` | Read-only capability, ownership and action plan for the owned Workflow. |
+| `workflow register --apply` | Create/adopt/verify/update only the persisted owned Workflow; `--force` re-probes after a polling notice. |
+| `workflow remove --apply` | Delete only the owned Workflow when `managed_workflow` is disabled. |
+| `workflow logs` | Read-only aggregate Workflow run counts and latest run time; no IDs, URLs or payloads. |
+| `doctor` | Read-only remote diagnostics and local storage checks; reports `direct_roots=<available>/<configured>` without printing a path; no upload or album creation. |
 | `version` | Print the build version without credentials or config. |
 | `--help`, `doctor --help`, `--version` | Work without configuration or network access. |
 
@@ -33,10 +40,38 @@ The command's `--help` is authoritative for additional management operations.
 Every process accessing a state volume must respect the single-writer boundary.
 Stop `serve` before running a separate stateful CLI invocation.
 
-Human-readable account lines report `confirmed`, `existing`, `deleted`,
-`deletion_pending`, `pending`, `failed` and `unconfirmed` media counts. `existing` means a verified copy was reused from
+Human-readable account lines report `album_sync_mode`, `live_photo_mode`,
+`pairs_complete`, `pairs_incomplete`, `confirmed`, `existing`,
+`deleted`, `deletion_pending`, `pending`, `failed`, `unconfirmed`, `deferred`,
+`albums_active`, `albums_inaccessible` and total `excluded` media counts, followed
+by album/association/event backlog counts, the effective retry bounds
+(`retry max_attempts=... max_delay_ms=...`), process-local direct/API byte reads
+and one line per nonzero exclusion, error, fallback and failure code; then the
+`favorites_mode` setting, the `favorites_authority` explanation, and the
+`favorites_desired`, `favorites_observed`, `favorites_applied`,
+`favorites_preserved`, `favorites_pending`, `favorites_failed`,
+`favorites_uncertain`, `favorites_unknown` and `favorites_conflict` counters. `existing` means a verified copy was reused from
 elsewhere in the same Amazon account; it is backed up but not at the configured
-target parent. `--json` carries the full status object.
+target parent. `deferred` means new upload dispatch waits for a transfer window;
+it is not a failure. When a window is configured the line also reports its
+timezone, bounds, open/closed state, `next_opening`, `deferral_reason` and the
+next scheduled wake. The line also prints observed usage state,
+`capacity=unknown`, `entitlement=unknown`, the provider calculation time and
+photo/video/other billable and total bytes. `--json` carries the full status
+object, including per-reason `exclusions`, the favorites counters, the Live Photo
+pair counters, `usage` and the finite `capture_date` capability; see the
+[status reference](status.md).
+
+`doctor` adds a live `amazon_usage` read and prints the same usage block. It
+labels a missing provider timestamp as `stale` and a failed read as
+`unavailable`; it never substitutes zero or an inferred subscription cap.
+`doctor` reports the same `capture_date` capability per account as
+`capture_date=metadata_not_supported` or
+`capture_date=supported`; it is a static property of the pinned SDK, not a write
+test. Original bytes are the backup contract and no quality mode is offered.
+With `live_photo_mode: original_pair`, an incomplete pair is counted in `errors`
+as `pair_incomplete`, so `sync once` reports a non-zero result while the still
+itself may already be confirmed.
 
 For each selected account, one `sync once` invocation attempts at most 64 distinct
 media jobs and advances full discovery by at most eight page steps; an already
@@ -64,6 +99,8 @@ Compose config bind is read-only. See [local management](../how-to/local-managem
 | --- | --- |
 | `GET /healthz` | Process is running. |
 | `GET /readyz` | Core local services can work. Remote credential/network failures belong in diagnostics. |
+| `GET /metrics` | Optional Prometheus text exposition; only with `metrics: true`, on a loopback listener or with a bearer token. `404` otherwise. |
+| `GET /status` | Optional JSON durable status under the same access policy; identical to `status --json`. |
 | `POST /events/{account}` | Independently bearer-authenticated durable asset hints; see [event HTTP reference](events.md). |
 
 Probes do not expose credentials or prove successful cloud transfer.
@@ -77,3 +114,10 @@ Optional HTML routes and form fields are documented in
 Event HTTP statuses are distinct from CLI exits: `invalid_event` maps to exit 2,
 `webhook_unauthorized` to 3, and `album_unconfirmed`, `membership_guard` and
 `webhook_unavailable` to 1 when reported through CLI diagnostics.
+
+Workflow commands never print the callback URL, bearer secret or workflow UUID.
+`workflow_not_configured`, `workflow_management_active` and
+`workflow_configuration_required` exit 2; `workflow_secret_unavailable` exits 3;
+`workflow_not_owned`, `workflow_ambiguous`, `workflow_unconfirmed`,
+`workflow_mismatch` and `workflow_cleanup_failed` exit 1. See
+[managed Workflow onboarding](../how-to/managed-workflows.md).

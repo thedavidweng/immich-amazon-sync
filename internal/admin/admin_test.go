@@ -2,6 +2,7 @@ package admin_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"io"
 	"net"
@@ -17,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thedavidweng/immich-amazon-sync/internal/bridge"
 	"github.com/thedavidweng/immich-amazon-sync/internal/config"
 	"github.com/thedavidweng/immich-amazon-sync/internal/service"
 )
@@ -187,7 +189,9 @@ func (d dashboard) accountForm(t *testing.T, csrf, id string) url.Values {
 	return url.Values{
 		"csrf": {csrf}, "id": {id}, "immich_url": {"http://127.0.0.1:1"},
 		"key_file": {key}, "cookie_file": {cookie}, "region": {"us"},
-		"album_ids": {"11111111-1111-4111-8111-111111111111"},
+		"album_ids":   {"11111111-1111-4111-8111-111111111111"},
+		"favorites":   {"off"},
+		"media_image": {"on"}, "include_archived": {"on"},
 	}
 }
 
@@ -447,12 +451,15 @@ func TestDashboardDoctorOnlyReadsRemoteStateAndReportsWritePermissionsUntested(t
 		if r.URL.Hostname() == "127.0.0.1" {
 			return original.RoundTrip(r)
 		}
-		if r.Method != "GET" || !strings.HasSuffix(r.URL.Path, "/nodes") || r.URL.Query().Get("filters") != "isRoot:true" {
+		body := `{"data":[{"id":"root","isRoot":true,"kind":"FOLDER","status":"AVAILABLE","ownerId":"owner"}],"count":1}`
+		if strings.HasSuffix(r.URL.Path, "/account/usage") {
+			body = `{"lastCalculated":"2026-10-20T08:30:00.000Z","photo":{"billable":{"bytes":42,"count":1},"total":{"bytes":42,"count":1}},"video":{"billable":{"bytes":7,"count":1},"total":{"bytes":7,"count":1}},"other":{"billable":{"bytes":0,"count":0},"total":{"bytes":0,"count":0}}}`
+		} else if r.Method != "GET" || !strings.HasSuffix(r.URL.Path, "/nodes") || r.URL.Query().Get("filters") != "isRoot:true" {
 			t.Errorf("doctor mutated target: %s %s", r.Method, r.URL.Path)
 		}
 		targetReads.Add(1)
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Request: r,
-			Body: io.NopCloser(strings.NewReader(`{"data":[{"id":"root","isRoot":true,"kind":"FOLDER","status":"AVAILABLE","ownerId":"owner"}],"count":1}`))}, nil
+			Body: io.NopCloser(strings.NewReader(body))}, nil
 	})
 	defer func() { http.DefaultTransport = original }()
 	form := d.accountForm(t, csrf, "family")
@@ -461,7 +468,8 @@ func TestDashboardDoctorOnlyReadsRemoteStateAndReportsWritePermissionsUntested(t
 		t.Fatalf("save: %d %s", status, body)
 	}
 	status, body := d.post(t, "/accounts/family/doctor", url.Values{"csrf": {csrf}})
-	if status != 200 || targetReads.Load() != 1 || !strings.Contains(body, "untested") || !strings.Contains(body, "3.3.4") {
+	if status != 200 || targetReads.Load() != 2 || !strings.Contains(body, "untested") || !strings.Contains(body, "3.3.4") ||
+		!strings.Contains(body, "usage_capacity") || !strings.Contains(body, "unknown") || !strings.Contains(body, "usage_photo_bytes") {
 		t.Fatalf("doctor: %d %s (target reads=%d)", status, body, targetReads.Load())
 	}
 	for _, secret := range []string{"private-source-key", "session-id=test", password, source.URL} {
@@ -655,4 +663,216 @@ func TestDashboardShowsAccountIsolatedBacklogsAndReadyWork(t *testing.T) {
 	}
 	check(body, "first", "1", "none ready to run")
 	check(body, "second", "0", "none ready to run")
+}
+
+func TestFavoritesModeIsEditableAndPersisted(t *testing.T) {
+	d := openDashboard(t)
+	csrf := d.login(t)
+	form := d.accountForm(t, csrf, "family")
+	form.Set("favorites", "add_only")
+	if status, body := d.post(t, "/accounts/save", form); status != http.StatusOK {
+		t.Fatalf("save add_only: %d %s", status, body)
+	}
+	cfg, err := config.Load(d.path)
+	if err != nil || len(cfg.Accounts) != 1 || cfg.Accounts[0].Favorites != "add_only" {
+		t.Fatalf("favorites setting not persisted: %+v %v", cfg, err)
+	}
+	_, edit := d.get(t, "/accounts/family/edit")
+	if !strings.Contains(edit, `name="favorites"`) {
+		t.Fatal("favorites setting is not exposed in the account editor")
+	}
+	form.Set("original_id", "family")
+	form.Set("favorites", "authoritative")
+	if status, body := d.post(t, "/accounts/save", form); status != http.StatusBadRequest || !strings.Contains(body, "favorites_invalid") {
+		t.Fatalf("unknown favorites mode: %d %s", status, body)
+	}
+
+	// Mirror with a recorded takeover is the only authority that clears manual
+	// stars; the editor exposes both controls.
+	form.Set("favorites", "mirror")
+	form.Set("favorites_takeover", "on")
+	if status, body := d.post(t, "/accounts/save", form); status != http.StatusOK {
+		t.Fatalf("save mirror: %d %s", status, body)
+	}
+	cfg, err = config.Load(d.path)
+	if err != nil || cfg.Accounts[0].Favorites != "mirror" || !cfg.Accounts[0].FavoritesTakeover {
+		t.Fatalf("mirror authority not persisted: %+v %v", cfg, err)
+	}
+	_, edit = d.get(t, "/accounts/family/edit")
+	for _, want := range []string{`value="mirror"`, `name="favorites_takeover" checked`} {
+		if !strings.Contains(edit, want) {
+			t.Fatalf("editor lacks %q", want)
+		}
+	}
+	// Takeover cannot exist without mirror.
+	form.Set("original_id", "family")
+	form.Del("favorites")
+	form.Set("favorites", "add_only")
+	if status, body := d.post(t, "/accounts/save", form); status != http.StatusBadRequest ||
+		!strings.Contains(body, "favorites_takeover_requires_mirror") {
+		t.Fatalf("takeover without mirror: %d %s", status, body)
+	}
+}
+
+func TestAdminFilterPolicyIsValidatedPersistedAndRendered(t *testing.T) {
+	d := openDashboard(t)
+	csrf := d.login(t)
+	const tag = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	form := d.accountForm(t, csrf, "family")
+	form.Set("media_video", "on")
+	form.Set("max_original_bytes", "100")
+	form.Set("skip_raw", "on")
+	form.Del("include_archived")
+	form.Set("excluded_tags", tag)
+	if status, body := d.post(t, "/accounts/save", form); status != http.StatusOK {
+		t.Fatalf("save filters: %d %s", status, body)
+	}
+	cfg, err := config.Load(d.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := cfg.Accounts[0].Policy()
+	if len(policy.MediaTypes) != 2 || policy.MaxOriginalBytes != 100 || !policy.SkipRAW ||
+		policy.ArchivedIncluded() || len(policy.ExcludedTags) != 1 || policy.ExcludedTags[0] != tag {
+		t.Fatalf("filters were not persisted: %+v", policy)
+	}
+	_, edit := d.get(t, "/accounts/family/edit")
+	for _, want := range []string{`name="media_image" checked`, `name="media_video" checked`, `name="skip_raw" checked`,
+		`name="excluded_tags"`, tag, `value="100"`} {
+		if !strings.Contains(edit, want) {
+			t.Errorf("editor missing %q", want)
+		}
+	}
+	if strings.Contains(edit, `name="include_archived" checked`) {
+		t.Error("explicit archive exclusion rendered as included")
+	}
+
+	previous, err := os.ReadFile(d.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := d.accountForm(t, csrf, "family")
+	bad.Set("max_original_bytes", "-1")
+	if status, body := d.post(t, "/accounts/save", bad); status != http.StatusBadRequest ||
+		!strings.Contains(body, "filter_max_original_bytes_invalid") {
+		t.Fatalf("invalid size accepted: %d %s", status, body)
+	}
+	current, err := os.ReadFile(d.path)
+	if err != nil || !bytes.Equal(current, previous) {
+		t.Fatal("rejected filter edit changed persisted configuration")
+	}
+	noMedia := d.accountForm(t, csrf, "family")
+	noMedia.Del("media_image")
+	noMedia.Del("media_video")
+	if status, body := d.post(t, "/accounts/save", noMedia); status != http.StatusBadRequest ||
+		!strings.Contains(body, "filter_media_type_invalid") {
+		t.Fatalf("empty media selection accepted: %d %s", status, body)
+	}
+}
+
+func TestTransferWindowIsEditableAndShownWithoutSecrets(t *testing.T) {
+	d := openDashboard(t)
+	csrf := d.login(t)
+	form := d.accountForm(t, csrf, "windowed")
+	form.Set("transfer_timezone", "America/New_York")
+	form.Set("transfer_window_start", "23:00")
+	form.Set("transfer_window_end", "06:00")
+	status, body := d.post(t, "/accounts/save", form)
+	if status != 200 {
+		t.Fatalf("save window: %d %s", status, body)
+	}
+	cfg, err := config.Load(d.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	window := cfg.Accounts[0].TransferWindow
+	if window == nil || window.Timezone != "America/New_York" || window.Start != "23:00" || window.End != "06:00" {
+		t.Fatalf("window not persisted: %+v", window)
+	}
+	_, overview := d.get(t, "/")
+	for _, want := range []string{"Transfer window: America/New_York 23:00–06:00", "Deferred", "Transfer rate cap"} {
+		if !strings.Contains(overview, want) {
+			t.Fatalf("overview missing %q", want)
+		}
+	}
+	_, edit := d.get(t, "/accounts/windowed/edit")
+	for _, want := range []string{`value="America/New_York"`, `value="23:00"`, `value="06:00"`} {
+		if !strings.Contains(edit, want) {
+			t.Fatalf("editor missing %q", want)
+		}
+	}
+	form.Set("original_id", "windowed")
+	form.Set("transfer_window_end", "23:00")
+	status, body = d.post(t, "/accounts/save", form)
+	if status != http.StatusBadRequest || !strings.Contains(body, "transfer_window_bounds_invalid") {
+		t.Fatalf("equal window bounds accepted: %d %s", status, body)
+	}
+}
+
+func TestEditingAnAccountPreservesItsApprovedReadOnlyRoots(t *testing.T) {
+	d := openDashboard(t)
+	csrf := d.login(t)
+	if status, body := d.post(t, "/accounts/save", d.accountForm(t, csrf, "family")); status != 200 {
+		t.Fatalf("first save: %d %s", status, body)
+	}
+	cfg, err := config.Load(d.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approved := []config.DirectRoot{{ImmichPath: "/photos", HostPath: "/originals"}}
+	cfg.Accounts[0].DirectRoots = approved
+	if err := d.run.Reload(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Save(d.path); err != nil {
+		t.Fatal(err)
+	}
+	form := d.accountForm(t, csrf, "family")
+	form.Set("original_id", "family")
+	form.Set("media_video", "on")
+	status, body := d.post(t, "/accounts/save", form)
+	if status != 200 {
+		t.Fatalf("edit save: %d %s", status, body)
+	}
+	saved, err := config.Load(d.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.Accounts) != 1 || !saved.Accounts[0].Policy().Includes("video") ||
+		len(saved.Accounts[0].DirectRoots) != 1 || saved.Accounts[0].DirectRoots[0] != approved[0] {
+		t.Fatalf("approved mapping was dropped by an account edit: %+v", saved.Accounts)
+	}
+}
+
+func TestLivePhotoModeIsEditableAndPersisted(t *testing.T) {
+	d := openDashboard(t)
+	csrf := d.login(t)
+	form := d.accountForm(t, csrf, "family")
+	if status, body := d.post(t, "/accounts/save", form); status != http.StatusOK {
+		t.Fatalf("save default: %d %s", status, body)
+	}
+	cfg, err := config.Load(d.path)
+	if err != nil || len(cfg.Accounts) != 1 || cfg.Accounts[0].PairMode() != bridge.LivePhotoStillOnly {
+		t.Fatalf("live photo mode did not default to still_only: %+v %v", cfg, err)
+	}
+	form.Set("original_id", "family")
+	form.Set("live_photo_mode", "original_pair")
+	if status, body := d.post(t, "/accounts/save", form); status != http.StatusOK {
+		t.Fatalf("save original_pair: %d %s", status, body)
+	}
+	cfg, err = config.Load(d.path)
+	if err != nil || cfg.Accounts[0].PairMode() != bridge.LivePhotoOriginalPair {
+		t.Fatalf("live photo mode not persisted: %+v %v", cfg, err)
+	}
+	_, edit := d.get(t, "/accounts/family/edit")
+	for _, want := range []string{`name="live_photo_mode"`, `value="original_pair" selected`} {
+		if !strings.Contains(edit, want) {
+			t.Errorf("editor missing %q", want)
+		}
+	}
+	form.Set("live_photo_mode", "mux")
+	if status, body := d.post(t, "/accounts/save", form); status != http.StatusBadRequest ||
+		!strings.Contains(body, "live_photo_mode_invalid") {
+		t.Fatalf("unknown live photo mode accepted: %d %s", status, body)
+	}
 }
