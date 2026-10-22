@@ -10,7 +10,7 @@ immich-amazon-sync [--config PATH] [--account ID] [--json] COMMAND
 | `serve --setup --config PATH` | Explicit first UI setup with a mounted admin secret and a new writable config path. |
 | `sync once` | Start/resume a bounded explicit full-scan pass; can write media, managed membership, add-only favorite stars and -- only when explicitly enabled -- Amazon trashing. |
 | `deletions plan` | Read-only manifest of assets pending deletion propagation: count, synced total, blocked reason and asset IDs. Changes nothing. |
-| `filters` | Print each account's effective eligibility policy (media types, maximum original size, RAW/archive rules and excluded tag IDs) from configuration only. Never contacts either remote or opens local state. |
+| `filters` | Print each account's effective eligibility policy (media types, maximum original size, RAW/archive rules, excluded tag IDs and Live Photo mode) from configuration only. Never contacts either remote or opens local state. |
 | `albums list` | Read accessible source album IDs, names and counts. |
 | `workflow status` | Read-only persisted managed-Workflow state, contract and finite code; no remote calls. |
 | `workflow register` | Read-only capability, ownership and action plan for the owned Workflow. |
@@ -39,7 +39,8 @@ The command's `--help` is authoritative for additional management operations.
 Every process accessing a state volume must respect the single-writer boundary.
 Stop `serve` before running a separate stateful CLI invocation.
 
-Human-readable account lines report `album_sync_mode`, `confirmed`, `existing`,
+Human-readable account lines report `album_sync_mode`, `live_photo_mode`,
+`pairs_complete`, `pairs_incomplete`, `confirmed`, `existing`,
 `deleted`, `deletion_pending`, `pending`, `failed`, `unconfirmed`, `deferred`,
 `albums_active`, `albums_inaccessible` and total `excluded` media counts, then the
 `favorites_mode` setting, the `favorites_authority` explanation, and the
@@ -53,8 +54,9 @@ timezone, bounds, open/closed state, `next_opening`, `deferral_reason` and the
 next scheduled wake. The line also prints observed usage state,
 `capacity=unknown`, `entitlement=unknown`, the provider calculation time and
 photo/video/other billable and total bytes. `--json` carries the full status
-object, including per-reason `exclusions`, the favorites counters, `usage` and
-the finite `capture_date` capability; see the [status reference](status.md).
+object, including per-reason `exclusions`, the favorites counters, the Live Photo
+pair counters, `usage` and the finite `capture_date` capability; see the
+[status reference](status.md).
 
 `doctor` adds a live `amazon_usage` read and prints the same usage block. It
 labels a missing provider timestamp as `stale` and a failed read as
@@ -63,6 +65,9 @@ labels a missing provider timestamp as `stale` and a failed read as
 `capture_date=metadata_not_supported` or
 `capture_date=supported`; it is a static property of the pinned SDK, not a write
 test. Original bytes are the backup contract and no quality mode is offered.
+With `live_photo_mode: original_pair`, an incomplete pair is counted in `errors`
+as `pair_incomplete`, so `sync once` reports a non-zero result while the still
+itself may already be confirmed.
 
 For each selected account, one `sync once` invocation attempts at most 64 distinct
 media jobs and advances full discovery by at most eight page steps; an already

@@ -221,8 +221,10 @@ func printReport(out io.Writer, report service.Report, asJSON bool) error {
 		for _, count := range account.Status.Exclusions {
 			excluded += count
 		}
-		if _, err := fmt.Fprintf(out, "%s %s album_sync_mode=%s confirmed=%d existing=%d deleted=%d deletion_pending=%d pending=%d failed=%d unconfirmed=%d deferred=%d albums_active=%d albums_inaccessible=%d excluded=%d favorites_mode=%s favorites_authority=%s favorites_desired=%d favorites_observed=%d favorites_applied=%d favorites_preserved=%d favorites_pending=%d favorites_failed=%d favorites_uncertain=%d favorites_unknown=%d favorites_conflict=%d",
-			account.Account, account.Code, account.Status.AlbumSyncMode, account.Status.Confirmed, account.Status.Existing,
+		if _, err := fmt.Fprintf(out, "%s %s album_sync_mode=%s live_photo_mode=%s pairs_complete=%d pairs_incomplete=%d confirmed=%d existing=%d deleted=%d deletion_pending=%d pending=%d failed=%d unconfirmed=%d deferred=%d albums_active=%d albums_inaccessible=%d excluded=%d favorites_mode=%s favorites_authority=%s favorites_desired=%d favorites_observed=%d favorites_applied=%d favorites_preserved=%d favorites_pending=%d favorites_failed=%d favorites_uncertain=%d favorites_unknown=%d favorites_conflict=%d",
+			account.Account, account.Code, account.Status.AlbumSyncMode,
+			account.Status.LivePhotoMode, account.Status.PairsComplete, account.Status.PairsIncomplete,
+			account.Status.Confirmed, account.Status.Existing,
 			account.Status.Deleted, account.Status.DeletePending, account.Status.Pending,
 			account.Status.Failed, account.Status.Unconfirmed, account.Status.Deferred,
 			account.Status.AlbumsActive, account.Status.AlbumsInaccessible, excluded,
@@ -274,12 +276,13 @@ func printReport(out io.Writer, report service.Report, asJSON bool) error {
 // printFilters exposes the effective rules without contacting either remote.
 func printFilters(out io.Writer, cfg config.Config, asJSON bool) error {
 	type entry struct {
-		Account string        `json:"account"`
-		Filters filter.Policy `json:"filters"`
+		Account       string        `json:"account"`
+		Filters       filter.Policy `json:"filters"`
+		LivePhotoMode string        `json:"live_photo_mode"`
 	}
 	entries := make([]entry, 0, len(cfg.Accounts))
 	for _, account := range cfg.Accounts {
-		entries = append(entries, entry{Account: account.ID, Filters: account.Policy()})
+		entries = append(entries, entry{Account: account.ID, Filters: account.Policy(), LivePhotoMode: string(account.PairMode())})
 	}
 	if asJSON {
 		return outputError(json.NewEncoder(out).Encode(map[string]any{"accounts": entries}))
@@ -289,9 +292,9 @@ func printFilters(out io.Writer, cfg config.Config, asJSON bool) error {
 		if len(item.Filters.ExcludedTags) > 0 {
 			tags = strings.Join(item.Filters.ExcludedTags, ",")
 		}
-		if _, err := fmt.Fprintf(out, "%s media_types=%s max_original_bytes=%d skip_raw=%t include_archived=%t excluded_tags=%s\n",
+		if _, err := fmt.Fprintf(out, "%s media_types=%s max_original_bytes=%d skip_raw=%t include_archived=%t excluded_tags=%s live_photo_mode=%s\n",
 			item.Account, strings.Join(item.Filters.MediaTypes, ","), item.Filters.MaxOriginalBytes,
-			item.Filters.SkipRAW, item.Filters.ArchivedIncluded(), tags); err != nil {
+			item.Filters.SkipRAW, item.Filters.ArchivedIncluded(), tags, item.LivePhotoMode); err != nil {
 			return outputError(err)
 		}
 	}

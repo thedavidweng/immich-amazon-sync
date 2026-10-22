@@ -66,6 +66,15 @@ reported as `deferred` rather than failed. The scheduler wakes at the next
 DST-correct opening, and editing the window applies without restart. See
 [transfer hour limits](docs/how-to/operations.md#limit-transfer-hours).
 
+Apple Live Photos are preserved as original pairs only when explicitly enabled.
+With `live_photo_mode: original_pair` on an account, a still's hidden MOV
+companion is backed up as a second, independent original with its own hash and
+Node; nothing is muxed, converted or paired remotely, and a missing or
+ineligible companion is reported as `pair_incomplete` rather than a full Live
+Photo backup. The default `still_only` keeps the historical hidden-MOV
+exclusion, and switching modes never re-uploads, overwrites or trashes a Node.
+See [Live Photo originals](docs/reference/configuration.md#live-photo-originals).
+
 Optional read-only originals: an account can approve a mapping from Immich's
 reported original paths to a local directory mounted read-only, so eligible
 originals are staged from disk with zero Immich downloads. It is off by default,

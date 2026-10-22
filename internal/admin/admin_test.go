@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thedavidweng/immich-amazon-sync/internal/bridge"
 	"github.com/thedavidweng/immich-amazon-sync/internal/config"
 	"github.com/thedavidweng/immich-amazon-sync/internal/service"
 )
@@ -840,5 +841,38 @@ func TestEditingAnAccountPreservesItsApprovedReadOnlyRoots(t *testing.T) {
 	if len(saved.Accounts) != 1 || !saved.Accounts[0].Policy().Includes("video") ||
 		len(saved.Accounts[0].DirectRoots) != 1 || saved.Accounts[0].DirectRoots[0] != approved[0] {
 		t.Fatalf("approved mapping was dropped by an account edit: %+v", saved.Accounts)
+	}
+}
+
+func TestLivePhotoModeIsEditableAndPersisted(t *testing.T) {
+	d := openDashboard(t)
+	csrf := d.login(t)
+	form := d.accountForm(t, csrf, "family")
+	if status, body := d.post(t, "/accounts/save", form); status != http.StatusOK {
+		t.Fatalf("save default: %d %s", status, body)
+	}
+	cfg, err := config.Load(d.path)
+	if err != nil || len(cfg.Accounts) != 1 || cfg.Accounts[0].PairMode() != bridge.LivePhotoStillOnly {
+		t.Fatalf("live photo mode did not default to still_only: %+v %v", cfg, err)
+	}
+	form.Set("original_id", "family")
+	form.Set("live_photo_mode", "original_pair")
+	if status, body := d.post(t, "/accounts/save", form); status != http.StatusOK {
+		t.Fatalf("save original_pair: %d %s", status, body)
+	}
+	cfg, err = config.Load(d.path)
+	if err != nil || cfg.Accounts[0].PairMode() != bridge.LivePhotoOriginalPair {
+		t.Fatalf("live photo mode not persisted: %+v %v", cfg, err)
+	}
+	_, edit := d.get(t, "/accounts/family/edit")
+	for _, want := range []string{`name="live_photo_mode"`, `value="original_pair" selected`} {
+		if !strings.Contains(edit, want) {
+			t.Errorf("editor missing %q", want)
+		}
+	}
+	form.Set("live_photo_mode", "mux")
+	if status, body := d.post(t, "/accounts/save", form); status != http.StatusBadRequest ||
+		!strings.Contains(body, "live_photo_mode_invalid") {
+		t.Fatalf("unknown live photo mode accepted: %d %s", status, body)
 	}
 }

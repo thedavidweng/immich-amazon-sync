@@ -194,3 +194,27 @@ func TestReasonsAreFinite(t *testing.T) {
 		t.Fatal("non-filter reason was recognized as a filter exclusion")
 	}
 }
+
+// A Live Photo companion is intrinsic to its still: the standalone video rule
+// never excludes it, while every other finite rule still applies.
+func TestCompanionExemptionIsLimitedToTheMediaTypeRule(t *testing.T) {
+	images := filter.Policy{}.Normalize()
+	companion := bridge.Asset{ID: "mov", Name: "live.mov", MIME: "video/quicktime", Kind: "VIDEO",
+		Size: 5, LivePhotoVideo: true}
+	if reason := images.Exclude(companion); reason != filter.MediaType {
+		t.Fatalf("standalone video = %q", reason)
+	}
+	if reason := images.ExcludeCompanion(companion); reason != "" {
+		t.Fatalf("companion media type = %q", reason)
+	}
+	limited := filter.Policy{MaxOriginalBytes: 4}.Normalize()
+	if reason := limited.ExcludeCompanion(companion); reason != filter.TooLarge {
+		t.Fatalf("companion size limit = %q", reason)
+	}
+	tagged := filter.Policy{ExcludedTags: []string{tagID}}.Normalize()
+	withTag := companion
+	withTag.Tags = []bridge.Tag{{ID: tagID}}
+	if reason := tagged.ExcludeCompanion(withTag); reason != filter.Tag {
+		t.Fatalf("companion tag rule = %q", reason)
+	}
+}

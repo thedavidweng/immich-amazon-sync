@@ -122,11 +122,23 @@ func (p Policy) Fingerprint() string {
 // Exclude returns the first applicable finite exclusion reason, or "" when the
 // Asset is eligible. Order is stable so counts do not drift between runs.
 func (p Policy) Exclude(a bridge.Asset) string {
+	return p.exclude(a, false)
+}
+
+// ExcludeCompanion applies the same policy to a Live Photo MOV companion. The
+// companion is intrinsic to its still, so the standalone media-type rule never
+// excludes it; every other finite reason still applies. Callers handle the
+// companion's expected hidden visibility before asking.
+func (p Policy) ExcludeCompanion(a bridge.Asset) string {
+	return p.exclude(a, true)
+}
+
+func (p Policy) exclude(a bridge.Asset, companion bool) string {
 	if a.ExcludedReason != "" {
 		return ""
 	}
 	kind := mediaKind(a)
-	if kind == "IMAGE" && !p.Includes("image") || kind == "VIDEO" && !p.Includes("video") {
+	if kind == "IMAGE" && !p.Includes("image") || kind == "VIDEO" && !companion && !p.Includes("video") {
 		return MediaType
 	}
 	if p.SkipRAW && kind == "IMAGE" && rawExtensions[strings.ToLower(filepath.Ext(a.Name))] {

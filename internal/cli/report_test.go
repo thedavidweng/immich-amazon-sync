@@ -38,3 +38,19 @@ func TestHumanReportShowsDeferralAndWindow(t *testing.T) {
 		t.Fatalf("deferral was reported as failure: %q", line)
 	}
 }
+
+func TestHumanReportShowsLivePhotoPairState(t *testing.T) {
+	report := service.Report{Accounts: []service.AccountResult{{
+		Account: "anonymous", Code: "ok",
+		Status: syncer.Status{LivePhotoMode: "original_pair", PairsComplete: 3, PairsIncomplete: 1},
+	}}}
+	var out bytes.Buffer
+	if err := printReport(&out, report, false); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"live_photo_mode=original_pair", "pairs_complete=3", "pairs_incomplete=1"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing %q in %q", want, out.String())
+		}
+	}
+}

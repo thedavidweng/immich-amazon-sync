@@ -106,7 +106,7 @@ func (e *Engine) nextJob(ctx context.Context, attempted map[string]bool) (*job, 
 	rows, err := e.store.db.QueryContext(ctx, `SELECT id,metadata,state,stage_name,md5,sha1,size,node_id,attempts FROM assets a
 		WHERE account_id=? AND state IN ('pending','staged','deferred','unconfirmed','failed') AND next_at<=? AND attempts<5
 		AND error_code!='source_changed' AND (state!='deferred' OR ?)
-		AND `+eligibleSQL+` ORDER BY priority DESC,id LIMIT 64`, e.opts.AccountID, now.UnixMilli(), deferAllowed)
+		AND `+e.eligibleSQL()+` ORDER BY priority DESC,id LIMIT 64`, e.opts.AccountID, now.UnixMilli(), deferAllowed)
 	if err != nil {
 		return nil, errors.New("storage_unavailable")
 	}
@@ -168,14 +168,20 @@ func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
 		e.logJob(context.WithoutCancel(ctx), j, started, result)
 	}()
 	if j.state != "unconfirmed" {
-		if j.asset.ExcludedReason != "" {
+		// Only a durable Live Photo relationship makes a hidden companion
+		// eligible; every other hidden video keeps its exclusion.
+		companion, err := e.companionAsset(ctx, j.id)
+		if err != nil {
+			return err
+		}
+		if j.asset.ExcludedReason != "" && !companion {
 			return e.skip(ctx, j, sourceExclusion(j.asset.ExcludedReason))
 		}
 		if !safeName(j.asset.Name) {
 			return errors.New("unsafe_filename")
 		}
 		kind := assetKind(j.asset)
-		if j.asset.LivePhotoVideo {
+		if j.asset.LivePhotoVideo && !companion {
 			return e.skip(ctx, j, "live_photo_companion")
 		}
 		if kind != "IMAGE" && kind != "VIDEO" {
@@ -183,7 +189,11 @@ func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
 		}
 		// The policy is authoritative at the write boundary: a stale pending
 		// row or a policy change cannot authorize an excluded upload.
-		if reason := e.opts.Filters.Exclude(j.asset); reason != "" {
+		reason := e.opts.Filters.Exclude(j.asset)
+		if companion {
+			reason = e.companionExclusion(j.asset)
+		}
+		if reason != "" {
 			return e.skip(ctx, j, reason)
 		}
 		if j.asset.MIME == "" {

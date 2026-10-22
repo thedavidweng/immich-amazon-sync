@@ -81,7 +81,7 @@ func TestVersionFourStoreMigratesWithoutTouchingExistingState(t *testing.T) {
 	}
 	defer raw.Close()
 	var version int
-	if err := raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 9 {
+	if err := raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 10 {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
 	var state, prior string

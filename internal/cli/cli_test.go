@@ -383,3 +383,31 @@ func TestFiltersCommandShowsEffectivePolicyWithoutRemoteCalls(t *testing.T) {
 		t.Fatalf("text policy: exit=%d stdout=%q stderr=%q", exit, out.String(), errOut.String())
 	}
 }
+
+func TestFiltersCommandShowsLivePhotoModeWithoutRemoteCalls(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	body := `{"data_dir":"` + filepath.Join(dir, "state") + `","accounts":[{"id":"home","immich_url":"http://127.0.0.1:1","immich_api_key_file":"/missing","amazon_region":"us","amazon_cookie_file":"/missing","album_ids":["album-one"],"live_photo_mode":"original_pair"}]}`
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	exit := cli.Execute(t.Context(), []string{"filters", "--config", path, "--json"}, &out, &errOut, "dev")
+	var report struct {
+		Accounts []struct {
+			Account       string `json:"account"`
+			LivePhotoMode string `json:"live_photo_mode"`
+		} `json:"accounts"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", exit, out.String(), errOut.String())
+	}
+	if exit != 0 || len(report.Accounts) != 1 || report.Accounts[0].LivePhotoMode != "original_pair" {
+		t.Fatalf("effective live photo mode: %+v exit=%d stderr=%q", report, exit, errOut.String())
+	}
+	out.Reset()
+	exit = cli.Execute(t.Context(), []string{"filters", "--config", path}, &out, &errOut, "dev")
+	if exit != 0 || !strings.Contains(out.String(), "live_photo_mode=original_pair") {
+		t.Fatalf("text live photo mode: exit=%d stdout=%q stderr=%q", exit, out.String(), errOut.String())
+	}
+}

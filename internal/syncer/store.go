@@ -200,119 +200,18 @@ func (s *Store) migrate() error {
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 9 {
+	if version > 10 {
 		return errors.New("unsupported_schema")
 	}
-	if version == 9 {
+	steps := []func() error{s.migrateP1, s.migrateP2, s.migrateP3, s.migrateP4,
+		s.migrateP5, s.migrateP6, s.migrateP7, s.migrateP8, s.migrateP9}
+	for step := version; step < len(steps)+1 && version != 0; step++ {
+		if err := steps[step-1](); err != nil {
+			return err
+		}
+	}
+	if version != 0 {
 		return nil
-	}
-	if version == 8 {
-		return s.migrateP8()
-	}
-	if version == 7 {
-		if err := s.migrateP7(); err != nil {
-			return err
-		}
-		return s.migrateP8()
-	}
-	if version == 6 {
-		if err := s.migrateP6(); err != nil {
-			return err
-		}
-		if err := s.migrateP7(); err != nil {
-			return err
-		}
-		return s.migrateP8()
-	}
-	if version == 5 {
-		if err := s.migrateP5(); err != nil {
-			return err
-		}
-		if err := s.migrateP6(); err != nil {
-			return err
-		}
-		if err := s.migrateP7(); err != nil {
-			return err
-		}
-		return s.migrateP8()
-	}
-	if version == 4 {
-		if err := s.migrateP4(); err != nil {
-			return err
-		}
-		if err := s.migrateP5(); err != nil {
-			return err
-		}
-		if err := s.migrateP6(); err != nil {
-			return err
-		}
-		if err := s.migrateP7(); err != nil {
-			return err
-		}
-		return s.migrateP8()
-	}
-	if version == 3 {
-		if err := s.migrateP3(); err != nil {
-			return err
-		}
-		if err := s.migrateP4(); err != nil {
-			return err
-		}
-		if err := s.migrateP5(); err != nil {
-			return err
-		}
-		if err := s.migrateP6(); err != nil {
-			return err
-		}
-		if err := s.migrateP7(); err != nil {
-			return err
-		}
-		return s.migrateP8()
-	}
-	if version == 2 {
-		if err := s.migrateP2(); err != nil {
-			return err
-		}
-		if err := s.migrateP3(); err != nil {
-			return err
-		}
-		if err := s.migrateP4(); err != nil {
-			return err
-		}
-		if err := s.migrateP5(); err != nil {
-			return err
-		}
-		if err := s.migrateP6(); err != nil {
-			return err
-		}
-		if err := s.migrateP7(); err != nil {
-			return err
-		}
-		return s.migrateP8()
-	}
-	if version == 1 {
-		if err := s.migrateP1(); err != nil {
-			return err
-		}
-		if err := s.migrateP2(); err != nil {
-			return err
-		}
-		if err := s.migrateP3(); err != nil {
-			return err
-		}
-		if err := s.migrateP4(); err != nil {
-			return err
-		}
-		if err := s.migrateP5(); err != nil {
-			return err
-		}
-		if err := s.migrateP6(); err != nil {
-			return err
-		}
-		if err := s.migrateP7(); err != nil {
-			return err
-		}
-		return s.migrateP8()
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -379,28 +278,14 @@ func (s *Store) migrate() error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	if err := s.migrateP1(); err != nil {
-		return err
+	applied := []func() error{s.migrateP1, s.migrateP2, s.migrateP3, s.migrateP4,
+		s.migrateP5, s.migrateP6, s.migrateP7, s.migrateP8, s.migrateP9}
+	for _, step := range applied {
+		if err := step(); err != nil {
+			return err
+		}
 	}
-	if err := s.migrateP2(); err != nil {
-		return err
-	}
-	if err := s.migrateP3(); err != nil {
-		return err
-	}
-	if err := s.migrateP4(); err != nil {
-		return err
-	}
-	if err := s.migrateP5(); err != nil {
-		return err
-	}
-	if err := s.migrateP6(); err != nil {
-		return err
-	}
-	if err := s.migrateP7(); err != nil {
-		return err
-	}
-	return s.migrateP8()
+	return nil
 }
 
 // migrateP3 records how each album rule came into scope. Explicit rules are
@@ -601,6 +486,36 @@ func (s *Store) migrateP8() error {
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.Exec(`ALTER TABLE favorites ADD COLUMN checked_at INTEGER NOT NULL DEFAULT 0;
 	PRAGMA user_version=9;`)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// migrateP9 adds the Live Photo pair ledger and the applied per-account pair
+// mode. Existing accounts keep the historical still-only behavior: the stored
+// mode is empty, no pair exists, and every asset mapping, exclusion, favorite
+// and staging reference is untouched.
+func (s *Store) migrateP9() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(`ALTER TABLE accounts ADD COLUMN live_photo_mode TEXT NOT NULL DEFAULT '';
+	CREATE TABLE live_pairs (
+		account_id TEXT NOT NULL REFERENCES accounts(id),
+		still_id TEXT NOT NULL,
+		companion_id TEXT NOT NULL,
+		state TEXT NOT NULL DEFAULT 'pending',
+		error_code TEXT NOT NULL DEFAULT '',
+		attempts INTEGER NOT NULL DEFAULT 0,
+		next_at INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY(account_id,still_id),
+		FOREIGN KEY(account_id,still_id) REFERENCES assets(account_id,id)
+	);
+	CREATE INDEX live_pair_queue ON live_pairs(account_id,state,next_at);
+	PRAGMA user_version=10;`)
 	if err != nil {
 		return err
 	}

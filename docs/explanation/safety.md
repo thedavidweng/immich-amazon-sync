@@ -136,6 +136,15 @@ the [event/membership decision](../adr/0005-durable-hints-and-owned-membership.m
 Read [contract decisions](../adr/0003-upstream-contract-boundaries.md) for the
 researched checksum, media-pair and pagination limits.
 
+Live Photo handling is a choice between preserving the still alone and
+preserving both originals. `original_pair` uploads the still and the hidden MOV
+separately; it never muxes, converts or re-derives either file, so a recorded
+hash always describes the bytes that were staged. Pair bookkeeping is durable,
+separate from media state, and never deletion evidence: switching modes withdraws
+or adopts the relationship without re-uploading, overwriting or trashing a Node.
+A companion that is missing or ineligible is reported as `pair_incomplete`
+instead of a silent partial claim.
+
 Read-only mounts are optional input only. An approved `direct_roots` mapping lets
 an eligible original be staged from disk instead of downloaded, but the service
 never writes to, creates in or retimes that mount. The staged bytes are verified

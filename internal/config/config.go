@@ -56,6 +56,10 @@ type Account struct {
 	// verified node when the source explicitly reports the asset favorite and
 	// never unstars. Mirror also clears a star this service applied.
 	Favorites string `json:"favorites,omitempty"`
+	// LivePhotoMode is "still_only" (default) or "original_pair". OriginalPair
+	// backs up the hidden MOV companion of an included still as a second,
+	// independent original; it never muxes, converts or pairs the media.
+	LivePhotoMode string `json:"live_photo_mode,omitempty"`
 	// VideoUsageThresholdBytes is an explicit user budget for observed
 	// billable video bytes. Zero disables the advisory.
 	VideoUsageThresholdBytes int64 `json:"video_usage_threshold_bytes,omitempty"`
@@ -209,6 +213,13 @@ func Load(path string) (Config, error) {
 				return cfg, errors.New("managed_workflow_invalid")
 			}
 		}
+		livePhoto := bridge.LivePhotoMode(os.Getenv("LIVE_PHOTO_MODE"))
+		if livePhoto == "" {
+			livePhoto = bridge.LivePhotoStillOnly
+		}
+		if !livePhoto.Valid() {
+			return cfg, errors.New("live_photo_mode_invalid")
+		}
 		threshold := int64(0)
 		if value := os.Getenv("VIDEO_USAGE_THRESHOLD_BYTES"); value != "" {
 			var err error
@@ -238,6 +249,7 @@ func Load(path string) (Config, error) {
 			Library:                  library,
 			AlbumSyncMode:            os.Getenv("ALBUM_SYNC_MODE"),
 			Favorites:                os.Getenv("FAVORITES"),
+			LivePhotoMode:            os.Getenv("LIVE_PHOTO_MODE"),
 			FavoritesTakeover:        favoritesTakeover,
 			ManagedWorkflow:          managedWorkflow,
 			WorkflowAPIKeyFile:       os.Getenv("IMMICH_WORKFLOW_API_KEY_FILE"),
@@ -280,6 +292,15 @@ func (a Account) AlbumMode() bridge.AlbumSyncMode {
 		return bridge.AlbumSyncSelected
 	}
 	return bridge.AlbumSyncOff
+}
+
+// PairMode resolves the configured Live Photo policy. An unset value preserves
+// the historical still-only behavior and never widens upload scope.
+func (a Account) PairMode() bridge.LivePhotoMode {
+	if a.LivePhotoMode == "" {
+		return bridge.LivePhotoStillOnly
+	}
+	return bridge.LivePhotoMode(a.LivePhotoMode)
 }
 
 var identifier = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$`)
@@ -467,6 +488,9 @@ func (c Config) Validate() error {
 		case "", "off", "add_only", "mirror":
 		default:
 			return errors.New("favorites_invalid")
+		}
+		if !account.PairMode().Valid() {
+			return errors.New("live_photo_mode_invalid")
 		}
 		if account.VideoUsageThresholdBytes < 0 {
 			return errors.New("video_usage_threshold_invalid")

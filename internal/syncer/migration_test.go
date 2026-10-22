@@ -32,12 +32,19 @@ func TestVersionOneStoreMigratesWithoutLosingConfirmedContent(t *testing.T) {
 	}
 	const lastSuccess = "2026-01-01T00:00:00Z"
 	if _, err = db.Exec(`INSERT INTO accounts(id,source_identity,target_identity,last_success)
-		VALUES('account','source','target',?);
-		INSERT INTO rules(account_id,scope,album_id,complete,expected) VALUES('account','album:album','album',1,1);
-		INSERT INTO assets(account_id,id,metadata,state,md5,sha1,size,node_id)
-		VALUES('account','one',?,'confirmed','5d41402abc4b2a76b9719d911017c592','qvTGHdzF6KLavt4PO0gs2a6pQ00=',5,'existing');
-		INSERT INTO scope_assets(account_id,scope,asset_id,generation) VALUES('account','album:album','one',1)`,
-		lastSuccess, string(metadata)); err != nil {
+		VALUES('account','source','target',?)`, lastSuccess); err != nil {
+		t.Fatal(err)
+	}
+	// One Exec per parameterized statement: a multi-statement Exec rebinds its
+	// argument list per statement, which would store the timestamp as metadata.
+	if _, err = db.Exec(`INSERT INTO rules(account_id,scope,album_id,complete,expected)
+		VALUES('account','album:album','album',1,1);
+		INSERT INTO scope_assets(account_id,scope,asset_id,generation) VALUES('account','album:album','one',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO assets(account_id,id,metadata,state,md5,sha1,size,node_id)
+		VALUES('account','one',?,'confirmed','5d41402abc4b2a76b9719d911017c592','qvTGHdzF6KLavt4PO0gs2a6pQ00=',5,'existing')`,
+		string(metadata)); err != nil {
 		t.Fatal(err)
 	}
 	if err = db.Close(); err != nil {
@@ -126,7 +133,7 @@ func TestVersionThreeStoreMigratesFavoritesWithoutWideningScope(t *testing.T) {
 	if err = db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if version != 9 || favorite != -1 || rows != 0 || checked != 1 {
+	if version != 10 || favorite != -1 || rows != 0 || checked != 1 {
 		t.Fatalf("migration widened scope: version=%d favorite=%d rows=%d checked=%d", version, favorite, rows, checked)
 	}
 
@@ -215,7 +222,7 @@ func TestVersionThreeStoreReevaluatesLegacyVideoSkip(t *testing.T) {
 	}
 	defer db.Close()
 	var version int
-	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 9 {
+	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 10 {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
 	var state, exclusion string
@@ -288,7 +295,7 @@ func TestVersionFiveStoreAddsFavoritesAndKeepsWorkflowOwnership(t *testing.T) {
 	if err = db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if version != 9 || favorite != -1 || rows != 0 || checked != 1 {
+	if version != 10 || favorite != -1 || rows != 0 || checked != 1 {
 		t.Fatalf("favorites migration widened scope: version=%d favorite=%d rows=%d checked=%d", version, favorite, rows, checked)
 	}
 
@@ -367,7 +374,7 @@ func TestVersionSixStoreAddsFiltersAndKeepsFavorites(t *testing.T) {
 	}
 	defer db.Close()
 	var version, favorite, applied int
-	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 9 {
+	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 10 {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
 	if err = db.QueryRow("SELECT favorite FROM assets WHERE account_id='account' AND id='video'").Scan(&favorite); err != nil {
@@ -435,7 +442,7 @@ func TestVersionSevenStoreAddsUsageWithoutTouchingFiltersOrFavorites(t *testing.
 	defer db.Close()
 	var version, favorite, applied int
 	var fingerprint string
-	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 9 {
+	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 10 {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
 	if err = db.QueryRow("SELECT filter_fingerprint FROM accounts WHERE id='account'").Scan(&fingerprint); err != nil ||
@@ -506,7 +513,7 @@ func TestVersionEightStoreAddsFavoriteAuditWithoutTouchingUsage(t *testing.T) {
 	}
 	defer db.Close()
 	var version, checked int
-	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 9 {
+	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 10 {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
 	if err = db.QueryRow("SELECT count(*) FROM pragma_table_info('favorites') WHERE name='checked_at'").Scan(&checked); err != nil ||
@@ -558,10 +565,10 @@ func TestFutureSchemaFailsClosedAndCurrentSchemaReopens(t *testing.T) {
 		t.Fatal(err)
 	}
 	var version int
-	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 9 {
+	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 10 {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
-	if _, err = db.Exec("PRAGMA user_version=10;"); err != nil {
+	if _, err = db.Exec("PRAGMA user_version=11;"); err != nil {
 		t.Fatal(err)
 	}
 	if err = db.Close(); err != nil {
@@ -575,7 +582,73 @@ func TestFutureSchemaFailsClosedAndCurrentSchemaReopens(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 10 {
+	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 11 {
 		t.Fatalf("refused open rewrote the version: %d, %v", version, err)
+	}
+}
+
+// A version 7 store gains the Live Photo pair ledger without widening scope:
+// every existing account stays still_only, and confirmed mappings, filters and
+// favorites are untouched.
+func TestVersionSevenStoreAddsLivePhotoPairsWithoutWideningScope(t *testing.T) {
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "sync.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema, err := os.ReadFile("testdata/v7.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(string(schema)); err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := json.Marshal(liveStill("still", "companion"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO accounts(id,source_identity,target_identity) VALUES('account','source','target');
+		INSERT INTO rules(account_id,scope,album_id,complete,expected) VALUES('account','album:album','album',1,1);
+		INSERT INTO scope_assets(account_id,scope,asset_id,generation) VALUES('account','album:album','still',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO assets(account_id,id,metadata,state,md5,sha1,size,node_id)
+		VALUES('account','still',?,'confirmed','5d41402abc4b2a76b9719d911017c592','qvTGHdzF6KLavt4PO0gs2a6pQ00=',5,'node')`,
+		string(metadata)); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := syncer.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	s := &sourceFake{identity: "source", pages: map[string]bridge.Page{"": {Assets: []bridge.Asset{}}}}
+	d := &targetFake{identity: "target", nodes: []bridge.Node{{
+		ID: "node", Name: "still.heic", MD5: "5d41402abc4b2a76b9719d911017c592", Size: 5,
+	}}}
+	e := engine(t, store, s, d, options())
+	st := status(t, e)
+	if st.Confirmed != 1 || st.LivePhotoMode != "still_only" || st.PairsComplete != 0 || st.PairsIncomplete != 0 {
+		t.Fatalf("migration changed the baseline: %+v", st)
+	}
+	db, err = sql.Open("sqlite", filepath.Join(dir, "sync.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var version int
+	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 10 {
+		t.Fatalf("schema version = %d, %v", version, err)
+	}
+	var mode string
+	if err = db.QueryRow("SELECT live_photo_mode FROM accounts WHERE id='account'").Scan(&mode); err != nil || mode != "" {
+		t.Fatalf("existing account gained a pair mode: %q, %v", mode, err)
+	}
+	var pairs int
+	if err = db.QueryRow("SELECT count(*) FROM live_pairs").Scan(&pairs); err != nil || pairs != 0 {
+		t.Fatalf("migration created pair work: %d, %v", pairs, err)
 	}
 }

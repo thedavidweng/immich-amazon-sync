@@ -29,6 +29,7 @@
       "deletions": false,
       "deletions_confirmation": "",
       "favorites": "off",
+      "live_photo_mode": "still_only",
       "favorites_takeover": false,
       "managed_workflow": false,
       "immich_workflow_api_key_file": "/run/secrets/immich_workflow_key",

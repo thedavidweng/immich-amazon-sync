@@ -72,7 +72,7 @@ Checked with `gh api repos/ImAleeexx/immich-gphotos/pulls/<n>`; `merged` was
 | Honest unknown capacity; no quality selector | No | Original bytes only; capacity, remaining bytes and Prime entitlement are `unknown` | Offline contract | #22 |
 | Video advisory threshold and opt-in hold; quota error classification | No | Explicit per-account budget; distinct `storage_quota_exceeded` keeps originals staged | Offline contract | #22 |
 | Capture date for missing EXIF | PR #5 re-dates direct reads | Preserves EXIF and mtimes; no source writes; doctor/status report finite `metadata_not_supported` | Unsupported (no released SDK setter) | #31 delivered the honest capability; a setter would require read-back verification |
-| Apple Live Photo still + MOV original-pair preservation | PR #7 muxes a derived Google Motion Photo | Still-only; hidden MOV excluded | Offline contract (planned) | #26 |
+| Apple Live Photo still + MOV original-pair preservation | PR #7 muxes a derived Google Motion Photo | Two unchanged originals with independent hashes and Nodes (`live_photo_mode: original_pair`); `pair_incomplete` when the companion is missing or ineligible | Offline contract | #26 |
 | Native Apple Live Photo pairing and playback | No | No | Unsupported until disposable samples prove it | #30 |
 | Google/Samsung Motion Photo mux | Yes (PR #7) | No conversion path | Unsupported (deliberately not ported) | #26 keeps original pairs; #30 is the only native-pairing experiment |
 | Managed multi-account local UI | Yes | Yes | Offline contract | #17 preserves |
@@ -88,7 +88,7 @@ Checked with `gh api repos/ImAleeexx/immich-gphotos/pulls/<n>`; `merged` was
 | Capability | Why it is not ported |
 | --- | --- |
 | Quality modes `original` / `saver` / `quota` | These are options of the unofficial Google upload protocol. Amazon Photos has no verified isomorphic quality selector: eligible Prime images are stored at original resolution, while videos and other files count separately. Adding an unfulfillable tri-state selector would mislead users and risk data loss. The service always uploads original bytes and reports real usage instead (#22). |
-| Motion Photo muxing (PR #7) | Producing a Google/Samsung Motion Photo creates derived media with a new hash and dedup identity. Amazon's official format documentation lists Google/Samsung Motion Photos as unsupported. The conversion is therefore not ported: #26 keeps the still and MOV as independent originals, and #30 may test native Apple pairing with disposable samples only. |
+| Motion Photo muxing (PR #7) | Producing a Google/Samsung Motion Photo creates derived media with a new hash and dedup identity. Amazon's official format documentation lists Google/Samsung Motion Photos as unsupported. The conversion is therefore not ported: #26 keeps the still and MOV as independent originals with no conversion or mux path, and #30 may test native Apple pairing with disposable samples only. |
 | 20,000-item album split | The 20,000-item bound is a Google Photos limit, not an Amazon one. Copying it would invent overflow behaviour and uncertain duplicate album creation. Amazon capacity handling is implemented only after verified limit evidence (#24); until then no limit is assumed. |
 
 Other Google-only machinery named in the spec's out-of-scope section (Google
