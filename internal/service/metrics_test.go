@@ -342,7 +342,7 @@ func TestMetricsAndStatusEndpointsAgreeWithCLIAndUI(t *testing.T) {
 	uiBody, _ := io.ReadAll(uiResponse.Body)
 	uiResponse.Body.Close()
 	for _, want := range []string{"<dt>Confirmed</dt><dd>10</dd>", "<dt>In Amazon trash</dt><dd>1</dd>",
-		"Retry tuning: 5 attempts", "<dt>Workflow</dt><dd>not requested</dd>"} {
+		"<dt>Retry attempts</dt><dd>5</dd>", "<dt>Workflow</dt><dd>not requested</dd>"} {
 		if !strings.Contains(string(uiBody), want) {
 			t.Fatalf("dashboard missing %q", want)
 		}

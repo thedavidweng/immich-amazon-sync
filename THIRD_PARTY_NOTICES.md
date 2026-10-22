@@ -11,6 +11,11 @@ Other Go dependency versions are recorded in go.mod/go.sum. Cobra and pflag are
 Apache-2.0; modernc SQLite and its transitive dependencies retain their upstream
 licenses. Alpine packages retain the licenses distributed with the base image.
 
+The local dashboard embeds the Latin subset of Cal Sans
+(`internal/admin/calsans-latin.woff2`), Copyright 2022 The Cal Sans Project
+Authors (https://github.com/calcom/font), licensed under the SIL Open Font
+License 1.1 (https://openfontlicense.org).
+
 ## aphotos SDK: full MIT license
 
 MIT License

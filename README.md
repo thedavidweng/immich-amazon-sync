@@ -89,6 +89,13 @@ docker compose run --rm sync --config /etc/immich-amazon-sync/config.json sync o
 
 An optional local web dashboard can be enabled by providing an admin passphrase file. See [Local management](docs/how-to/local-management.md).
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/dashboard-dark.webp">
+  <img alt="Local dashboard showing one account's backup state, queue distribution and schedule, with detailed counters collapsed" src="docs/images/dashboard-light.webp" width="960">
+</picture>
+
+<sub>Screenshot uses sample data.</sub>
+
 ## Capabilities
 
 - **Original preservation**: Transfers exact byte streams; never transcodes, compresses, or modifies EXIF data.
