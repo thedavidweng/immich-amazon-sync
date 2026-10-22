@@ -42,7 +42,7 @@ func (c *Client) Trash(ctx context.Context, content bridge.Content, nodeID strin
 		}
 		return &bridge.Error{Code: bridge.Unconfirmed}
 	}
-	if after.Status == aphotos.NodeStatusAvailable {
+	if after.Status != aphotos.NodeStatusTrash {
 		return &bridge.Error{Code: bridge.Unconfirmed}
 	}
 	return nil
