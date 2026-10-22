@@ -38,6 +38,22 @@ Safe additions can proceed during backfill, but removals require a completed
 baseline, nonempty desired set and the
 [fixed membership guard](../how-to/managed-albums.md#understand-removal-guards).
 
+## Favorite writes
+
+Favorite sync is add-only and opt-in per account; `off` is the default for every
+account. When `favorites: add_only` is set, a verified Node mapped from an
+`confirmed` or `existing` asset is starred only if the source explicitly reports
+`isFavorite: true`. An omitted source field is unknown and cannot authorize a
+write, and a Node is never unstarred.
+
+The pre-write read and the post-write verification both require an explicit raw
+`settings.favorite` field. A missing field is `favorite_unconfirmed`; the SDK's
+mutation response is never proof. A lost or timed-out mutation stays uncertain
+and is retried only after a fresh read, so a committed star settles without a
+second PATCH and no media is uploaded again. Trashed, Deleted and Unconfirmed
+Nodes are ineligible. Several assets or albums sharing a Node produce one
+durable outcome and one write.
+
 ## Deletion propagation
 
 Deletion propagation is opt-in per account and off by default. The service

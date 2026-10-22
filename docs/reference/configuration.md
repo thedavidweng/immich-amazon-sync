@@ -30,6 +30,7 @@ See [config.example.json](config.example.json) for the minimal deployment shape.
 | `library` | `false` | Deliberate whole-accessible-library choice, mutually exclusive with `album_ids`. |
 | `include_videos` | `false` | Include eligible standalone originals classified as video. |
 | `mirror_albums` | `false` | Mirror explicitly selected albums; requires `album_ids` and `library: false`. |
+| `favorites` | `off` | `off` or `add_only`. Add-only stars a verified Amazon Node when the source explicitly reports `isFavorite`; it never unstars. An absent source field is unknown and performs no write. |
 | `deletions` | `false` | Propagate an Immich trash to the Amazon trash for mapped assets. Off by default; never permanently deletes. |
 | `deletions_confirmation` | unset | Must be exactly `ENABLE DELETIONS` while `deletions` is true; a missing or different phrase rejects the config with `deletion_confirmation_required`. |
 
@@ -66,7 +67,8 @@ admin-secret path or webhook-secret path require restart. See
 
 Without `--config`, the single-account environment mode uses `IMMICH_URL`,
 `IMMICH_API_KEY_FILE`, `AMAZON_REGION`, `AMAZON_COOKIE_FILE`, comma-separated
-`ALBUM_IDS`, and `INCLUDE_VIDEOS` (`true`/`false`). Its account ID is `default`.
+`ALBUM_IDS`, `INCLUDE_VIDEOS` (`true`/`false`) and `FAVORITES`
+(`off`/`add_only`). Its account ID is `default`.
 Use JSON for multiple accounts and explicit library/album-mirroring options.
 `DATA_DIR`, `LISTEN`, `ADMIN_PASSWORD_FILE` and `WEBHOOK_SECRET_FILE` override
 their corresponding values even with a JSON file.

@@ -8,7 +8,7 @@ immich-amazon-sync [--config PATH] [--account ID] [--json] COMMAND
 | --- | --- |
 | `serve` | Run the local service and scheduled backups; stop with SIGTERM. |
 | `serve --setup --config PATH` | Explicit first UI setup with a mounted admin secret and a new writable config path. |
-| `sync once` | Start/resume a bounded explicit full-scan pass; can write media, managed membership and -- only when explicitly enabled -- Amazon trashing. |
+| `sync once` | Start/resume a bounded explicit full-scan pass; can write media, managed membership, add-only favorite stars and -- only when explicitly enabled -- Amazon trashing. |
 | `deletions plan` | Read-only manifest of assets pending deletion propagation: count, synced total, blocked reason and asset IDs. Changes nothing. |
 | `albums list` | Read accessible source album IDs, names and counts. |
 | `doctor` | Read-only remote diagnostics and local storage checks; no upload or album creation. |
@@ -34,7 +34,10 @@ Every process accessing a state volume must respect the single-writer boundary.
 Stop `serve` before running a separate stateful CLI invocation.
 
 Human-readable account lines report `confirmed`, `existing`, `deleted`,
-`deletion_pending`, `pending`, `failed` and `unconfirmed` media counts. `existing` means a verified copy was reused from
+`deletion_pending`, `pending`, `failed` and `unconfirmed` media counts, then the
+`favorites_mode` setting and `favorites_desired`, `favorites_applied`,
+`favorites_pending`, `favorites_failed`, `favorites_uncertain` and
+`favorites_unknown` counters. `existing` means a verified copy was reused from
 elsewhere in the same Amazon account; it is backed up but not at the configured
 target parent. `--json` carries the full status object.
 

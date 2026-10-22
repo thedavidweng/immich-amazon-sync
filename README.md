@@ -36,6 +36,13 @@ as `existing`; a fresh asset still uploads only when the complete lookup proves
 no copy, while an uncertain write stays `unconfirmed` unless one verified match
 is found.
 
+Favorite sync is separately opt-in and add-only. With `favorites: add_only` on
+an account, a verified node whose source asset explicitly reports favorite is
+starred; an absent source field is unknown and writes nothing, and the service
+never unstars. Every star is confirmed by an authoritative Amazon re-read of an
+explicit `settings.favorite` field, and a lost mutation is retried only after a
+fresh read. Favorite state and counters are separate from media states.
+
 ## Compose quickstart
 
 Requires Docker Engine with Compose v2+ and buildx, on Linux amd64 or arm64.

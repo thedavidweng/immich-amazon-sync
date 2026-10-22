@@ -188,6 +188,7 @@ func (d dashboard) accountForm(t *testing.T, csrf, id string) url.Values {
 		"csrf": {csrf}, "id": {id}, "immich_url": {"http://127.0.0.1:1"},
 		"key_file": {key}, "cookie_file": {cookie}, "region": {"us"},
 		"album_ids": {"11111111-1111-4111-8111-111111111111"},
+		"favorites": {"off"},
 	}
 }
 
@@ -655,4 +656,27 @@ func TestDashboardShowsAccountIsolatedBacklogsAndReadyWork(t *testing.T) {
 	}
 	check(body, "first", "1", "none ready to run")
 	check(body, "second", "0", "none ready to run")
+}
+
+func TestFavoritesModeIsEditableAndPersisted(t *testing.T) {
+	d := openDashboard(t)
+	csrf := d.login(t)
+	form := d.accountForm(t, csrf, "family")
+	form.Set("favorites", "add_only")
+	if status, body := d.post(t, "/accounts/save", form); status != http.StatusOK {
+		t.Fatalf("save add_only: %d %s", status, body)
+	}
+	cfg, err := config.Load(d.path)
+	if err != nil || len(cfg.Accounts) != 1 || cfg.Accounts[0].Favorites != "add_only" {
+		t.Fatalf("favorites setting not persisted: %+v %v", cfg, err)
+	}
+	_, edit := d.get(t, "/accounts/family/edit")
+	if !strings.Contains(edit, `name="favorites"`) {
+		t.Fatal("favorites setting is not exposed in the account editor")
+	}
+	form.Set("original_id", "family")
+	form.Set("favorites", "mirror")
+	if status, body := d.post(t, "/accounts/save", form); status != http.StatusBadRequest || !strings.Contains(body, "favorites_invalid") {
+		t.Fatalf("unknown favorites mode: %d %s", status, body)
+	}
 }

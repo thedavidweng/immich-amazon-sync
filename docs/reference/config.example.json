@@ -19,7 +19,8 @@
       "include_videos": false,
       "mirror_albums": false,
       "deletions": false,
-      "deletions_confirmation": ""
+      "deletions_confirmation": "",
+      "favorites": "off"
     }
   ]
 }
