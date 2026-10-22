@@ -50,14 +50,23 @@ elsewhere in the same Amazon account; it is backed up but not at the configured
 target parent. `deferred` means new upload dispatch waits for a transfer window;
 it is not a failure. When a window is configured the line also reports its
 timezone, bounds, open/closed state, `next_opening`, `deferral_reason` and the
-next scheduled wake. `--json` carries the full status object, including
-per-reason `exclusions`, the favorites counters, the Live Photo pair counters and
-the finite `capture_date` capability. `doctor` reports the same capability per account as
+next scheduled wake. The line also prints observed usage state,
+`capacity=unknown`, `entitlement=unknown`, the provider calculation time and
+photo/video/other billable and total bytes. `--json` carries the full status
+object, including per-reason `exclusions`, the favorites counters, the Live Photo
+pair counters, `usage` and the finite `capture_date` capability; see the
+[status reference](status.md).
+
+`doctor` adds a live `amazon_usage` read and prints the same usage block. It
+labels a missing provider timestamp as `stale` and a failed read as
+`unavailable`; it never substitutes zero or an inferred subscription cap.
+`doctor` reports the same `capture_date` capability per account as
 `capture_date=metadata_not_supported` or
 `capture_date=supported`; it is a static property of the pinned SDK, not a write
-test. With `live_photo_mode: original_pair`, an incomplete pair is counted in
-`errors` as `pair_incomplete`, so `sync once` reports a non-zero result while the
-still itself may already be confirmed.
+test. Original bytes are the backup contract and no quality mode is offered.
+With `live_photo_mode: original_pair`, an incomplete pair is counted in `errors`
+as `pair_incomplete`, so `sync once` reports a non-zero result while the still
+itself may already be confirmed.
 
 For each selected account, one `sync once` invocation attempts at most 64 distinct
 media jobs and advances full discovery by at most eight page steps; an already

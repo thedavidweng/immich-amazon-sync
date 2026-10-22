@@ -60,7 +60,7 @@ func (e *Engine) drain(ctx context.Context, attempted map[string]bool) error {
 					return
 				}
 				paused, err := e.paused(ctx)
-				if err != nil || paused {
+				if err != nil || paused || e.quotaHold.Load() {
 					return
 				}
 				selectMu.Lock()
@@ -120,6 +120,9 @@ func (e *Engine) nextJob(ctx context.Context, attempted map[string]bool) (*job, 
 		if err = json.Unmarshal([]byte(metadata), &j.asset); err != nil {
 			break
 		}
+		if e.videoHold.Load() && assetKind(j.asset) == "VIDEO" {
+			continue
+		}
 		if !attempted[j.id] {
 			attempted[j.id] = true
 			selected = &j
@@ -136,6 +139,19 @@ func (e *Engine) nextJob(ctx context.Context, attempted map[string]bool) (*job, 
 func safeName(name string) bool {
 	return name != "" && name != "." && name != ".." && len(name) <= 255 && utf8.ValidString(name) &&
 		!strings.ContainsAny(name, `/\:`) && !strings.ContainsFunc(name, unicode.IsControl)
+}
+
+func assetKind(asset bridge.Asset) string {
+	kind := strings.ToUpper(asset.Kind)
+	if kind == "" {
+		switch {
+		case strings.HasPrefix(asset.MIME, "image/"):
+			return "IMAGE"
+		case strings.HasPrefix(asset.MIME, "video/"):
+			return "VIDEO"
+		}
+	}
+	return kind
 }
 
 func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
@@ -164,15 +180,7 @@ func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
 		if !safeName(j.asset.Name) {
 			return errors.New("unsafe_filename")
 		}
-		kind := strings.ToUpper(j.asset.Kind)
-		if kind == "" {
-			switch {
-			case strings.HasPrefix(j.asset.MIME, "image/"):
-				kind = "IMAGE"
-			case strings.HasPrefix(j.asset.MIME, "video/"):
-				kind = "VIDEO"
-			}
-		}
+		kind := assetKind(j.asset)
 		if j.asset.LivePhotoVideo && !companion {
 			return e.skip(ctx, j, "live_photo_companion")
 		}
@@ -316,7 +324,10 @@ func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
 	if uploadErr != nil {
 		var rejection *bridge.Error
 		if errors.As(uploadErr, &rejection) && (rejection.Code == bridge.Authentication ||
-			rejection.Code == bridge.Permission || rejection.Code == bridge.RateLimit) {
+			rejection.Code == bridge.Permission || rejection.Code == bridge.RateLimit ||
+			rejection.Code == bridge.Quota) {
+			// An explicit capacity rejection leaves the stale original staged.
+			// The next run re-reads the target before any new POST.
 			j.state = "staged"
 			return uploadErr
 		}
@@ -521,6 +532,18 @@ func (e *Engine) cleanupStage(ctx context.Context, stage string) {
 func (e *Engine) fail(ctx context.Context, j job, err error) error {
 	ctx = context.WithoutCancel(ctx)
 	code := errorCode(err)
+	if code == bridge.Quota {
+		// Capacity is an explicit rejection, not an uncertain write. Keep the
+		// staged original and stop dispatching new uploads for this run.
+		e.quotaHold.Store(true)
+		if dbErr := e.setState(ctx, &j, "staged", code, ""); dbErr != nil {
+			return dbErr
+		}
+		if dbErr := e.setUsageHold(ctx); dbErr != nil {
+			return dbErr
+		}
+		return errors.New(code)
+	}
 	j.attempts++
 	j.next = e.opts.Now().Add(retryDelay(j.attempts-1, err)).UnixMilli()
 	state := "blocked"

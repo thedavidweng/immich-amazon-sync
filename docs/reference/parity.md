@@ -68,9 +68,9 @@ Checked with `gh api repos/ImAleeexx/immich-gphotos/pulls/<n>`; `merged` was
 | Configurable retry policy | Engine object | Fixed conservative bounds | Not yet tested | #27 |
 | Filters: type, video, size, RAW, archive, tags, album allowlist | Engine partial | Limited type/video/scope | Offline contract | #21 |
 | Durable, reevaluable, non-destructive exclusions | Partial | Skip reasons only | Offline contract | #21 |
-| Categorized storage usage (`photo`, `video`, `other`, `lastCalculated`) | Quota mode proxy | SDK supports; not surfaced | Offline contract | #22 |
-| Honest unknown capacity; no quality selector | No | Original bytes only | Unsupported (quality modes not ported) | #22 |
-| Video advisory threshold and opt-in hold; quota error classification | No | No | Not yet tested | #22 |
+| Categorized storage usage (`photo`, `video`, `other`, `lastCalculated`) | Quota mode proxy | Surfaced in doctor, status, CLI and dashboard with observed bytes/counts | Offline contract | #22 |
+| Honest unknown capacity; no quality selector | No | Original bytes only; capacity, remaining bytes and Prime entitlement are `unknown` | Offline contract | #22 |
+| Video advisory threshold and opt-in hold; quota error classification | No | Explicit per-account budget; distinct `storage_quota_exceeded` keeps originals staged | Offline contract | #22 |
 | Capture date for missing EXIF | PR #5 re-dates direct reads | Preserves EXIF and mtimes; no source writes; doctor/status report finite `metadata_not_supported` | Unsupported (no released SDK setter) | #31 delivered the honest capability; a setter would require read-back verification |
 | Apple Live Photo still + MOV original-pair preservation | PR #7 muxes a derived Google Motion Photo | Two unchanged originals with independent hashes and Nodes (`live_photo_mode: original_pair`); `pair_incomplete` when the companion is missing or ineligible | Offline contract | #26 |
 | Native Apple Live Photo pairing and playback | No | No | Unsupported until disposable samples prove it | #30 |
@@ -135,6 +135,19 @@ shapes.
   `TestPinnedUsageWithoutLastCalculatedStaysStale` pin the categorized
   `billable`/`total` shape, `lastCalculated`, unknown category retention and the
   zero-time stale sentinel.
+- `TestUsageMapsObservedCategoriesAndKeepsUnknownCategories` and
+  `TestUsageWithoutLastCalculatedRemainsVisiblyStale` pin the adapter mapping
+  from the same fixture, including unknown-category retention and the zero-time
+  sentinel. `TestQuotaRejectionIsDistinctFromRateLimitAndAuthentication` pins
+  quota classification against 403/400/409 capacity messages, HTTP 507, a plain
+  permission denial, 429 and 401.
+- `TestUsageStatusLabelsObservedStaleAndUnavailable` pins observed values,
+  stale preservation and unavailable-without-invention. `TestQuotaRejection...`
+  pins a staged original surviving a quota rejection and resuming after a fresh
+  target read under deletion-on and deletion-off.
+  `TestVideoThresholdHoldIsOptInAndResumesWhenUsageFalls` and
+  `TestVideoThresholdWithoutHoldOrFreshUsageCannotPauseUploads` pin the
+  per-account video advisory and hold behaviour.
 
 ### Non-regression tests
 

@@ -451,12 +451,15 @@ func TestDashboardDoctorOnlyReadsRemoteStateAndReportsWritePermissionsUntested(t
 		if r.URL.Hostname() == "127.0.0.1" {
 			return original.RoundTrip(r)
 		}
-		if r.Method != "GET" || !strings.HasSuffix(r.URL.Path, "/nodes") || r.URL.Query().Get("filters") != "isRoot:true" {
+		body := `{"data":[{"id":"root","isRoot":true,"kind":"FOLDER","status":"AVAILABLE","ownerId":"owner"}],"count":1}`
+		if strings.HasSuffix(r.URL.Path, "/account/usage") {
+			body = `{"lastCalculated":"2026-10-20T08:30:00.000Z","photo":{"billable":{"bytes":42,"count":1},"total":{"bytes":42,"count":1}},"video":{"billable":{"bytes":7,"count":1},"total":{"bytes":7,"count":1}},"other":{"billable":{"bytes":0,"count":0},"total":{"bytes":0,"count":0}}}`
+		} else if r.Method != "GET" || !strings.HasSuffix(r.URL.Path, "/nodes") || r.URL.Query().Get("filters") != "isRoot:true" {
 			t.Errorf("doctor mutated target: %s %s", r.Method, r.URL.Path)
 		}
 		targetReads.Add(1)
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Request: r,
-			Body: io.NopCloser(strings.NewReader(`{"data":[{"id":"root","isRoot":true,"kind":"FOLDER","status":"AVAILABLE","ownerId":"owner"}],"count":1}`))}, nil
+			Body: io.NopCloser(strings.NewReader(body))}, nil
 	})
 	defer func() { http.DefaultTransport = original }()
 	form := d.accountForm(t, csrf, "family")
@@ -465,7 +468,8 @@ func TestDashboardDoctorOnlyReadsRemoteStateAndReportsWritePermissionsUntested(t
 		t.Fatalf("save: %d %s", status, body)
 	}
 	status, body := d.post(t, "/accounts/family/doctor", url.Values{"csrf": {csrf}})
-	if status != 200 || targetReads.Load() != 1 || !strings.Contains(body, "untested") || !strings.Contains(body, "3.3.4") {
+	if status != 200 || targetReads.Load() != 2 || !strings.Contains(body, "untested") || !strings.Contains(body, "3.3.4") ||
+		!strings.Contains(body, "usage_capacity") || !strings.Contains(body, "unknown") || !strings.Contains(body, "usage_photo_bytes") {
 		t.Fatalf("doctor: %d %s (target reads=%d)", status, body, targetReads.Load())
 	}
 	for _, secret := range []string{"private-source-key", "session-id=test", password, source.URL} {

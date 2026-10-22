@@ -5,8 +5,9 @@ CREATE TABLE accounts (
 		target_identity TEXT NOT NULL DEFAULT '',
 		pause_reason TEXT NOT NULL DEFAULT '',
 		last_success TEXT,
-		error_code TEXT NOT NULL DEFAULT ''
-	, filter_fingerprint TEXT NOT NULL DEFAULT '');
+		error_code TEXT NOT NULL DEFAULT '',
+		filter_fingerprint TEXT NOT NULL DEFAULT ''
+	);
 CREATE TABLE rules (
 		account_id TEXT NOT NULL REFERENCES accounts(id),
 		scope TEXT NOT NULL,
@@ -32,7 +33,9 @@ CREATE TABLE assets (
 		sha1 TEXT NOT NULL DEFAULT '',
 		size INTEGER NOT NULL DEFAULT 0,
 		node_id TEXT NOT NULL DEFAULT '',
-		priority INTEGER NOT NULL DEFAULT 0, prior_state TEXT NOT NULL DEFAULT '', favorite INTEGER NOT NULL DEFAULT -1, exclusion TEXT NOT NULL DEFAULT '',
+		priority INTEGER NOT NULL DEFAULT 0, prior_state TEXT NOT NULL DEFAULT '',
+		favorite INTEGER NOT NULL DEFAULT -1,
+		exclusion TEXT NOT NULL DEFAULT '',
 		PRIMARY KEY(account_id,id)
 	);
 CREATE TABLE scope_assets (
@@ -86,6 +89,8 @@ CREATE TABLE incremental_tokens (
 CREATE TABLE incremental_seen (
 		account_id TEXT NOT NULL REFERENCES incremental(account_id),asset_id TEXT NOT NULL,
 		PRIMARY KEY(account_id,asset_id));
+CREATE INDEX asset_state_errors ON assets(account_id,state,error_code);
+
 CREATE TABLE workflows (
 		account_id TEXT PRIMARY KEY REFERENCES accounts(id),
 		workflow_id TEXT NOT NULL DEFAULT '',
@@ -95,6 +100,7 @@ CREATE TABLE workflows (
 		desired_hash TEXT NOT NULL DEFAULT '',
 		attempts INTEGER NOT NULL DEFAULT 0,
 		updated_at TEXT NOT NULL DEFAULT '');
+
 CREATE TABLE favorites (
 		account_id TEXT NOT NULL REFERENCES accounts(id),
 		node_id TEXT NOT NULL,
@@ -109,6 +115,5 @@ CREATE TABLE favorites (
 		PRIMARY KEY(account_id,node_id)
 	);
 CREATE INDEX favorite_queue ON favorites(account_id,state,next_at);
-CREATE INDEX asset_state_errors ON assets(account_id,state,error_code);
 
 PRAGMA user_version=7;

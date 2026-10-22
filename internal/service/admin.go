@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 
 	"github.com/thedavidweng/immich-amazon-sync/internal/admin"
@@ -135,10 +136,24 @@ func (b *adminBackend) Diagnose(ctx context.Context, id string) ([]admin.Diagnos
 			admin.Diagnostic{Name: "write_evidence", Code: account.Evidence},
 			admin.Diagnostic{Name: "target_writes", Code: account.TargetWrites},
 			admin.Diagnostic{Name: "original_read", Code: account.OriginalRead},
+			admin.Diagnostic{Name: "usage_capacity", Code: account.Usage.Capacity},
+			admin.Diagnostic{Name: "usage_entitlement", Code: account.Usage.Entitlement},
 			admin.Diagnostic{Name: "capture_date", Code: account.CaptureDate},
 		)
 		if account.Workflow != "" {
 			checks = append(checks, admin.Diagnostic{Name: "workflow", Code: account.Workflow})
+		}
+		if account.Usage.State != "unavailable" {
+			for _, category := range []struct {
+				name  string
+				value int64
+			}{
+				{"usage_photo_bytes", account.Usage.Photo().Billable.Bytes},
+				{"usage_video_bytes", account.Usage.Video().Billable.Bytes},
+				{"usage_other_bytes", account.Usage.Other().Billable.Bytes},
+			} {
+				checks = append(checks, admin.Diagnostic{Name: category.name, Code: strconv.FormatInt(category.value, 10)})
+			}
 		}
 		for _, check := range account.Checks {
 			checks = append(checks, admin.Diagnostic{Name: check.Name, Code: check.Code})

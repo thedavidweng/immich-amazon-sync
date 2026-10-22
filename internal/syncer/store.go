@@ -200,20 +200,29 @@ func (s *Store) migrate() error {
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 8 {
+	if version > 9 {
 		return errors.New("unsupported_schema")
 	}
-	if version == 8 {
+	if version == 9 {
 		return nil
 	}
+	if version == 8 {
+		return s.migrateP8()
+	}
 	if version == 7 {
-		return s.migrateP7()
+		if err := s.migrateP7(); err != nil {
+			return err
+		}
+		return s.migrateP8()
 	}
 	if version == 6 {
 		if err := s.migrateP6(); err != nil {
 			return err
 		}
-		return s.migrateP7()
+		if err := s.migrateP7(); err != nil {
+			return err
+		}
+		return s.migrateP8()
 	}
 	if version == 5 {
 		if err := s.migrateP5(); err != nil {
@@ -222,7 +231,10 @@ func (s *Store) migrate() error {
 		if err := s.migrateP6(); err != nil {
 			return err
 		}
-		return s.migrateP7()
+		if err := s.migrateP7(); err != nil {
+			return err
+		}
+		return s.migrateP8()
 	}
 	if version == 4 {
 		if err := s.migrateP4(); err != nil {
@@ -234,7 +246,10 @@ func (s *Store) migrate() error {
 		if err := s.migrateP6(); err != nil {
 			return err
 		}
-		return s.migrateP7()
+		if err := s.migrateP7(); err != nil {
+			return err
+		}
+		return s.migrateP8()
 	}
 	if version == 3 {
 		if err := s.migrateP3(); err != nil {
@@ -249,7 +264,10 @@ func (s *Store) migrate() error {
 		if err := s.migrateP6(); err != nil {
 			return err
 		}
-		return s.migrateP7()
+		if err := s.migrateP7(); err != nil {
+			return err
+		}
+		return s.migrateP8()
 	}
 	if version == 2 {
 		if err := s.migrateP2(); err != nil {
@@ -267,7 +285,10 @@ func (s *Store) migrate() error {
 		if err := s.migrateP6(); err != nil {
 			return err
 		}
-		return s.migrateP7()
+		if err := s.migrateP7(); err != nil {
+			return err
+		}
+		return s.migrateP8()
 	}
 	if version == 1 {
 		if err := s.migrateP1(); err != nil {
@@ -288,7 +309,10 @@ func (s *Store) migrate() error {
 		if err := s.migrateP6(); err != nil {
 			return err
 		}
-		return s.migrateP7()
+		if err := s.migrateP7(); err != nil {
+			return err
+		}
+		return s.migrateP8()
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -373,7 +397,10 @@ func (s *Store) migrate() error {
 	if err := s.migrateP6(); err != nil {
 		return err
 	}
-	return s.migrateP7()
+	if err := s.migrateP7(); err != nil {
+		return err
+	}
+	return s.migrateP8()
 }
 
 // migrateP3 records how each album rule came into scope. Explicit rules are
@@ -537,11 +564,36 @@ func (s *Store) migrateP6() error {
 	return tx.Commit()
 }
 
-// migrateP7 adds the Live Photo pair ledger and the applied per-account pair
+// migrateP7 stores only the normalized, categorized usage observation and the
+// provider's own calculation timestamp. No raw remote payload or inferred
+// capacity is retained. Existing mappings, cursors and deletion state are
+// untouched.
+func (s *Store) migrateP7() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(`CREATE TABLE usage (
+		account_id TEXT PRIMARY KEY REFERENCES accounts(id),
+		observed_at TEXT NOT NULL DEFAULT '',
+		last_calculated TEXT NOT NULL DEFAULT '',
+		categories TEXT NOT NULL DEFAULT '',
+		error_code TEXT NOT NULL DEFAULT '',
+		hold INTEGER NOT NULL DEFAULT 0
+	);
+	PRAGMA user_version=8;`)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// migrateP8 adds the Live Photo pair ledger and the applied per-account pair
 // mode. Existing accounts keep the historical still-only behavior: the stored
 // mode is empty, no pair exists, and every asset mapping, exclusion, favorite
 // and staging reference is untouched.
-func (s *Store) migrateP7() error {
+func (s *Store) migrateP8() error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -560,7 +612,7 @@ func (s *Store) migrateP7() error {
 		FOREIGN KEY(account_id,still_id) REFERENCES assets(account_id,id)
 	);
 	CREATE INDEX live_pair_queue ON live_pairs(account_id,state,next_at);
-	PRAGMA user_version=8;`)
+	PRAGMA user_version=9;`)
 	if err != nil {
 		return err
 	}

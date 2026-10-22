@@ -15,6 +15,7 @@ import (
 	"github.com/thedavidweng/immich-amazon-sync/internal/config"
 	"github.com/thedavidweng/immich-amazon-sync/internal/filter"
 	"github.com/thedavidweng/immich-amazon-sync/internal/service"
+	"github.com/thedavidweng/immich-amazon-sync/internal/syncer"
 )
 
 type failure struct {
@@ -264,6 +265,9 @@ func printReport(out io.Writer, report service.Report, asJSON bool) error {
 				return outputError(err)
 			}
 		}
+		if err := printUsage(out, "usage", account.Status.Usage); err != nil {
+			return outputError(err)
+		}
 	}
 	return nil
 }
@@ -290,6 +294,30 @@ func printFilters(out io.Writer, cfg config.Config, asJSON bool) error {
 		if _, err := fmt.Fprintf(out, "%s media_types=%s max_original_bytes=%d skip_raw=%t include_archived=%t excluded_tags=%s live_photo_mode=%s\n",
 			item.Account, strings.Join(item.Filters.MediaTypes, ","), item.Filters.MaxOriginalBytes,
 			item.Filters.SkipRAW, item.Filters.ArchivedIncluded(), tags, item.LivePhotoMode); err != nil {
+			return outputError(err)
+		}
+	}
+	return nil
+}
+
+func printUsage(out io.Writer, prefix string, usage syncer.UsageStatus) error {
+	calculated := "unknown"
+	if usage.LastCalculated != nil {
+		calculated = usage.LastCalculated.Format(time.RFC3339)
+	}
+	if _, err := fmt.Fprintf(out, "%s state=%s capacity=%s entitlement=%s last_calculated=%s error_code=%s video_threshold_bytes=%d video_threshold_exceeded=%t video_hold=%t quota_hold=%t\n",
+		prefix, usage.State, usage.Capacity, usage.Entitlement, calculated, usage.ErrorCode,
+		usage.VideoThresholdBytes, usage.VideoThresholdExceeded, usage.VideoHold, usage.QuotaHold); err != nil {
+		return outputError(err)
+	}
+	if usage.State == "unavailable" {
+		return nil
+	}
+	for _, name := range []string{"photo", "video", "other"} {
+		category := usage.Categories[name]
+		if _, err := fmt.Fprintf(out, "%s %s billable_bytes=%d billable_count=%d total_bytes=%d total_count=%d\n",
+			prefix, name, category.Billable.Bytes, category.Billable.Count,
+			category.Total.Bytes, category.Total.Count); err != nil {
 			return outputError(err)
 		}
 	}
@@ -327,6 +355,9 @@ func printDiagnosis(out io.Writer, report service.DoctorReport, asJSON bool) err
 			account.OriginalRead, orNone(account.Workflow),
 			account.DirectRoots.Available, account.DirectRoots.Configured,
 			account.CaptureDate); err != nil {
+			return outputError(err)
+		}
+		if err := printUsage(out, "  usage", account.Usage); err != nil {
 			return outputError(err)
 		}
 		for _, check := range account.Checks {
