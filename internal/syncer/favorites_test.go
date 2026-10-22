@@ -683,8 +683,7 @@ func TestFavoritesTrashedSourceNeverAltersNodeFavorite(t *testing.T) {
 			if st.DeletePending+st.Deleted != 1 {
 				t.Fatalf("trash was not recorded: %+v", st)
 			}
-			if len(d.favWrites) != 1 || !d.favorites["1"] || st.FavoritesPreserved != 0 &&
-				len(d.favWrites) != 1 {
+			if len(d.favWrites) != 1 || !d.favorites["1"] {
 				t.Fatalf("trashed source changed the favorite state: %+v writes=%v favorites=%v", st, d.favWrites, d.favorites)
 			}
 		})
