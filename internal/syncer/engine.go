@@ -16,7 +16,7 @@ type Options struct {
 	AlbumIDs        []string
 	Library         bool
 	IncludeVideos   bool
-	MirrorAlbums    bool
+	AlbumSyncMode   bridge.AlbumSyncMode
 	Deletions       bool
 	Workers         int
 	MaxStagingBytes int64
@@ -45,6 +45,9 @@ type Status struct {
 	AlbumsPending           int            `json:"albums_pending"`
 	AlbumsUnconfirmed       int            `json:"albums_unconfirmed"`
 	AlbumsFailed            int            `json:"albums_failed"`
+	AlbumSyncMode           string         `json:"album_sync_mode"`
+	AlbumsActive            int            `json:"albums_active"`
+	AlbumsInaccessible      int            `json:"albums_inaccessible"`
 	AssociationsPending     int            `json:"associations_pending"`
 	AssociationsFailed      int            `json:"associations_failed"`
 	AssociationsUnconfirmed int            `json:"associations_unconfirmed"`
@@ -68,13 +71,18 @@ type Engine struct {
 }
 
 func New(store *Store, source bridge.Source, target bridge.Target, opts Options) (*Engine, error) {
+	mode := opts.AlbumSyncMode
+	if mode == "" {
+		mode = bridge.AlbumSyncOff
+	}
 	if store == nil || source == nil || target == nil || opts.AccountID == "" ||
 		(!opts.Library && len(opts.AlbumIDs) == 0) || (opts.Library && len(opts.AlbumIDs) != 0) ||
-		(opts.Library && opts.MirrorAlbums) ||
+		!mode.Valid() || (mode == bridge.AlbumSyncSelected && (opts.Library || len(opts.AlbumIDs) == 0)) ||
 		opts.Workers < 0 || opts.Workers > 32 || opts.MaxStagingBytes < 0 ||
 		opts.MaxStagingFiles < 0 || opts.BytesPerSecond < 0 {
 		return nil, errors.New("invalid_options")
 	}
+	opts.AlbumSyncMode = mode
 	for _, id := range opts.AlbumIDs {
 		if id == "" {
 			return nil, errors.New("invalid_options")
@@ -222,6 +230,10 @@ func (e *Engine) summary(ctx context.Context) (Status, error) {
 	return st, nil
 }
 
+func (e *Engine) mirrorsAlbums() bool {
+	return e.opts.AlbumSyncMode != bridge.AlbumSyncOff
+}
+
 func (e *Engine) paused(ctx context.Context) (bool, error) {
 	var reason string
 	if err := e.store.db.QueryRowContext(ctx, "SELECT pause_reason FROM accounts WHERE id=?", e.opts.AccountID).Scan(&reason); err != nil {
@@ -240,7 +252,8 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		return st, errors.New("storage_unavailable")
 	}
-	if e.opts.MirrorAlbums {
+	st.AlbumSyncMode = string(e.opts.AlbumSyncMode)
+	if e.mirrorsAlbums() {
 		err = e.store.db.QueryRowContext(ctx, `SELECT
 			coalesce(sum(a.target_id IS NULL OR a.target_id='' OR a.complete_generation!=r.generation OR a.applied_name!=r.name),0),
 			coalesce(sum(a.state IN ('creating','unconfirmed')),0),
@@ -257,6 +270,13 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 			FROM memberships m JOIN rules r ON r.account_id=m.account_id AND r.scope=m.scope
 			WHERE m.account_id=? AND r.active=1`, e.opts.AccountID).
 			Scan(&st.AssociationsPending, &st.AssociationsUnconfirmed, &st.AssociationsFailed)
+		if err != nil {
+			return st, errors.New("storage_unavailable")
+		}
+		err = e.store.db.QueryRowContext(ctx, `SELECT
+			(SELECT count(*) FROM rules WHERE account_id=? AND active=1 AND album_id!=''),
+			(SELECT count(*) FROM rules WHERE account_id=? AND album_id!='' AND discovered=0)`,
+			e.opts.AccountID, e.opts.AccountID).Scan(&st.AlbumsActive, &st.AlbumsInaccessible)
 		if err != nil {
 			return st, errors.New("storage_unavailable")
 		}
@@ -285,9 +305,11 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 		UNION ALL SELECT a.error_code FROM albums a JOIN rules r ON r.account_id=a.account_id AND r.scope=a.scope
 			WHERE a.account_id=? AND r.active=1 AND ?
 		UNION ALL SELECT m.error_code FROM memberships m JOIN rules r ON r.account_id=m.account_id AND r.scope=m.scope
-			WHERE m.account_id=? AND r.active=1 AND ?) WHERE error_code!='' GROUP BY error_code`,
+			WHERE m.account_id=? AND r.active=1 AND ?
+		UNION ALL SELECT error_code FROM rules WHERE account_id=? AND album_id!='' AND discovered=0
+		) WHERE error_code!='' GROUP BY error_code`,
 		e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.Library,
-		e.opts.AccountID, e.opts.MirrorAlbums, e.opts.AccountID, e.opts.MirrorAlbums)
+		e.opts.AccountID, e.mirrorsAlbums(), e.opts.AccountID, e.mirrorsAlbums(), e.opts.AccountID)
 	if err != nil {
 		return st, errors.New("storage_unavailable")
 	}
@@ -315,7 +337,7 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 		 WHERE a.account_id=? AND ? AND r.active=1 AND r.complete=1 AND a.state NOT IN ('creating','unconfirmed')
 		 AND a.error_code!='' AND a.attempts<5 AND a.next_at<=unixepoch('subsec')*1000)`,
 		e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID,
-		e.opts.AccountID, e.opts.MirrorAlbums).Scan(&due)
+		e.opts.AccountID, e.mirrorsAlbums()).Scan(&due)
 	if err != nil {
 		return st, errors.New("storage_unavailable")
 	}
@@ -331,7 +353,7 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 			WHERE a.account_id=? AND ? AND r.active=1 AND a.attempts<5 AND a.error_code!=''
 			AND a.state NOT IN ('creating','unconfirmed')) WHERE next_at>unixepoch('subsec')*1000`,
 		e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID,
-		e.opts.MirrorAlbums).Scan(&next)
+		e.mirrorsAlbums()).Scan(&next)
 	if err != nil {
 		return st, errors.New("storage_unavailable")
 	}
@@ -372,6 +394,14 @@ func (e *Engine) run(ctx context.Context, full, incremental bool) error {
 	if err = e.identify(ctx); err != nil {
 		return e.accountError(ctx, err)
 	}
+	// A full pass or a periodic reconcile reads the authoritative accessible
+	// album listing; bounded continuations keep the discovered set stable so an
+	// in-flight album scan is not interrupted. A failed listing changes nothing.
+	if e.opts.AlbumSyncMode == bridge.AlbumSyncAllAccessible && (full || incremental) {
+		if _, err = e.discoverAlbums(ctx); err != nil {
+			return e.accountError(ctx, err)
+		}
+	}
 	if err = e.configureRules(ctx, full); err != nil {
 		return errors.New("storage_unavailable")
 	}
@@ -381,7 +411,9 @@ func (e *Engine) run(ctx context.Context, full, incremental bool) error {
 		}
 	}
 	// Explicit runs retry immediately; continuations honor persisted scan backoff.
+	// An inaccessible album stays visibly failed until discovery returns it.
 	if _, err = e.store.db.ExecContext(ctx, `UPDATE rules SET error_code='' WHERE account_id=?
+		AND active=1 AND error_code!='album_inaccessible'
 		AND (? OR (attempts<5 AND next_at<=unixepoch('subsec')*1000))`, e.opts.AccountID, full); err != nil {
 		return errors.New("storage_unavailable")
 	}
@@ -507,7 +539,7 @@ func errorCode(err error) string {
 		bridge.NotFound, bridge.Conflict, bridge.Unconfirmed, bridge.Protocol, bridge.Unsupported,
 		"identity_unavailable", "identity_mismatch", "storage_unavailable", "staging_quota",
 		"checksum_mismatch", "size_mismatch", "staging_corrupt", "unsafe_filename", "source_changed", "canceled",
-		"invalid_event", "album_unconfirmed", "membership_guard", "deletion_guard":
+		"invalid_event", "album_unconfirmed", "membership_guard", "deletion_guard", "album_inaccessible":
 		return code
 	}
 	return "remote_error"
