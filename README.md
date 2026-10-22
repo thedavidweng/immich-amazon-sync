@@ -15,6 +15,16 @@ provenance use MD5 and byte size computed from the staged original; their source
 checksum is not treated as a verified byte checksum. Review the
 [compatibility limits](docs/reference/compatibility.md) before deployment.
 
+The backup contract is the **original bytes**. There is no quality selector,
+Storage Saver mode or recompression path. Amazon reports observed photo, video
+and other usage by category, which doctor, status and the local dashboard show
+with its calculation time; subscription capacity, remaining bytes and Prime
+entitlement remain explicitly unknown. An optional per-account video advisory
+threshold can warn or hold new video uploads without pausing photos. A real
+quota rejection is a distinct finite error and never misreported as rate
+limiting; staged originals stay durable and resume without a blind retry. See
+[storage usage and quota](docs/reference/compatibility.md#storage-usage-and-quota).
+
 Media is never permanently deleted from Amazon by this service. Removing a source
 asset, album, rule or account does not remove its cloud backup. Optional
 deletion propagation is off by default: when explicitly enabled per account,

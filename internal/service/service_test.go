@@ -66,12 +66,15 @@ func amazonReads(t *testing.T) {
 		if r.URL.Hostname() == "127.0.0.1" {
 			return original.RoundTrip(r)
 		}
-		if r.Method != http.MethodGet || !strings.HasSuffix(r.URL.Path, "/nodes") || r.URL.Query().Get("filters") != "isRoot:true" {
+		body := `{"data":[{"id":"root","isRoot":true,"kind":"FOLDER","status":"AVAILABLE","ownerId":"owner"}],"count":1}`
+		if strings.HasSuffix(r.URL.Path, "/account/usage") {
+			body = `{"lastCalculated":"2026-10-20T08:30:00.000Z","photo":{"billable":{"bytes":123456789,"count":42},"total":{"bytes":234567890,"count":50}},"video":{"billable":{"bytes":987654321,"count":3},"total":{"bytes":987654321,"count":3}},"other":{"billable":{"bytes":1024,"count":1},"total":{"bytes":2048,"count":2}}}`
+		} else if r.Method != http.MethodGet || !strings.HasSuffix(r.URL.Path, "/nodes") || r.URL.Query().Get("filters") != "isRoot:true" {
 			t.Errorf("doctor mutated Amazon or accessed unrelated endpoint: %s %s", r.Method, r.URL.Path)
 		}
 		return &http.Response{
 			StatusCode: 200, Header: make(http.Header), Request: r,
-			Body: io.NopCloser(strings.NewReader(`{"data":[{"id":"root","isRoot":true,"kind":"FOLDER","status":"AVAILABLE","ownerId":"owner"}],"count":1}`)),
+			Body: io.NopCloser(strings.NewReader(body)),
 		}, nil
 	})
 	t.Cleanup(func() { http.DefaultTransport = original })
@@ -111,6 +114,11 @@ func TestDoctorProbesReadOnlyWithoutClaimingWritePermissions(t *testing.T) {
 	if !strings.Contains(text, `"version":"3.3.4"`) || !strings.Contains(text, `"target_writes":"untested"`) ||
 		!strings.Contains(text, `"capture_date":"metadata_not_supported"`) || !strings.Contains(text, `"code":"ok"`) {
 		t.Fatalf("missing read/write evidence: %s", text)
+	}
+	if !strings.Contains(text, `"state":"observed"`) || !strings.Contains(text, `"capacity":"unknown"`) ||
+		!strings.Contains(text, `"entitlement":"unknown"`) || !strings.Contains(text, `"bytes":123456789`) ||
+		!strings.Contains(text, `"last_calculated":"2026-10-20T08:30:00Z"`) {
+		t.Fatalf("missing observed usage or unknown capacity: %s", text)
 	}
 	for _, private := range []string{"private-account", "source-secret", "Private album", cfg.Accounts[0].ImmichURL, "source-user", `"identity"`} {
 		if strings.Contains(text, private) {

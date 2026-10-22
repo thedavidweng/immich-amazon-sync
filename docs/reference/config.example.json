@@ -23,6 +23,8 @@
         "include_archived": true,
         "excluded_tags": []
       },
+      "video_usage_threshold_bytes": 0,
+      "hold_videos_at_threshold": false,
       "album_sync_mode": "off",
       "deletions": false,
       "deletions_confirmation": "",

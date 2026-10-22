@@ -36,7 +36,7 @@ func Code(err error) string {
 
 func knownCode(code string) string {
 	switch code {
-	case bridge.Authentication, bridge.Permission, bridge.RateLimit, bridge.Unavailable,
+	case bridge.Authentication, bridge.Permission, bridge.RateLimit, bridge.Quota, bridge.Unavailable,
 		bridge.NotFound, bridge.Conflict, bridge.Unconfirmed, bridge.FavoriteUnconfirmed, bridge.Protocol, bridge.Unsupported,
 		"storage_unavailable", "writer_locked", "locking_unsupported", "unsupported_schema",
 		"engine_busy", "account_paused", "identity_unavailable", "identity_mismatch",
@@ -60,6 +60,8 @@ func knownCode(code string) string {
 		"workflow_not_configured", "workflow_management_active", "workflow_not_managed",
 		"workflow_not_owned", "workflow_ambiguous", "workflow_unconfirmed",
 		"workflow_mismatch", "workflow_cleanup_failed", "workflow_secret_unavailable",
+		"video_usage_threshold_invalid", "video_usage_threshold_required",
+		"hold_videos_at_threshold_invalid",
 		"transfer_window_timezone_invalid", "transfer_window_time_invalid", "transfer_window_bounds_invalid":
 		return code
 	}
@@ -99,6 +101,8 @@ func ExitCode(err error) int {
 		"managed_workflow_invalid", "workflow_configuration_required",
 		"workflow_credentials_conflict", "workflow_callback_url_invalid",
 		"workflow_not_configured", "workflow_management_active", "workflow_not_managed",
+		"video_usage_threshold_invalid", "video_usage_threshold_required",
+		"hold_videos_at_threshold_invalid",
 		"transfer_window_timezone_invalid", "transfer_window_time_invalid", "transfer_window_bounds_invalid":
 		return 2
 	}

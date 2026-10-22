@@ -30,6 +30,8 @@ See [config.example.json](config.example.json) for the minimal deployment shape.
 | `library` | `false` | Deliberate whole-accessible-library choice, mutually exclusive with `album_ids`. |
 | `include_videos` | unset | Legacy video toggle accepted only for migration into `filters.media_types`; supplying both returns `filter_conflict`. |
 | `filters` | images only, archive included | Validated eligibility policy; see [eligibility filters](#eligibility-filters). |
+| `video_usage_threshold_bytes` | `0` | Optional user budget compared with observed billable video bytes. Zero disables it. It is not a provider quota or remaining-capacity estimate. |
+| `hold_videos_at_threshold` | `false` | Hold new video uploads while fresh observed billable video usage is at or above the threshold. Requires a positive threshold. Photos and metadata work continue; staged originals stay durable. |
 | `album_sync_mode` | `off` | Album mirroring scope: `off`, `selected` (requires `album_ids` and `library: false`) or `all_accessible` (discovers every album the API key can read, including with `library: true`). |
 | `mirror_albums` | unset | Deprecated boolean form of `album_sync_mode`. `true` maps to `selected` and never to `all_accessible`; combining it with a different mode returns `album_sync_mode_conflict`. |
 | `favorites` | `off` | `off` or `add_only`. Add-only stars a verified Amazon Node when the source explicitly reports `isFavorite`; it never unstars. An absent source field is unknown and performs no write. |
@@ -163,9 +165,12 @@ Without `--config`, the single-account environment mode uses `IMMICH_URL`,
 `MEDIA_TYPES`, `MAX_ORIGINAL_BYTES`, `SKIP_RAW`, `INCLUDE_ARCHIVED` and
 comma-separated `EXCLUDED_TAGS`. The legacy `INCLUDE_VIDEOS` (`true`/`false`) is
 accepted instead of `MEDIA_TYPES`; supplying both returns `filter_conflict`.
+`VIDEO_USAGE_THRESHOLD_BYTES` (nonnegative integer) and
+`HOLD_VIDEOS_AT_THRESHOLD` (`true`/`false`) configure the advisory video budget.
+Its account ID is `default`.
 Optional environment-mode window values are `TRANSFER_TIMEZONE`,
-`TRANSFER_WINDOW_START` and `TRANSFER_WINDOW_END`; set all three together or
-none. Its account ID is `default`. Use JSON for multiple accounts.
+`TRANSFER_WINDOW_START` and `TRANSFER_WINDOW_END`; set all three together or none.
+Use JSON for multiple accounts.
 `DATA_DIR`, `LISTEN`, `ADMIN_PASSWORD_FILE` and `WEBHOOK_SECRET_FILE` override
 their corresponding values even with a JSON file. Environment-only accounts also
 accept `MANAGED_WORKFLOW`, `IMMICH_WORKFLOW_API_KEY_FILE`,

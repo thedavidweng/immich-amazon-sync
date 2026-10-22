@@ -99,6 +99,14 @@ func formAccount(r *http.Request) (config.Account, error) {
 	if err := policy.Validate(); err != nil {
 		return config.Account{}, err
 	}
+	threshold := int64(0)
+	if value := strings.TrimSpace(r.PostForm.Get("video_usage_threshold_bytes")); value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsed < 0 {
+			return config.Account{}, errors.New("video_usage_threshold_invalid")
+		}
+		threshold = parsed
+	}
 	window := config.TransferWindow{
 		Timezone: strings.TrimSpace(r.PostForm.Get("transfer_timezone")),
 		Start:    strings.TrimSpace(r.PostForm.Get("transfer_window_start")),
@@ -111,19 +119,21 @@ func formAccount(r *http.Request) (config.Account, error) {
 	return config.Account{
 		ID: r.PostForm.Get("id"), ImmichURL: r.PostForm.Get("immich_url"),
 		APIKeyFile: r.PostForm.Get("key_file"), CookieFile: r.PostForm.Get("cookie_file"),
-		AmazonRegion:         r.PostForm.Get("region"),
-		AlbumIDs:             ids,
-		Library:              r.PostForm.Get("library") == "on",
-		Filters:              &policy,
-		AlbumSyncMode:        r.PostForm.Get("album_sync_mode"),
-		Favorites:            r.PostForm.Get("favorites"),
-		Deletions:            r.PostForm.Get("deletions") == "on",
-		DeletionConfirmation: r.PostForm.Get("deletions_confirmation"),
-		ManagedWorkflow:      r.PostForm.Get("managed_workflow") == "on",
-		WorkflowAPIKeyFile:   r.PostForm.Get("workflow_key_file"),
-		WorkflowCallbackURL:  r.PostForm.Get("workflow_callback_url"),
-		WorkflowSecretFile:   r.PostForm.Get("workflow_secret_file"),
-		TransferWindow:       transferWindow,
+		AmazonRegion:             r.PostForm.Get("region"),
+		AlbumIDs:                 ids,
+		Library:                  r.PostForm.Get("library") == "on",
+		Filters:                  &policy,
+		AlbumSyncMode:            r.PostForm.Get("album_sync_mode"),
+		Favorites:                r.PostForm.Get("favorites"),
+		Deletions:                r.PostForm.Get("deletions") == "on",
+		DeletionConfirmation:     r.PostForm.Get("deletions_confirmation"),
+		ManagedWorkflow:          r.PostForm.Get("managed_workflow") == "on",
+		WorkflowAPIKeyFile:       r.PostForm.Get("workflow_key_file"),
+		WorkflowCallbackURL:      r.PostForm.Get("workflow_callback_url"),
+		WorkflowSecretFile:       r.PostForm.Get("workflow_secret_file"),
+		VideoUsageThresholdBytes: threshold,
+		HoldVideosAtThreshold:    r.PostForm.Get("hold_videos_at_threshold") == "on",
+		TransferWindow:           transferWindow,
 	}, nil
 }
 

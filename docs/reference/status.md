@@ -35,13 +35,28 @@ overview. There is no public JSON status endpoint.
 | `workflow_code` | Optional finite notice or failure for the workflow state, such as `workflow_version_unsupported`, `workflow_permission_missing`, `workflow_unconfirmed` or `workflow_cleanup_failed`. Omitted when healthy. |
 | `incremental_scanning` | A library delta scan is active. |
 | `last_incremental` | Completed library discovery watermark, or `null`; this is the scan-start boundary, not proof of transfer completion. |
-| `work_remaining` | Unpaused work other than window-blocked uploads is eligible for continuation now. False does not mean every job succeeded. |
+| `work_remaining` | Unpaused work other than window-blocked or held uploads is eligible for continuation now. False does not mean every job succeeded. |
 | `next_attempt` | Optional earliest scheduled wake timestamp: the earliest retry or, when uploads are deferred, the next transfer-window opening. Omitted when none is scheduled or the account is paused. |
 | `deferral_reason` | `transfer_window` while deferred uploads wait for a closed window; omitted otherwise. |
 | `transfer_window` | Present only when the account configures a window: `timezone`, `start`, `end`, `open`, and `next_opening` when closed. `next_opening` is DST-correct local wall-clock time in that zone. |
 | `bytes_per_second` | Configured combined per-account cap for source-download and destination-upload bytes; zero means disabled. Metadata traffic is not counted. |
 | `direct` | Process-local read-only mount diagnostics: `reads`, `bytes_avoided`, per-reason `fallbacks` and fail-closed `failures`. Counters reset on restart and never contain a path. Zero everywhere when no `direct_roots` mapping is configured. |
 | `capture_date` | Capture-date write capability of the pinned target SDK. `metadata_not_supported` means the service cannot set a capture date remotely and does not claim that Immich-only date edits are mirrored; `supported` is reserved for a released SDK operation verified by an authoritative read-back. The field is always present and is never an implied success. |
+| `usage.state` | `observed`, `stale` or `unavailable`. `observed` requires the provider's calculation timestamp; `stale` keeps existing values but labels a missing timestamp or a failed latest refresh; `unavailable` means no observation exists. |
+| `usage.capacity`, `usage.entitlement` | Always `unknown`. Subscription cap, remaining bytes and Prime entitlement are never inferred from usage, region or zero photo counts. |
+| `usage.categories` | Observed `photo`, `video`, `other` and any additional provider category, each with `billable`/`total` bytes and counts. Omitted when unavailable; never replaced with zeros. |
+| `usage.last_calculated`, `usage.observed_at` | Provider calculation time and local observation time; omitted when unknown. |
+| `usage.error_code` | Finite code from the latest usage refresh attempt; omitted when none. |
+| `usage.video_threshold_bytes`, `usage.video_threshold_exceeded` | Configured per-account advisory budget and whether fresh observed billable video bytes reach it. |
+| `usage.video_hold`, `usage.quota_hold` | New video uploads held at the advisory threshold; uploads held after a real quota rejection. A hold preserves staged originals and never confirms a write. |
+
+Usage is an observation, not a capacity promise. Original bytes are the backup
+contract: there is no quality selector, Storage Saver mode or recompression
+path. `rate_limited` and `storage_quota_exceeded` are separate finite codes; a
+quota rejection keeps the staged original durable and is re-attempted only
+after a fresh target read on a later run, so an uncertain write is never
+replayed. Usage is refreshed by a sync run; `stale` and `unavailable` are
+normal labels for old or failed reads, not zero usage.
 
 A `polling` workflow state is a capability notice, not a media failure: periodic
 reconciliation is never disabled. Counts such as pending, failed and unconfirmed
