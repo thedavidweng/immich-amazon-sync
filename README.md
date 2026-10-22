@@ -4,6 +4,16 @@ A self-hosted, one-way backup service that continuously syncs original photos an
 
 The service runs as a single container backed by a durable local SQLite ledger. It preserves original byte streams without transcoding or quality reduction, queries remote checksums before dispatching uploads to avoid duplicate storage, and enforces non-destructive defaults.
 
+## Related projects
+
+Three sibling projects share one Amazon Photos foundation:
+
+| Project | What it is | Relation |
+| --- | --- | --- |
+| [`amazon-photos`](https://github.com/thedavidweng/amazon-photos) | Go SDK (`pkg/aphotos`) and `aphotos` CLI | Foundation: this service and Rainforest both import this SDK |
+| [`rainforest`](https://github.com/thedavidweng/rainforest) | Cross-platform desktop app for one-time upload, one-way folder backup, and recovery download | End-user client on the same SDK |
+| [`immich-amazon-sync`](https://github.com/thedavidweng/immich-amazon-sync) | Self-hosted container service | This project; server-side Immich → Amazon Photos backup on the SDK |
+
 ## Quick start
 
 ### Prerequisites
