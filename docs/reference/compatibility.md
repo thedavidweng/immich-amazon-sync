@@ -2,7 +2,9 @@
 
 Research baseline: **October 20, 2026, America/Vancouver**. Acquisition crossed
 October 21 UTC. These pins describe inspected contracts; they do not establish
-live-account success.
+live-account success. The capability-by-capability comparison against the
+combined `immich-gphotos` baseline, with its evidence grades and delivering
+tickets, is in [parity.md](parity.md).
 
 | Boundary | Pin/evidence | Limit |
 | --- | --- | --- |

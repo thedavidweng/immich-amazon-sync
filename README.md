@@ -98,6 +98,7 @@ Do not expose the dashboard publicly; publish only on host loopback.
 | Understand managed album membership and uncertainty | [Managed albums](docs/how-to/managed-albums.md) |
 | Interpret progress counters and scheduling | [Status](docs/reference/status.md) |
 | Assess versions, regions and media limitations | [Compatibility evidence](docs/reference/compatibility.md) |
+| Compare capability parity and evidence grades | [Parity baseline](docs/reference/parity.md) |
 | Understand identities and deletion safety | [Safety model](docs/explanation/safety.md) |
 | Understand deployment and upstream contract choices | [ADRs](docs/adr/) |
 
