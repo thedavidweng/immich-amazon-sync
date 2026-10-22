@@ -2,6 +2,7 @@ package direct_test
 
 import (
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -169,8 +170,13 @@ func TestDevicesSocketsAndDirectoriesAreRejected(t *testing.T) {
 	if err := syscall.Mkfifo(filepath.Join(host, "pipe.jpg"), 0644); err != nil {
 		t.Skipf("fifo unavailable: %v", err)
 	}
+	socket, err := net.Listen("unix", filepath.Join(host, "socket.jpg"))
+	if err != nil {
+		t.Skipf("unix socket unavailable: %v", err)
+	}
+	defer socket.Close()
 	set := roots(t, host)
-	for _, path := range []string{"/immich/upload/folder.jpg", "/immich/upload/pipe.jpg"} {
+	for _, path := range []string{"/immich/upload/folder.jpg", "/immich/upload/pipe.jpg", "/immich/upload/socket.jpg"} {
 		if f, outcome := set.Open(path); f != nil || outcome != direct.PathNotRegular || !outcome.FailClosed() {
 			t.Fatalf("%s: %v %q", path, f, outcome)
 		}
