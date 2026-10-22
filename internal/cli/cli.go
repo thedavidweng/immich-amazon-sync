@@ -238,8 +238,9 @@ func printDiagnosis(out io.Writer, report service.DoctorReport, asJSON bool) err
 		return outputError(err)
 	}
 	for _, account := range report.Accounts {
-		if _, err := fmt.Fprintf(out, "%s version=%s region=%s evidence=%s target_writes=%s original_read=%s\n",
-			account.Account, account.Version, account.Region, account.Evidence, account.TargetWrites, account.OriginalRead); err != nil {
+		if _, err := fmt.Fprintf(out, "%s version=%s region=%s evidence=%s target_writes=%s original_read=%s direct_roots=%d/%d\n",
+			account.Account, account.Version, account.Region, account.Evidence, account.TargetWrites,
+			account.OriginalRead, account.DirectRoots.Available, account.DirectRoots.Configured); err != nil {
 			return outputError(err)
 		}
 		for _, check := range account.Checks {

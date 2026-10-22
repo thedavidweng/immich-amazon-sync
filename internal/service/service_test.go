@@ -121,6 +121,28 @@ func TestDoctorProbesReadOnlyWithoutClaimingWritePermissions(t *testing.T) {
 	}
 }
 
+func TestDoctorReportsApprovedRootsWithoutLeakingPaths(t *testing.T) {
+	amazonReads(t)
+	cfg := remoteConfig(t, sourceRead)
+	present, absent := t.TempDir(), filepath.Join(t.TempDir(), "absent-root")
+	cfg.Accounts[0].DirectRoots = []config.DirectRoot{
+		{ImmichPath: "/immich/upload", HostPath: present},
+		{ImmichPath: "/immich/external", HostPath: absent},
+	}
+	report, err := service.Diagnose(t.Context(), cfg, "")
+	if err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	if report.Accounts[0].DirectRoots != (service.DirectRoots{Configured: 2, Available: 1}) {
+		t.Fatalf("direct roots: %+v", report.Accounts[0].DirectRoots)
+	}
+	data, _ := json.Marshal(report)
+	text := string(data)
+	if strings.Contains(text, present) || strings.Contains(text, absent) || strings.Contains(text, "/immich") {
+		t.Fatalf("doctor leaked a root path: %s", text)
+	}
+}
+
 func TestAuthPauseRecoversAfterSecretRotationAndRestartButManualPauseStays(t *testing.T) {
 	amazonReads(t)
 	var probes atomic.Int32

@@ -113,6 +113,14 @@ func (d *dashboard) saveAccount(w http.ResponseWriter, r *http.Request) {
 	account := formAccount(r)
 	cfg := d.backend.Config()
 	original := r.PostForm.Get("original_id")
+	// Direct roots are configuration-file only; an account edit must not drop
+	// an operator-approved read-only mapping.
+	for _, existing := range cfg.Accounts {
+		if existing.ID == original || (original == "" && existing.ID == account.ID) {
+			account.DirectRoots = existing.DirectRoots
+			break
+		}
+	}
 	if original == "" {
 		for _, existing := range cfg.Accounts {
 			if existing.ID == account.ID {
