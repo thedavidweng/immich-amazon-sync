@@ -134,6 +134,7 @@ func (b *adminBackend) Diagnose(ctx context.Context, id string) ([]admin.Diagnos
 			admin.Diagnostic{Name: "write_evidence", Code: account.Evidence},
 			admin.Diagnostic{Name: "target_writes", Code: account.TargetWrites},
 			admin.Diagnostic{Name: "original_read", Code: account.OriginalRead},
+			admin.Diagnostic{Name: "capture_date", Code: account.CaptureDate},
 		)
 		for _, check := range account.Checks {
 			checks = append(checks, admin.Diagnostic{Name: check.Name, Code: check.Code})

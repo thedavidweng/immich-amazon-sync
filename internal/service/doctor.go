@@ -12,6 +12,7 @@ import (
 	"github.com/thedavidweng/immich-amazon-sync/internal/amazon"
 	"github.com/thedavidweng/immich-amazon-sync/internal/bridge"
 	"github.com/thedavidweng/immich-amazon-sync/internal/config"
+	"github.com/thedavidweng/immich-amazon-sync/internal/direct"
 	"github.com/thedavidweng/immich-amazon-sync/internal/immich"
 )
 
@@ -21,13 +22,22 @@ type Check struct {
 }
 
 type AccountDiagnosis struct {
-	Account      string  `json:"account"`
-	Version      string  `json:"version,omitempty"`
-	Region       string  `json:"region,omitempty"`
-	Evidence     string  `json:"evidence,omitempty"`
-	TargetWrites string  `json:"target_writes"`
-	OriginalRead string  `json:"original_read"`
-	Checks       []Check `json:"checks"`
+	Account      string      `json:"account"`
+	Version      string      `json:"version,omitempty"`
+	Region       string      `json:"region,omitempty"`
+	Evidence     string      `json:"evidence,omitempty"`
+	TargetWrites string      `json:"target_writes"`
+	OriginalRead string      `json:"original_read"`
+	CaptureDate  string      `json:"capture_date"`
+	DirectRoots  DirectRoots `json:"direct_roots"`
+	Checks       []Check     `json:"checks"`
+}
+
+// DirectRoots counts approved read-only mappings and the subset that is
+// currently openable. Root identities are never reported.
+type DirectRoots struct {
+	Configured int `json:"configured"`
+	Available  int `json:"available"`
 }
 
 type DoctorReport struct {
@@ -71,13 +81,19 @@ func Diagnose(ctx context.Context, cfg config.Config, id string) (DoctorReport, 
 func diagnoseAccount(ctx context.Context, account config.Account) (AccountDiagnosis, error) {
 	report := AccountDiagnosis{
 		Account: AccountHash(account.ID), TargetWrites: "untested", OriginalRead: "untested",
-		Checks: []Check{},
+		CaptureDate: amazon.CaptureDateCapability,
+		Checks:      []Check{},
 	}
 	var errs []error
 	record := func(name string, err error) {
 		report.Checks = append(report.Checks, Check{Name: name, Code: Code(err)})
 		errs = append(errs, err)
 	}
+	roots, rootsErr := direct.New(account.Roots())
+	if rootsErr == nil {
+		report.DirectRoots.Configured, report.DirectRoots.Available = roots.Check()
+	}
+	record("direct_roots", rootsErr)
 	secrets, err := account.Secrets()
 	record("credentials", err)
 	if err != nil {
@@ -131,6 +147,9 @@ func diagnoseAccount(ctx context.Context, account config.Account) (AccountDiagno
 			capabilities, err = target.Probe(ctx)
 			if err == nil {
 				report.Region, report.Evidence = capabilities.Region, capabilities.Evidence
+				if capabilities.CaptureDate != "" {
+					report.CaptureDate = capabilities.CaptureDate
+				}
 			}
 		}
 		record("amazon_read", err)

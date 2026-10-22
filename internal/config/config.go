@@ -13,8 +13,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	// Embed the IANA database so validation works in containers without tzdata.
+	_ "time/tzdata"
 
 	"github.com/thedavidweng/amazon-photos/pkg/aphotos"
+	"github.com/thedavidweng/immich-amazon-sync/internal/bridge"
+	"github.com/thedavidweng/immich-amazon-sync/internal/direct"
 )
 
 type Config struct {
@@ -40,7 +44,10 @@ type Account struct {
 	AlbumIDs      []string `json:"album_ids"`
 	Library       bool     `json:"library"`
 	IncludeVideos bool     `json:"include_videos"`
-	MirrorAlbums  bool     `json:"mirror_albums"`
+	// AlbumSyncMode is off, selected or all_accessible. MirrorAlbums is the
+	// legacy boolean form: true maps to selected and never to all_accessible.
+	AlbumSyncMode string `json:"album_sync_mode,omitempty"`
+	MirrorAlbums  bool   `json:"mirror_albums,omitempty"`
 	// Favorites is "off" (default) or "add_only". Add-only stars a verified
 	// node when the source explicitly reports the asset favorite and never
 	// unstars.
@@ -49,8 +56,40 @@ type Account struct {
 	// requires DeletionConfirmation to equal DeletionConfirmationPhrase.
 	Deletions            bool   `json:"deletions"`
 	DeletionConfirmation string `json:"deletions_confirmation,omitempty"`
-	apiKey               string
-	cookie               string
+	// TransferWindow restricts new outbound uploads to a daily local-time
+	// window. Absent means transfers are always allowed.
+	TransferWindow *TransferWindow `json:"transfer_window,omitempty"`
+	// DirectRoots maps source-reported original paths onto pre-approved
+	// read-only local roots. Empty (the default, and for every existing
+	// account) keeps every original on the Immich API.
+	DirectRoots []DirectRoot `json:"direct_roots,omitempty"`
+	apiKey      string
+	cookie      string
+}
+
+// TransferWindow is one optional daily upload window in an IANA timezone.
+// Start and End are local "HH:MM" wall-clock times; Start may be later than End
+// to cross midnight. A nil window preserves continuous transfers.
+type TransferWindow struct {
+	Timezone string `json:"timezone"`
+	Start    string `json:"start"`
+	End      string `json:"end"`
+}
+
+// DirectRoot is one read-only mapping. Paths must be absolute and clean; the
+// local root is never created, written or retimed by this service.
+type DirectRoot struct {
+	ImmichPath string `json:"immich_path"`
+	HostPath   string `json:"host_path"`
+}
+
+// Roots converts the configured mapping into the validated resolver seam.
+func (a Account) Roots() []direct.Root {
+	roots := make([]direct.Root, 0, len(a.DirectRoots))
+	for _, root := range a.DirectRoots {
+		roots = append(roots, direct.Root{ImmichPath: root.ImmichPath, HostPath: root.HostPath})
+	}
+	return roots
 }
 
 // DeletionConfirmationPhrase is the exact text a configuration must contain to
@@ -89,13 +128,13 @@ func Load(path string) (Config, error) {
 			return cfg, errors.New("config_invalid_json")
 		}
 	} else if os.Getenv("IMMICH_URL") != "" {
-		includeVideos := false
-		if value := os.Getenv("INCLUDE_VIDEOS"); value != "" {
-			var err error
-			includeVideos, err = strconv.ParseBool(value)
-			if err != nil {
-				return cfg, errors.New("include_videos_invalid")
-			}
+		includeVideos, err := envBool("INCLUDE_VIDEOS")
+		if err != nil {
+			return cfg, errors.New("include_videos_invalid")
+		}
+		library, err := envBool("LIBRARY")
+		if err != nil {
+			return cfg, errors.New("library_invalid")
 		}
 		cfg.Accounts = []Account{{
 			ID: "default", ImmichURL: os.Getenv("IMMICH_URL"),
@@ -103,8 +142,12 @@ func Load(path string) (Config, error) {
 			AmazonRegion: os.Getenv("AMAZON_REGION"),
 			CookieFile:   os.Getenv("AMAZON_COOKIE_FILE"), cookie: os.Getenv("AMAZON_COOKIE"),
 			AlbumIDs:      splitIDs(os.Getenv("ALBUM_IDS")),
+			Library:       library,
+			AlbumSyncMode: os.Getenv("ALBUM_SYNC_MODE"),
 			IncludeVideos: includeVideos,
 			Favorites:     os.Getenv("FAVORITES"),
+			TransferWindow: environmentWindow(os.Getenv("TRANSFER_TIMEZONE"),
+				os.Getenv("TRANSFER_WINDOW_START"), os.Getenv("TRANSFER_WINDOW_END")),
 		}}
 	}
 	if value := os.Getenv("DATA_DIR"); value != "" {
@@ -122,7 +165,63 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
+// AlbumMode resolves the configured mirroring scope. The legacy mirror_albums
+// boolean folds into selected, preserving the exact explicit album scope.
+func (a Account) AlbumMode() bridge.AlbumSyncMode {
+	if a.AlbumSyncMode != "" {
+		return bridge.AlbumSyncMode(a.AlbumSyncMode)
+	}
+	if a.MirrorAlbums {
+		return bridge.AlbumSyncSelected
+	}
+	return bridge.AlbumSyncOff
+}
+
 var identifier = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$`)
+
+// environmentWindow builds the environment-mode transfer window. Empty values
+// leave the window absent; partial or invalid values fail validation.
+func environmentWindow(timezone, start, end string) *TransferWindow {
+	if timezone == "" && start == "" && end == "" {
+		return nil
+	}
+	return &TransferWindow{Timezone: timezone, Start: start, End: end}
+}
+
+func (w *TransferWindow) validate() error {
+	if w == nil {
+		return nil
+	}
+	if w.Timezone == "" || w.Timezone == "Local" {
+		return errors.New("transfer_window_timezone_invalid")
+	}
+	if _, err := time.LoadLocation(w.Timezone); err != nil {
+		return errors.New("transfer_window_timezone_invalid")
+	}
+	start, err := windowClock(w.Start)
+	if err != nil {
+		return err
+	}
+	end, err := windowClock(w.End)
+	if err != nil {
+		return err
+	}
+	if start == end {
+		return errors.New("transfer_window_bounds_invalid")
+	}
+	return nil
+}
+
+func windowClock(value string) (int, error) {
+	if len(value) != 5 || value[2] != ':' {
+		return 0, errors.New("transfer_window_time_invalid")
+	}
+	parsed, err := time.Parse("15:04", value)
+	if err != nil {
+		return 0, errors.New("transfer_window_time_invalid")
+	}
+	return parsed.Hour()*60 + parsed.Minute(), nil
+}
 
 func (c Config) Validate() error {
 	if strings.TrimSpace(c.DataDir) == "" {
@@ -168,10 +267,20 @@ func (c Config) Validate() error {
 		if account.APIKeyFile != "" && account.apiKey != "" || account.CookieFile != "" && account.cookie != "" {
 			return errors.New("credential_sources_conflict")
 		}
+		mode := account.AlbumMode()
+		if !mode.Valid() {
+			return errors.New("album_sync_mode_invalid")
+		}
+		if account.MirrorAlbums && account.AlbumSyncMode != "" && mode != bridge.AlbumSyncSelected {
+			return errors.New("album_sync_mode_conflict")
+		}
 		if len(account.AlbumIDs) == 0 && !account.Library {
 			return errors.New("source_scope_required")
 		}
-		if account.Library && (len(account.AlbumIDs) > 0 || account.MirrorAlbums) {
+		if account.Library && len(account.AlbumIDs) > 0 {
+			return errors.New("source_scope_conflict")
+		}
+		if mode == bridge.AlbumSyncSelected && (len(account.AlbumIDs) == 0 || account.Library) {
 			return errors.New("source_scope_conflict")
 		}
 		if account.Deletions && account.DeletionConfirmation != DeletionConfirmationPhrase {
@@ -181,6 +290,12 @@ func (c Config) Validate() error {
 		case "", "off", "add_only":
 		default:
 			return errors.New("favorites_invalid")
+		}
+		if err := account.TransferWindow.validate(); err != nil {
+			return err
+		}
+		if _, err := direct.New(account.Roots()); err != nil {
+			return errors.New("direct_root_invalid")
 		}
 		for _, id := range account.AlbumIDs {
 			if !identifier.MatchString(id) {
@@ -271,4 +386,12 @@ func splitIDs(value string) []string {
 		parts[i] = strings.TrimSpace(parts[i])
 	}
 	return parts
+}
+
+func envBool(name string) (bool, error) {
+	value := os.Getenv(name)
+	if value == "" {
+		return false, nil
+	}
+	return strconv.ParseBool(value)
 }

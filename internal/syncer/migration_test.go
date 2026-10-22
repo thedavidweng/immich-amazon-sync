@@ -122,7 +122,7 @@ func TestVersionThreeStoreMigratesFavoritesWithoutWideningScope(t *testing.T) {
 	if err = db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if version != 4 || favorite != -1 || rows != 0 {
+	if version != 5 || favorite != -1 || rows != 0 {
 		t.Fatalf("migration widened scope: version=%d favorite=%d rows=%d", version, favorite, rows)
 	}
 

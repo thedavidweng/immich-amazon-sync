@@ -66,6 +66,10 @@ func (e *Engine) validateScopes(ctx context.Context) error {
 	return nil
 }
 
+// configureRules activates exactly the scopes implied by the current mode.
+// discovered reports whether this cycle read the complete accessible album
+// listing. A bounded continuation keeps previously discovered rules active
+// instead of stopping an in-flight album scan.
 func (e *Engine) configureRules(ctx context.Context, restart bool) error {
 	tx, err := e.store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -81,18 +85,25 @@ func (e *Engine) configureRules(ctx context.Context, restart bool) error {
 	if _, err = tx.ExecContext(ctx, "UPDATE rules SET active=0 WHERE account_id=?", id); err != nil {
 		return err
 	}
-	albums := e.opts.AlbumIDs
 	if e.opts.Library {
-		albums = []string{""}
-	}
-	for _, album := range albums {
-		scope := "album:" + album
-		if e.opts.Library {
-			scope = "library"
+		if _, err = tx.ExecContext(ctx, `INSERT INTO rules(account_id,scope,album_id) VALUES(?,'library','')
+			ON CONFLICT(account_id,scope) DO UPDATE SET active=1`, id); err != nil {
+			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO rules(account_id,scope,album_id) VALUES(?,?,?)
-			ON CONFLICT(account_id,scope) DO UPDATE SET active=1`, id, scope, album)
-		if err != nil {
+	}
+	for _, album := range e.opts.AlbumIDs {
+		// An album that comes back into reach is retried instead of keeping a
+		// stale inaccessibility error; the explicit scope is never widened.
+		if _, err = tx.ExecContext(ctx, `INSERT INTO rules(account_id,scope,album_id,discovered) VALUES(?,?,?,1)
+			ON CONFLICT(account_id,scope) DO UPDATE SET active=1,discovered=1,
+			error_code=CASE WHEN rules.error_code='album_inaccessible' THEN '' ELSE rules.error_code END`,
+			id, "album:"+album, album); err != nil {
+			return err
+		}
+	}
+	if e.opts.AlbumSyncMode == bridge.AlbumSyncAllAccessible {
+		if _, err = tx.ExecContext(ctx, `UPDATE rules SET active=1
+			WHERE account_id=? AND origin='discovered' AND discovered=1`, id); err != nil {
 			return err
 		}
 	}
@@ -303,7 +314,7 @@ func (e *Engine) scanError(ctx context.Context, r rule, err error) error {
 	code := errorCode(err)
 	_, dbErr := e.store.db.ExecContext(context.WithoutCancel(ctx), `UPDATE rules SET error_code=?,attempts=attempts+1,
 		next_at=? WHERE account_id=? AND scope=?`, code,
-		time.Now().Add(retryDelay(4, err)).UnixMilli(), e.opts.AccountID, r.scope)
+		e.opts.Now().Add(retryDelay(4, err)).UnixMilli(), e.opts.AccountID, r.scope)
 	if dbErr != nil {
 		return dbErr
 	}
@@ -329,9 +340,10 @@ func (e *Engine) finishScan(ctx context.Context) error {
 		e.opts.AccountID, e.opts.AccountID).Scan(&outstanding); err != nil || outstanding != 0 {
 		return err
 	}
-	if e.opts.MirrorAlbums {
+	if e.mirrorsAlbums() {
 		err = e.store.db.QueryRowContext(ctx, `SELECT count(*) FROM rules r LEFT JOIN albums a
 			ON a.account_id=r.account_id AND a.scope=r.scope WHERE r.account_id=? AND r.active=1 AND r.album_id!=''
+			AND r.error_code=''
 			AND (a.target_id IS NULL OR a.target_id='' OR a.complete_generation!=r.generation OR a.error_code!='')`,
 			e.opts.AccountID).Scan(&outstanding)
 		if err != nil || outstanding != 0 {

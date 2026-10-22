@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/thedavidweng/immich-amazon-sync/internal/config"
@@ -202,12 +203,41 @@ func printReport(out io.Writer, report service.Report, asJSON bool) error {
 		return outputError(json.NewEncoder(out).Encode(report))
 	}
 	for _, account := range report.Accounts {
-		if _, err := fmt.Fprintf(out, "%s %s confirmed=%d existing=%d deleted=%d deletion_pending=%d pending=%d failed=%d unconfirmed=%d favorites_mode=%s favorites_desired=%d favorites_applied=%d favorites_pending=%d favorites_failed=%d favorites_uncertain=%d favorites_unknown=%d\n",
-			account.Account, account.Code, account.Status.Confirmed, account.Status.Existing,
+		if _, err := fmt.Fprintf(out, "%s %s album_sync_mode=%s confirmed=%d existing=%d deleted=%d deletion_pending=%d pending=%d failed=%d unconfirmed=%d deferred=%d albums_active=%d albums_inaccessible=%d favorites_mode=%s favorites_desired=%d favorites_applied=%d favorites_pending=%d favorites_failed=%d favorites_uncertain=%d favorites_unknown=%d",
+			account.Account, account.Code, account.Status.AlbumSyncMode, account.Status.Confirmed, account.Status.Existing,
 			account.Status.Deleted, account.Status.DeletePending, account.Status.Pending,
-			account.Status.Failed, account.Status.Unconfirmed, account.Status.FavoritesMode,
-			account.Status.FavoritesDesired, account.Status.FavoritesApplied, account.Status.FavoritesPending,
-			account.Status.FavoritesFailed, account.Status.FavoritesUncertain, account.Status.FavoritesUnknown); err != nil {
+			account.Status.Failed, account.Status.Unconfirmed, account.Status.Deferred,
+			account.Status.AlbumsActive, account.Status.AlbumsInaccessible,
+			account.Status.FavoritesMode, account.Status.FavoritesDesired, account.Status.FavoritesApplied,
+			account.Status.FavoritesPending, account.Status.FavoritesFailed, account.Status.FavoritesUncertain,
+			account.Status.FavoritesUnknown); err != nil {
+			return outputError(err)
+		}
+		if window := account.Status.TransferWindow; window != nil {
+			state := "open"
+			if !window.Open {
+				state = "closed"
+			}
+			if _, err := fmt.Fprintf(out, " window=%s %s-%s %s", window.Timezone, window.Start, window.End, state); err != nil {
+				return outputError(err)
+			}
+			if window.NextOpening != nil {
+				if _, err := fmt.Fprintf(out, " next_opening=%s", window.NextOpening.UTC().Format(time.RFC3339)); err != nil {
+					return outputError(err)
+				}
+			}
+		}
+		if account.Status.DeferralReason != "" {
+			if _, err := fmt.Fprintf(out, " deferral_reason=%s", account.Status.DeferralReason); err != nil {
+				return outputError(err)
+			}
+		}
+		if account.Status.NextAttempt != nil {
+			if _, err := fmt.Fprintf(out, " next_attempt=%s", account.Status.NextAttempt.UTC().Format(time.RFC3339)); err != nil {
+				return outputError(err)
+			}
+		}
+		if _, err := fmt.Fprintln(out); err != nil {
 			return outputError(err)
 		}
 	}
@@ -240,8 +270,10 @@ func printDiagnosis(out io.Writer, report service.DoctorReport, asJSON bool) err
 		return outputError(err)
 	}
 	for _, account := range report.Accounts {
-		if _, err := fmt.Fprintf(out, "%s version=%s region=%s evidence=%s target_writes=%s original_read=%s\n",
-			account.Account, account.Version, account.Region, account.Evidence, account.TargetWrites, account.OriginalRead); err != nil {
+		if _, err := fmt.Fprintf(out, "%s version=%s region=%s evidence=%s target_writes=%s original_read=%s direct_roots=%d/%d capture_date=%s\n",
+			account.Account, account.Version, account.Region, account.Evidence, account.TargetWrites,
+			account.OriginalRead, account.DirectRoots.Available, account.DirectRoots.Configured,
+			account.CaptureDate); err != nil {
 			return outputError(err)
 		}
 		for _, check := range account.Checks {

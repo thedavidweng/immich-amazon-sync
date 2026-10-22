@@ -11,7 +11,7 @@ immich-amazon-sync [--config PATH] [--account ID] [--json] COMMAND
 | `sync once` | Start/resume a bounded explicit full-scan pass; can write media, managed membership, add-only favorite stars and -- only when explicitly enabled -- Amazon trashing. |
 | `deletions plan` | Read-only manifest of assets pending deletion propagation: count, synced total, blocked reason and asset IDs. Changes nothing. |
 | `albums list` | Read accessible source album IDs, names and counts. |
-| `doctor` | Read-only remote diagnostics and local storage checks; no upload or album creation. |
+| `doctor` | Read-only remote diagnostics and local storage checks; reports `direct_roots=<available>/<configured>` without printing a path; no upload or album creation. |
 | `version` | Print the build version without credentials or config. |
 | `--help`, `doctor --help`, `--version` | Work without configuration or network access. |
 
@@ -33,13 +33,20 @@ The command's `--help` is authoritative for additional management operations.
 Every process accessing a state volume must respect the single-writer boundary.
 Stop `serve` before running a separate stateful CLI invocation.
 
-Human-readable account lines report `confirmed`, `existing`, `deleted`,
-`deletion_pending`, `pending`, `failed` and `unconfirmed` media counts, then the
-`favorites_mode` setting and `favorites_desired`, `favorites_applied`,
-`favorites_pending`, `favorites_failed`, `favorites_uncertain` and
-`favorites_unknown` counters. `existing` means a verified copy was reused from
-elsewhere in the same Amazon account; it is backed up but not at the configured
-target parent. `--json` carries the full status object.
+Human-readable account lines report `album_sync_mode`, `confirmed`, `existing`,
+`deleted`, `deletion_pending`, `pending`, `failed`, `unconfirmed`, `deferred`,
+`albums_active` and `albums_inaccessible`, then the `favorites_mode` setting and
+`favorites_desired`, `favorites_applied`, `favorites_pending`, `favorites_failed`,
+`favorites_uncertain` and `favorites_unknown` counters. `existing` means a
+verified copy was reused from elsewhere in the same Amazon account; it is backed
+up but not at the configured target parent. `deferred` means new upload dispatch
+waits for a transfer window; it is not a failure. When a window is configured the
+line also reports its timezone, bounds, open/closed state, `next_opening`,
+`deferral_reason` and the next scheduled wake. `--json` carries the full status
+object, including the finite `capture_date` capability. `doctor` reports the same
+capability per account as `capture_date=metadata_not_supported` or
+`capture_date=supported`; it is a static property of the pinned SDK, not a write
+test.
 
 For each selected account, one `sync once` invocation attempts at most 64 distinct
 media jobs and advances full discovery by at most eight page steps; an already

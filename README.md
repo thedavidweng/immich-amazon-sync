@@ -3,7 +3,8 @@
 A self-hosted, one-way backup service: **Immich originals -> durable SQLite
 queue -> aphotos Go SDK -> Amazon Photos**. Run one container with one persistent
 data volume. Select source albums by ID; whole-library backup requires an
-explicit choice.
+explicit choice. Album mirroring is off by default and can be scoped to those
+selected albums or to every album the API key can read.
 
 Amazon Photos has no official public API. This service uses an unofficial SDK;
 sessions expire and upstream behavior can change. Keep an independent backup.
@@ -42,6 +43,20 @@ starred; an absent source field is unknown and writes nothing, and the service
 never unstars. Every star is confirmed by an authoritative Amazon re-read of an
 explicit `settings.favorite` field, and a lost mutation is retried only after a
 fresh read. Favorite state and counters are separate from media states.
+Each account can optionally limit new uploads to one daily window in an IANA
+timezone, including windows that cross midnight. Outside it, scans and metadata
+checks continue, an upload already running finishes, and waiting work is
+reported as `deferred` rather than failed. The scheduler wakes at the next
+DST-correct opening, and editing the window applies without restart. See
+[transfer hour limits](docs/how-to/operations.md#limit-transfer-hours).
+
+Optional read-only originals: an account can approve a mapping from Immich's
+reported original paths to a local directory mounted read-only, so eligible
+originals are staged from disk with zero Immich downloads. It is off by default,
+never writes to or retimes the mount, verifies bytes against the recorded size
+and checksum, and falls back to the Immich API when the mount is absent. Path
+escapes and non-regular files fail closed. See
+[direct originals](docs/how-to/direct-originals.md).
 
 ## Compose quickstart
 

@@ -32,7 +32,7 @@ func TestAlbumMirroringRequiresExplicitAlbumRules(t *testing.T) {
 	}
 	defer store.Close()
 	opts := options()
-	opts.Library, opts.AlbumIDs, opts.MirrorAlbums = true, nil, true
+	opts.Library, opts.AlbumIDs, opts.AlbumSyncMode = true, nil, bridge.AlbumSyncSelected
 	_, err = syncer.New(store, &sourceFake{}, newAlbumTarget(), opts)
 	if err == nil || err.Error() != "invalid_options" {
 		t.Fatalf("library scope silently ignored requested album mirroring: %v", err)
@@ -45,8 +45,11 @@ func TestUncertainAlbumCreationSurvivesRestartWithoutAdoptingName(t *testing.T) 
 		data: map[string]string{"one": "hello"}}
 	d := newAlbumTarget()
 	d.makeErr = errors.New("lost response")
+	// A same-name album that this service did not create must never be adopted.
+	d.albums["preexisting"] = []string{}
+	d.names["preexisting"] = ""
 	opts := options()
-	opts.MirrorAlbums = true
+	opts.AlbumSyncMode = bridge.AlbumSyncSelected
 	for range 2 {
 		store, err := syncer.Open(dir)
 		if err != nil {
@@ -69,6 +72,9 @@ func TestUncertainAlbumCreationSurvivesRestartWithoutAdoptingName(t *testing.T) 
 	if d.creates != 1 {
 		t.Fatalf("uncertain album was recreated %d times", d.creates)
 	}
+	if len(d.albums["preexisting"]) != 0 || d.names["preexisting"] != "" {
+		t.Fatalf("uncertain create adopted a same-name album: albums=%v names=%v", d.albums, d.names)
+	}
 }
 
 func TestAlbumRemovalTouchesOnlyOwnedRelationsAfterCompleteNonemptyScan(t *testing.T) {
@@ -83,7 +89,7 @@ func TestAlbumRemovalTouchesOnlyOwnedRelationsAfterCompleteNonemptyScan(t *testi
 		data: map[string]string{"one": "hello", "two": "world"}}
 	d := newAlbumTarget()
 	opts := options()
-	opts.MirrorAlbums, opts.AlbumIDs = true, []string{"album", "second"}
+	opts.AlbumSyncMode, opts.AlbumIDs = bridge.AlbumSyncSelected, []string{"album", "second"}
 	e := engine(t, store, s, d, opts)
 	if err := e.Once(t.Context()); err != nil {
 		t.Fatal(err)
@@ -117,7 +123,7 @@ func TestReaddedAbsentMembershipCountsTowardRemovalGuard(t *testing.T) {
 	s := &sourceFake{identity: "source", pages: map[string]bridge.Page{"": {Assets: []bridge.Asset{a, b, c}}}, data: map[string]string{"one": "hello", "two": "world", "three": "three"}}
 	d := newAlbumTarget()
 	opts := options()
-	opts.MirrorAlbums = true
+	opts.AlbumSyncMode = bridge.AlbumSyncSelected
 	e := engine(t, store, s, d, opts)
 	if err := e.Once(t.Context()); err != nil {
 		t.Fatal(err)
@@ -201,7 +207,7 @@ func TestAlbumMembershipSettlesThroughReadLag(t *testing.T) {
 	d := newAlbumTarget()
 	d.memberLag = 3
 	opts := options()
-	opts.MirrorAlbums = true
+	opts.AlbumSyncMode = bridge.AlbumSyncSelected
 	e := engine(t, store, s, d, opts)
 	if err := e.Once(t.Context()); err != nil {
 		t.Fatal(err)
@@ -226,7 +232,7 @@ func TestAlbumAssociationRetriesWithoutUploadingAgainAndRenameKeepsOwnedID(t *te
 	d := newAlbumTarget()
 	d.addErr = &bridge.Error{Code: bridge.Unavailable}
 	opts := options()
-	opts.MirrorAlbums = true
+	opts.AlbumSyncMode = bridge.AlbumSyncSelected
 	store, err := syncer.Open(dir)
 	if err != nil {
 		t.Fatal(err)

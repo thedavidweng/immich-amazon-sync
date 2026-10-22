@@ -34,6 +34,11 @@ Node or another album's membership. Incomplete scans and uncertain target album
 ownership cannot authorize removals.
 Only returned IDs from this service's own album creation establish ownership.
 An unknown-ID create remains uncertain; a same-name album is insufficient.
+All-accessible mirroring discovers albums from the complete accessible listing
+and keys each one by its stable source UUID. A failed listing changes nothing;
+an album missing from a successful listing stops mirroring without clearing its
+owned destination album, node mappings or memberships, and is never treated as
+deletion evidence. Renames keep the owned identity.
 Safe additions can proceed during backfill, but removals require a completed
 baseline, nonempty desired set and the
 [fixed membership guard](../how-to/managed-albums.md#understand-removal-guards).
@@ -53,6 +58,19 @@ and is retried only after a fresh read, so a committed star settles without a
 second PATCH and no media is uploaded again. Trashed, Deleted and Unconfirmed
 Nodes are ineligible. Several assets or albums sharing a Node produce one
 durable outcome and one write.
+## Originals and capture time
+
+Every upload path only reads the source original and writes a separate staging
+copy. The service never rewrites original bytes, calls `utime`, or edits EXIF to
+influence Amazon metadata; tests assert bytes and filesystem mtimes are
+unchanged on the staged and direct-mount upload, verified-reuse and
+uncertain-write paths.
+Embedded EXIF travels inside the unchanged bytes. Immich-only capture-date edits
+are not mirrored: the pinned SDK has no capture-date setter, so `doctor` and
+status report `capture_date=metadata_not_supported`. Amazon can therefore display
+a different date than Immich for such files and for originals without a usable
+EXIF date. A future setter requires a released SDK operation and an authoritative
+read-back; rewriting originals is never a substitute.
 
 ## Deletion propagation
 
@@ -94,6 +112,16 @@ a source snapshot. See [progress and scheduling](../reference/status.md) and
 the [event/membership decision](../adr/0005-durable-hints-and-owned-membership.md).
 Read [contract decisions](../adr/0003-upstream-contract-boundaries.md) for the
 researched checksum, media-pair and pagination limits.
+
+Read-only mounts are optional input only. An approved `direct_roots` mapping lets
+an eligible original be staged from disk instead of downloaded, but the service
+never writes to, creates in or retimes that mount. The staged bytes are verified
+against the recorded size and checksum, the file is re-stated after the read, and
+a mutation yields `source_changed` rather than a recorded digest. Paths are
+confined with `os.Root`, so traversal and symlink escapes fail closed instead of
+falling back. Absent, out-of-root, missing or unreadable paths use the Immich API
+stream, so a broken mount degrades to the previous behaviour. See
+[direct originals](../how-to/direct-originals.md).
 
 Local health is deliberately independent of remote service availability.
 Restarting a healthy local database because Amazon is offline does not fix
