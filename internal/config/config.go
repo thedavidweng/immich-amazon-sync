@@ -56,6 +56,13 @@ type Account struct {
 	// node when the source explicitly reports the asset favorite and never
 	// unstars.
 	Favorites string `json:"favorites,omitempty"`
+	// VideoUsageThresholdBytes is an explicit user budget for observed
+	// billable video bytes. Zero disables the advisory.
+	VideoUsageThresholdBytes int64 `json:"video_usage_threshold_bytes,omitempty"`
+	// HoldVideosAtThreshold stops dispatching new video uploads while fresh
+	// observed billable video usage is at or above the threshold. It never
+	// pauses photos and never deletes or rewrites a staged original.
+	HoldVideosAtThreshold bool `json:"hold_videos_at_threshold,omitempty"`
 	// Deletions propagates a source trash to the Amazon node. Enabling it also
 	// requires DeletionConfirmation to equal DeletionConfirmationPhrase.
 	Deletions            bool   `json:"deletions"`
@@ -197,19 +204,33 @@ func Load(path string) (Config, error) {
 				return cfg, errors.New("managed_workflow_invalid")
 			}
 		}
+		threshold := int64(0)
+		if value := os.Getenv("VIDEO_USAGE_THRESHOLD_BYTES"); value != "" {
+			var err error
+			threshold, err = strconv.ParseInt(value, 10, 64)
+			if err != nil || threshold < 0 {
+				return cfg, errors.New("video_usage_threshold_invalid")
+			}
+		}
+		hold, err := envBool("HOLD_VIDEOS_AT_THRESHOLD")
+		if err != nil {
+			return cfg, errors.New("hold_videos_at_threshold_invalid")
+		}
 		account := Account{
 			ID: "default", ImmichURL: os.Getenv("IMMICH_URL"),
 			APIKeyFile: os.Getenv("IMMICH_API_KEY_FILE"), apiKey: os.Getenv("IMMICH_API_KEY"),
 			AmazonRegion: os.Getenv("AMAZON_REGION"),
 			CookieFile:   os.Getenv("AMAZON_COOKIE_FILE"), cookie: os.Getenv("AMAZON_COOKIE"),
-			AlbumIDs:            splitIDs(os.Getenv("ALBUM_IDS")),
-			Library:             library,
-			AlbumSyncMode:       os.Getenv("ALBUM_SYNC_MODE"),
-			Favorites:           os.Getenv("FAVORITES"),
-			ManagedWorkflow:     managedWorkflow,
-			WorkflowAPIKeyFile:  os.Getenv("IMMICH_WORKFLOW_API_KEY_FILE"),
-			WorkflowCallbackURL: os.Getenv("WORKFLOW_CALLBACK_URL"),
-			WorkflowSecretFile:  os.Getenv("WORKFLOW_SECRET_FILE"),
+			AlbumIDs:                 splitIDs(os.Getenv("ALBUM_IDS")),
+			Library:                  library,
+			AlbumSyncMode:            os.Getenv("ALBUM_SYNC_MODE"),
+			Favorites:                os.Getenv("FAVORITES"),
+			ManagedWorkflow:          managedWorkflow,
+			WorkflowAPIKeyFile:       os.Getenv("IMMICH_WORKFLOW_API_KEY_FILE"),
+			WorkflowCallbackURL:      os.Getenv("WORKFLOW_CALLBACK_URL"),
+			WorkflowSecretFile:       os.Getenv("WORKFLOW_SECRET_FILE"),
+			VideoUsageThresholdBytes: threshold,
+			HoldVideosAtThreshold:    hold,
 			TransferWindow: environmentWindow(os.Getenv("TRANSFER_TIMEZONE"),
 				os.Getenv("TRANSFER_WINDOW_START"), os.Getenv("TRANSFER_WINDOW_END")),
 		}
@@ -432,6 +453,12 @@ func (c Config) Validate() error {
 		case "", "off", "add_only":
 		default:
 			return errors.New("favorites_invalid")
+		}
+		if account.VideoUsageThresholdBytes < 0 {
+			return errors.New("video_usage_threshold_invalid")
+		}
+		if account.HoldVideosAtThreshold && account.VideoUsageThresholdBytes == 0 {
+			return errors.New("video_usage_threshold_required")
 		}
 		if err := account.TransferWindow.validate(); err != nil {
 			return err
