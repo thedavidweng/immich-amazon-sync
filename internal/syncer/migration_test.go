@@ -152,3 +152,96 @@ func TestVersionThreeStoreMigratesFavoritesWithoutWideningScope(t *testing.T) {
 		t.Fatalf("migrated mapping did not star once: %+v writes=%v uploads=%d", st, d.favWrites, len(d.bodies))
 	}
 }
+
+// A version 5 store already owns the workflow table; the favorites step must
+// still run and must leave that ownership, and every mapping, untouched.
+func TestVersionFiveStoreAddsFavoritesAndKeepsWorkflowOwnership(t *testing.T) {
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "sync.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema, err := os.ReadFile("testdata/v5.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(string(schema)); err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := json.Marshal(photo("one"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO accounts(id,source_identity,target_identity) VALUES('account','source','target');
+		INSERT INTO rules(account_id,scope,album_id,complete,expected) VALUES('account','album:album','album',1,1);
+		INSERT INTO assets(account_id,id,metadata,state,md5,sha1,size,node_id)
+		VALUES('account','one',?,'confirmed','5d41402abc4b2a76b9719d911017c592','qvTGHdzF6KLavt4PO0gs2a6pQ00=',5,'existing');
+		INSERT INTO scope_assets(account_id,scope,asset_id,generation) VALUES('account','album:album','one',1);
+		INSERT INTO workflows(account_id,workflow_id,contract,state,desired_hash)
+		VALUES('account','44444444-4444-4444-8444-444444444444','contract','active','hash')`,
+		string(metadata)); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := syncer.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.WorkflowRecord(t.Context(), "account")
+	if err != nil || record.WorkflowID != "44444444-4444-4444-8444-444444444444" || record.State != "active" {
+		t.Fatalf("migration lost workflow ownership: %+v %v", record, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = sql.Open("sqlite", filepath.Join(dir, "sync.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var version, favorite, rows int
+	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.QueryRow("SELECT favorite FROM assets WHERE account_id='account' AND id='one'").Scan(&favorite); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.QueryRow("SELECT count(*) FROM favorites").Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if version != 6 || favorite != -1 || rows != 0 {
+		t.Fatalf("favorites migration widened scope: version=%d favorite=%d rows=%d", version, favorite, rows)
+	}
+
+	// Off by default: the migrated account performs no favorite write.
+	store, err = syncer.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	s := &sourceFake{identity: "source", pages: map[string]bridge.Page{
+		"": {Assets: []bridge.Asset{favoritePhoto("one", true)}},
+	}, data: map[string]string{"one": "hello"}}
+	d := &targetFake{identity: "target", nodes: []bridge.Node{{
+		ID: "existing", Name: "one.jpg", MD5: "5d41402abc4b2a76b9719d911017c592", Size: 5,
+	}}}
+	e := engine(t, store, s, d, options())
+	if err := e.Once(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	st := status(t, e)
+	if st.FavoritesMode != "" && st.FavoritesMode != "off" {
+		t.Fatalf("migrated account gained favorite scope: %q", st.FavoritesMode)
+	}
+	if len(d.favWrites) != 0 || st.FavoritesApplied != 0 || st.Confirmed != 1 || len(d.bodies) != 0 {
+		t.Fatalf("migrated account wrote favorites: %+v writes=%v uploads=%d", st, d.favWrites, len(d.bodies))
+	}
+}
