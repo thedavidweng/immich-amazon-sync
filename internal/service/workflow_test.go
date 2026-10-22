@@ -545,6 +545,8 @@ func amazonTrashTarget(t *testing.T, calls *atomic.Int32) {
 				Body: io.NopCloser(strings.NewReader(body))}, nil
 		}
 		switch {
+		case strings.HasSuffix(r.URL.Path, "/account/usage") && r.Method == http.MethodGet:
+			return respond(`{"lastCalculated":"2026-10-20T08:30:00.000Z","photo":{"billable":{"bytes":1,"count":1},"total":{"bytes":1,"count":1}},"video":{"billable":{"bytes":0,"count":0},"total":{"bytes":0,"count":0}},"other":{"billable":{"bytes":0,"count":0},"total":{"bytes":0,"count":0}}}`)
 		case strings.HasSuffix(r.URL.Path, "/nodes") && r.URL.Query().Get("filters") == "isRoot:true":
 			return respond(`{"data":[{"id":"root","isRoot":true,"kind":"FOLDER","status":"AVAILABLE","ownerId":"owner"}],"count":1}`)
 		case strings.HasSuffix(r.URL.Path, "/nodes/node-a") && r.Method == http.MethodGet:
