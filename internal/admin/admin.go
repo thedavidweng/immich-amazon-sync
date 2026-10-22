@@ -30,6 +30,14 @@ type WorkflowOrphan struct {
 	Account, State, Code string
 }
 
+// WorkflowLog is redacted aggregate run diagnostics for an owned Workflow.
+type WorkflowLog struct {
+	Account           string
+	Completed, Halted int
+	Error             int
+	Last              string
+}
+
 // Backend keeps account state and cloud access in the service runtime.
 type Backend interface {
 	Config() config.Config
@@ -39,6 +47,7 @@ type Backend interface {
 	Pause(context.Context, string, bool) error
 	Retry(context.Context, string) error
 	Diagnose(context.Context, string) ([]Diagnostic, error)
+	WorkflowLogs(context.Context, string, int) ([]WorkflowLog, error)
 	OrphanWorkflows(context.Context) ([]WorkflowOrphan, error)
 	Code(error) string
 }
@@ -100,7 +109,7 @@ func New(backend Backend, options Options) (http.Handler, error) {
 	d.mux.HandleFunc("GET /accounts/{id}/edit", d.accountPage)
 	d.mux.HandleFunc("POST /accounts/save", d.saveAccount)
 	d.mux.HandleFunc("POST /accounts/discover", d.discover)
-	for _, action := range []string{"pause", "resume", "retry", "remove", "doctor"} {
+	for _, action := range []string{"pause", "resume", "retry", "remove", "doctor", "workflow-logs"} {
 		d.mux.HandleFunc("POST /accounts/{id}/"+action, d.accountAction(action))
 	}
 	return d, nil

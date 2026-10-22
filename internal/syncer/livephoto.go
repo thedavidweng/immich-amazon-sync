@@ -188,7 +188,7 @@ func (e *Engine) sweepPairs(ctx context.Context) error {
 		return err
 	}
 	rows, err := e.store.db.QueryContext(ctx, `SELECT still_id,companion_id,attempts FROM live_pairs
-		WHERE account_id=? AND state!='complete' AND attempts<5 AND next_at<=?
+		WHERE account_id=? AND state!='complete' AND `+e.attemptLimit("")+` AND next_at<=?
 		ORDER BY still_id LIMIT ?`, e.opts.AccountID, e.opts.Now().UnixMilli(), pairBatch)
 	if err != nil {
 		return errors.New("storage_unavailable")
@@ -308,7 +308,7 @@ func (e *Engine) resolvePair(ctx context.Context, stillID, companionID string, a
 func (e *Engine) failPair(ctx context.Context, stillID string, attempts int, cause error) error {
 	_, err := e.store.db.ExecContext(ctx, `UPDATE live_pairs SET state='incomplete',error_code=?,
 		attempts=attempts+1,next_at=? WHERE account_id=? AND still_id=?`,
-		pairIncomplete, e.opts.Now().Add(retryDelay(attempts, cause)).UnixMilli(), e.opts.AccountID, stillID)
+		pairIncomplete, e.opts.Now().Add(e.retryDelay(attempts, cause)).UnixMilli(), e.opts.AccountID, stillID)
 	if err != nil {
 		return errors.New("storage_unavailable")
 	}

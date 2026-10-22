@@ -1,9 +1,15 @@
 # Durable progress and status
 
-`sync once --json` returns an `accounts` array. Each entry contains an anonymous
-`account` identifier, a finite `code` and a `status` object. Scheduled service
-cycles log aggregate status; the optional authenticated dashboard presents an
-overview. There is no public JSON status endpoint.
+`status --json`, `sync once --json` and the optional authenticated HTTP
+`GET /status` route return the same `accounts` array. Each entry contains an
+anonymous `account` identifier, a finite `code` and a `status` object computed
+from the same durable ledger without contacting either remote. Scheduled service
+cycles log aggregate status; the optional authenticated dashboard renders the
+same counters. `status` is read-only and never starts a sync pass.
+
+HTTP and metrics routes are off by default: `GET /status` and `GET /metrics`
+exist only with `metrics: true`, on a loopback listener or behind a bearer
+token. See [configuration](configuration.md#optional-metrics).
 
 | Status field | Meaning |
 | --- | --- |
@@ -47,7 +53,8 @@ overview. There is no public JSON status endpoint.
 | `deferral_reason` | `transfer_window` while deferred uploads wait for a closed window; omitted otherwise. |
 | `transfer_window` | Present only when the account configures a window: `timezone`, `start`, `end`, `open`, and `next_opening` when closed. `next_opening` is DST-correct local wall-clock time in that zone. |
 | `bytes_per_second` | Configured combined per-account cap for source-download and destination-upload bytes; zero means disabled. Metadata traffic is not counted. |
-| `direct` | Process-local read-only mount diagnostics: `reads`, `bytes_avoided`, per-reason `fallbacks` and fail-closed `failures`. Counters reset on restart and never contain a path. Zero everywhere when no `direct_roots` mapping is configured. |
+| `max_attempts`, `retry_max_delay_ms` | Effective bounded retry tuning for this account. They cap definite-failure retries only; an `unconfirmed` write is still reconciled by re-reading the target before any POST. |
+| `direct` | Process-local read diagnostics: `reads` and `bytes_avoided` for originals read from an approved mount, `api_bytes` for originals downloaded from Immich, per-reason `fallbacks` and fail-closed `failures`. Counters reset on restart and never contain a path. Zero everywhere when no `direct_roots` mapping is configured. |
 | `capture_date` | Capture-date write capability of the pinned target SDK. `metadata_not_supported` means the service cannot set a capture date remotely and does not claim that Immich-only date edits are mirrored; `supported` is reserved for a released SDK operation verified by an authoritative read-back. The field is always present and is never an implied success. |
 | `usage.state` | `observed`, `stale` or `unavailable`. `observed` requires the provider's calculation timestamp; `stale` keeps existing values but labels a missing timestamp or a failed latest refresh; `unavailable` means no observation exists. |
 | `usage.capacity`, `usage.entitlement` | Always `unknown`. Subscription cap, remaining bytes and Prime entitlement are never inferred from usage, region or zero photo counts. |

@@ -8,6 +8,7 @@ immich-amazon-sync [--config PATH] [--account ID] [--json] COMMAND
 | --- | --- |
 | `serve` | Run the local service and scheduled backups; stop with SIGTERM. |
 | `serve --setup --config PATH` | Explicit first UI setup with a mounted admin secret and a new writable config path. |
+| `status` | Read-only durable status for the selected accounts from the local ledger. No remote calls, no sync pass, no state mutation beyond the first-time account row. |
 | `sync once` | Start/resume a bounded explicit full-scan pass; can write media, managed membership, add-only favorite stars and -- only when explicitly enabled -- Amazon trashing. |
 | `deletions plan` | Read-only manifest of assets pending deletion propagation: count, synced total, blocked reason and asset IDs. Changes nothing. |
 | `filters` | Print each account's effective eligibility policy (media types, maximum original size, RAW/archive rules, excluded tag IDs and Live Photo mode) from configuration only. Never contacts either remote or opens local state. |
@@ -42,7 +43,10 @@ Stop `serve` before running a separate stateful CLI invocation.
 Human-readable account lines report `album_sync_mode`, `live_photo_mode`,
 `pairs_complete`, `pairs_incomplete`, `confirmed`, `existing`,
 `deleted`, `deletion_pending`, `pending`, `failed`, `unconfirmed`, `deferred`,
-`albums_active`, `albums_inaccessible` and total `excluded` media counts, then the
+`albums_active`, `albums_inaccessible` and total `excluded` media counts, followed
+by album/association/event backlog counts, the effective retry bounds
+(`retry max_attempts=... max_delay_ms=...`), process-local direct/API byte reads
+and one line per nonzero exclusion, error, fallback and failure code; then the
 `favorites_mode` setting, the `favorites_authority` explanation, and the
 `favorites_desired`, `favorites_observed`, `favorites_applied`,
 `favorites_preserved`, `favorites_pending`, `favorites_failed`,
@@ -95,6 +99,8 @@ Compose config bind is read-only. See [local management](../how-to/local-managem
 | --- | --- |
 | `GET /healthz` | Process is running. |
 | `GET /readyz` | Core local services can work. Remote credential/network failures belong in diagnostics. |
+| `GET /metrics` | Optional Prometheus text exposition; only with `metrics: true`, on a loopback listener or with a bearer token. `404` otherwise. |
+| `GET /status` | Optional JSON durable status under the same access policy; identical to `status --json`. |
 | `POST /events/{account}` | Independently bearer-authenticated durable asset hints; see [event HTTP reference](events.md). |
 
 Probes do not expose credentials or prove successful cloud transfer.

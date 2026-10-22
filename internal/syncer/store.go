@@ -27,10 +27,13 @@ type Store struct {
 
 // DirectCounters reports read-only mount diagnostics for one account. Counters
 // are process-local: they describe this process and reset on restart. No path,
-// filename or remote payload is ever recorded.
+// filename or remote payload is ever recorded. BytesAvoided counts originals
+// read from an approved mount; APIBytes counts originals downloaded from the
+// Immich API.
 type DirectCounters struct {
 	Reads        int            `json:"reads"`
 	BytesAvoided int64          `json:"bytes_avoided"`
+	APIBytes     int64          `json:"api_bytes"`
 	Fallbacks    map[string]int `json:"fallbacks,omitempty"`
 	Failures     map[string]int `json:"failures,omitempty"`
 }
@@ -52,6 +55,12 @@ func (s *Store) recordDirect(account string, n int64) {
 	c.BytesAvoided += n
 }
 
+func (s *Store) recordAPI(account string, n int64) {
+	s.directMu.Lock()
+	defer s.directMu.Unlock()
+	s.directFor(account).APIBytes += n
+}
+
 func (s *Store) recordDirectFallback(account string, outcome direct.Outcome) {
 	s.directMu.Lock()
 	defer s.directMu.Unlock()
@@ -69,6 +78,7 @@ func (s *Store) directCounters(account string) DirectCounters {
 	defer s.directMu.Unlock()
 	recorded := s.directFor(account)
 	counters := DirectCounters{Reads: recorded.Reads, BytesAvoided: recorded.BytesAvoided,
+		APIBytes:  recorded.APIBytes,
 		Fallbacks: make(map[string]int, len(recorded.Fallbacks)),
 		Failures:  make(map[string]int, len(recorded.Failures))}
 	for outcome, count := range recorded.Fallbacks {

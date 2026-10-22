@@ -7,6 +7,7 @@
   "max_staging_files": 2,
   "bytes_per_second": 0,
   "log_level": "info",
+  "metrics": false,
   "accounts": [
     {
       "id": "home",
@@ -34,7 +35,8 @@
       "managed_workflow": false,
       "immich_workflow_api_key_file": "/run/secrets/immich_workflow_key",
       "workflow_callback_url": "https://sync.example.org/events/home",
-      "workflow_secret_file": "/run/secrets/workflow_secret"
+      "workflow_secret_file": "/run/secrets/workflow_secret",
+      "retry": {"max_attempts": 5, "max_delay": "30s"}
     }
   ]
 }

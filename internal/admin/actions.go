@@ -51,6 +51,17 @@ func (d *dashboard) accountAction(action string) http.HandlerFunc {
 				Checks   []Diagnostic
 			}{id, d.backend.Code(diagnoseErr), checks})
 			return
+		case "workflow-logs":
+			// Read-only remote diagnostics through the separately authorized
+			// Workflow credential; the page never shows IDs, URLs or payloads.
+			ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+			defer cancel()
+			logs, logErr := d.backend.WorkflowLogs(ctx, id, 50)
+			d.render(w, "workflow-logs", struct {
+				ID, Code string
+				Logs     []WorkflowLog
+			}{id, d.backend.Code(logErr), logs})
+			return
 		}
 		if err != nil {
 			d.fail(w, http.StatusBadRequest, d.backend.Code(err))

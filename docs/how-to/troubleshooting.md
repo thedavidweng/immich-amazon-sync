@@ -8,6 +8,9 @@ issue. Stop the daemon before running another CLI process on the same volume.
 | Symptom/code | Action |
 | --- | --- |
 | `config_invalid_json` | Use JSON, remove unknown fields and trailing values; compare the reference example. |
+| `metrics_listener_public` / `metrics_token_invalid` | Metrics need a loopback `listen` or a mounted `metrics_token_file`; the token file is only legal with `metrics: true`. |
+| `metrics_unavailable` | The configured metrics token file is unreadable or empty at request time. The endpoint fails closed while backups continue. |
+| `retry_max_attempts_invalid` / `retry_max_delay_invalid` | The per-account `retry` block is outside 1..10 attempts or 1s..5m. Retry tuning is bounded by code and never re-enables an uncertain write. |
 | `source_scope_required` | Select explicit album IDs, or deliberately enable library mode; these scopes cannot be combined. |
 | `secret_unreadable` | Check the exact mount path and UID 10001 file readability. Recreate after atomic credential replacement. |
 | `authentication_required` | Renew the same identity's credential; preserve the queue and account binding. |
