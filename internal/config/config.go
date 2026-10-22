@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/thedavidweng/amazon-photos/pkg/aphotos"
+	"github.com/thedavidweng/immich-amazon-sync/internal/filter"
 )
 
 type Config struct {
@@ -32,21 +33,60 @@ type Config struct {
 }
 
 type Account struct {
-	ID            string   `json:"id"`
-	ImmichURL     string   `json:"immich_url"`
-	APIKeyFile    string   `json:"immich_api_key_file"`
-	AmazonRegion  string   `json:"amazon_region"`
-	CookieFile    string   `json:"amazon_cookie_file"`
-	AlbumIDs      []string `json:"album_ids"`
-	Library       bool     `json:"library"`
-	IncludeVideos bool     `json:"include_videos"`
-	MirrorAlbums  bool     `json:"mirror_albums"`
+	ID           string   `json:"id"`
+	ImmichURL    string   `json:"immich_url"`
+	APIKeyFile   string   `json:"immich_api_key_file"`
+	AmazonRegion string   `json:"amazon_region"`
+	CookieFile   string   `json:"amazon_cookie_file"`
+	AlbumIDs     []string `json:"album_ids"`
+	Library      bool     `json:"library"`
+	// IncludeVideos is the legacy video toggle. It is accepted only as a
+	// migration input and is normalized into Filters, preserving its scope.
+	IncludeVideos *bool          `json:"include_videos,omitempty"`
+	Filters       *filter.Policy `json:"filters,omitempty"`
+	MirrorAlbums  bool           `json:"mirror_albums"`
 	// Deletions propagates a source trash to the Amazon node. Enabling it also
 	// requires DeletionConfirmation to equal DeletionConfirmationPhrase.
 	Deletions            bool   `json:"deletions"`
 	DeletionConfirmation string `json:"deletions_confirmation,omitempty"`
 	apiKey               string
 	cookie               string
+}
+
+// Policy returns the effective eligibility policy. A nil Filters block derives
+// the historical behavior from IncludeVideos, which defaulted to images only.
+func (a Account) Policy() filter.Policy {
+	if a.Filters != nil {
+		return a.Filters.Normalize()
+	}
+	return filter.Policy{MediaTypes: mediaTypes(a.IncludeVideos != nil && *a.IncludeVideos)}.Normalize()
+}
+
+func mediaTypes(videos bool) []string {
+	if videos {
+		return []string{"image", "video"}
+	}
+	return []string{"image"}
+}
+
+func (a Account) normalizeFilters() (Account, error) {
+	if a.Filters != nil && a.IncludeVideos != nil {
+		return a, errors.New("filter_conflict")
+	}
+	if a.Filters != nil {
+		if err := a.Filters.Validate(); err != nil {
+			return a, err
+		}
+		policy := a.Filters.Normalize()
+		a.Filters = &policy
+		return a, nil
+	}
+	policy := a.Policy()
+	if err := policy.Validate(); err != nil {
+		return a, err
+	}
+	a.Filters, a.IncludeVideos = &policy, nil
+	return a, nil
 }
 
 // DeletionConfirmationPhrase is the exact text a configuration must contain to
@@ -84,23 +124,30 @@ func Load(path string) (Config, error) {
 		if err := decoder.Decode(&extra); err != io.EOF {
 			return cfg, errors.New("config_invalid_json")
 		}
-	} else if os.Getenv("IMMICH_URL") != "" {
-		includeVideos := false
-		if value := os.Getenv("INCLUDE_VIDEOS"); value != "" {
-			var err error
-			includeVideos, err = strconv.ParseBool(value)
-			if err != nil {
-				return cfg, errors.New("include_videos_invalid")
+		for i := range cfg.Accounts {
+			if cfg.Accounts[i].Filters == nil && cfg.Accounts[i].IncludeVideos == nil {
+				continue
 			}
+			account, err := cfg.Accounts[i].normalizeFilters()
+			if err != nil {
+				return cfg, err
+			}
+			cfg.Accounts[i] = account
 		}
-		cfg.Accounts = []Account{{
+	} else if os.Getenv("IMMICH_URL") != "" {
+		account := Account{
 			ID: "default", ImmichURL: os.Getenv("IMMICH_URL"),
 			APIKeyFile: os.Getenv("IMMICH_API_KEY_FILE"), apiKey: os.Getenv("IMMICH_API_KEY"),
 			AmazonRegion: os.Getenv("AMAZON_REGION"),
 			CookieFile:   os.Getenv("AMAZON_COOKIE_FILE"), cookie: os.Getenv("AMAZON_COOKIE"),
-			AlbumIDs:      splitIDs(os.Getenv("ALBUM_IDS")),
-			IncludeVideos: includeVideos,
-		}}
+			AlbumIDs: splitIDs(os.Getenv("ALBUM_IDS")),
+		}
+		policy, err := envFilters()
+		if err != nil {
+			return cfg, err
+		}
+		account.Filters = policy
+		cfg.Accounts = []Account{account}
 	}
 	if value := os.Getenv("DATA_DIR"); value != "" {
 		cfg.DataDir = value
@@ -118,6 +165,55 @@ func Load(path string) (Config, error) {
 }
 
 var identifier = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$`)
+
+// envFilters builds the filter policy for the environment-only account. It
+// keeps INCLUDE_VIDEOS as the legacy migration input and rejects combining it
+// with the explicit MEDIA_TYPES rule.
+func envFilters() (*filter.Policy, error) {
+	policy := filter.Policy{MediaTypes: []string{"image"}}
+	if value := os.Getenv("INCLUDE_VIDEOS"); value != "" {
+		if os.Getenv("MEDIA_TYPES") != "" {
+			return nil, errors.New("filter_conflict")
+		}
+		videos, err := strconv.ParseBool(value)
+		if err != nil {
+			return nil, errors.New("include_videos_invalid")
+		}
+		policy.MediaTypes = mediaTypes(videos)
+	}
+	if value := os.Getenv("MEDIA_TYPES"); value != "" {
+		policy.MediaTypes = splitIDs(value)
+	}
+	if value := os.Getenv("MAX_ORIGINAL_BYTES"); value != "" {
+		limit, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || limit < 0 {
+			return nil, errors.New("filter_max_original_bytes_invalid")
+		}
+		policy.MaxOriginalBytes = limit
+	}
+	if value := os.Getenv("SKIP_RAW"); value != "" {
+		skip, err := strconv.ParseBool(value)
+		if err != nil {
+			return nil, errors.New("filter_skip_raw_invalid")
+		}
+		policy.SkipRAW = skip
+	}
+	if value := os.Getenv("INCLUDE_ARCHIVED"); value != "" {
+		include, err := strconv.ParseBool(value)
+		if err != nil {
+			return nil, errors.New("filter_include_archived_invalid")
+		}
+		policy.IncludeArchived = &include
+	}
+	if value := os.Getenv("EXCLUDED_TAGS"); value != "" {
+		policy.ExcludedTags = splitIDs(value)
+	}
+	if err := policy.Validate(); err != nil {
+		return nil, err
+	}
+	normalized := policy.Normalize()
+	return &normalized, nil
+}
 
 func (c Config) Validate() error {
 	if strings.TrimSpace(c.DataDir) == "" {
@@ -147,6 +243,16 @@ func (c Config) Validate() error {
 			return errors.New("account_id_invalid")
 		}
 		seen[account.ID] = true
+		if account.Filters != nil && account.IncludeVideos != nil {
+			return errors.New("filter_conflict")
+		}
+		if account.Filters != nil {
+			if err := account.Filters.Validate(); err != nil {
+				return err
+			}
+		} else if err := account.Policy().Validate(); err != nil {
+			return err
+		}
 		u, err := url.Parse(account.ImmichURL)
 		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 			return errors.New("immich_url_invalid")
@@ -229,8 +335,20 @@ func (c Config) Save(path string) error {
 	if err := c.Validate(); err != nil {
 		return err
 	}
+	out := c
+	out.Accounts = append([]Account(nil), c.Accounts...)
+	for i := range out.Accounts {
+		if out.Accounts[i].Filters == nil && out.Accounts[i].IncludeVideos == nil {
+			continue
+		}
+		account, err := out.Accounts[i].normalizeFilters()
+		if err != nil {
+			return err
+		}
+		out.Accounts[i] = account
+	}
 	var data bytes.Buffer
-	if err := json.NewEncoder(&data).Encode(c); err != nil || data.Len() > maxConfigBytes {
+	if err := json.NewEncoder(&data).Encode(out); err != nil || data.Len() > maxConfigBytes {
 		return errors.New("config_invalid_json")
 	}
 	f, err := os.CreateTemp(filepath.Dir(path), ".config-*")

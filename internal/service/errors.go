@@ -51,7 +51,9 @@ func knownCode(code string) string {
 		"account_id_invalid", "immich_url_invalid", "amazon_region_required", "amazon_region_invalid",
 		"credentials_required", "credential_sources_conflict", "source_scope_required",
 		"source_scope_conflict", "album_id_invalid", "secret_unreadable", "secret_invalid",
-		"invalid_options", "include_videos_invalid", "config_write_failed":
+		"invalid_options", "include_videos_invalid", "config_write_failed",
+		"filter_conflict", "filter_media_type_invalid", "filter_max_original_bytes_invalid",
+		"filter_skip_raw_invalid", "filter_include_archived_invalid", "filter_excluded_tags_invalid":
 		return code
 	}
 	return "operation_failed"
@@ -83,7 +85,9 @@ func ExitCode(err error) int {
 		"log_level_invalid", "accounts_required", "account_required", "account_not_found",
 		"account_id_invalid", "immich_url_invalid", "amazon_region_required", "amazon_region_invalid",
 		"source_scope_required", "source_scope_conflict", "album_id_invalid", "invalid_options",
-		"include_videos_invalid", "invalid_event", "deletion_confirmation_required":
+		"include_videos_invalid", "invalid_event", "deletion_confirmation_required",
+		"filter_conflict", "filter_media_type_invalid", "filter_max_original_bytes_invalid",
+		"filter_skip_raw_invalid", "filter_include_archived_invalid", "filter_excluded_tags_invalid":
 		return 2
 	}
 	return 1
