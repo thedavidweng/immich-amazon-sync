@@ -36,6 +36,7 @@ type job struct {
 	node     string
 	attempts int
 	next     int64
+	read     string // "direct" or "api" once an original is opened
 }
 
 const eligibleSQL = `(EXISTS(SELECT 1 FROM scope_assets m JOIN rules r ON r.account_id=m.account_id AND r.scope=m.scope
@@ -368,10 +369,15 @@ func (e *Engine) logJob(ctx context.Context, j *job, started time.Time, result e
 			stage = "unconfirmed"
 		}
 	}
-	e.opts.Logger.InfoContext(ctx, "job_progress", "account", anonymousID(e.opts.AccountID),
-		"rule", anonymousID(e.opts.AccountID+"\x00"+scope),
-		"job_id", anonymousID(e.opts.AccountID+"\x00"+j.id), "stage", stage,
-		"counts", st, "elapsed_ms", time.Since(started).Milliseconds(), "error_code", code, "last_success", st.LastSuccess)
+	args := []any{"account", anonymousID(e.opts.AccountID),
+		"rule", anonymousID(e.opts.AccountID + "\x00" + scope),
+		"job_id", anonymousID(e.opts.AccountID + "\x00" + j.id), "stage", stage,
+		"counts", st, "elapsed_ms", time.Since(started).Milliseconds(), "error_code", code,
+		"last_success", st.LastSuccess}
+	if j.read != "" {
+		args = append(args, "read_source", j.read)
+	}
+	e.opts.Logger.InfoContext(ctx, "job_progress", args...)
 }
 
 type contentLock struct {
@@ -552,21 +558,29 @@ func (e *Engine) stage(ctx context.Context, j *job) (result error) {
 			result = errors.Join(result, e.store.removeStage(filepath.Base(path)))
 		}
 	}()
-	r, err := readRetry(ctx, func() (io.ReadCloser, error) { return e.source.Original(ctx, j.id) })
+	original, err := e.openOriginal(ctx, j)
 	if err != nil {
 		return err
 	}
-	defer r.Close()
+	defer original.Close()
 	m, s := md5.New(), sha1.New()
 	n, err := io.CopyBuffer(io.MultiWriter(&quotaWriter{e: e, file: f}, m, s),
-		&rateReader{e: e, ctx: ctx, reader: r}, make([]byte, 32<<10))
+		&rateReader{e: e, ctx: ctx, reader: original}, make([]byte, 32<<10))
 	if err != nil {
 		return err
 	}
-	if j.asset.Size >= 0 && n != j.asset.Size {
+	digest, checksum := hex.EncodeToString(m.Sum(nil)), base64.StdEncoding.EncodeToString(s.Sum(nil))
+	if original.direct {
+		// A mounted original must still be the bytes the source recorded. A
+		// mutation during the read, or a stale mapping, is a changed source:
+		// the digest is never recorded from an unstable or mismatched read.
+		if !original.stable() || (j.asset.Size >= 0 && n != j.asset.Size) ||
+			(j.asset.SHA1 != "" && checksum != j.asset.SHA1) {
+			return errors.New("source_changed")
+		}
+	} else if j.asset.Size >= 0 && n != j.asset.Size {
 		return errors.New("size_mismatch")
-	}
-	if j.asset.SHA1 != "" && base64.StdEncoding.EncodeToString(s.Sum(nil)) != j.asset.SHA1 {
+	} else if j.asset.SHA1 != "" && checksum != j.asset.SHA1 {
 		return errors.New("checksum_mismatch")
 	}
 	if err = f.Sync(); err != nil {
@@ -583,13 +597,65 @@ func (e *Engine) stage(ctx context.Context, j *job) (result error) {
 	if err != nil {
 		return errors.New("storage_unavailable")
 	}
-	j.stage, j.md5, j.size = filepath.Base(path), hex.EncodeToString(m.Sum(nil)), n
-	j.sha1 = base64.StdEncoding.EncodeToString(s.Sum(nil))
+	j.stage, j.md5, j.size = filepath.Base(path), digest, n
+	j.sha1 = checksum
 	if err := e.setState(ctx, j, "staged", ""); err != nil {
 		j.stage = ""
 		return err
 	}
+	if original.direct {
+		e.store.recordDirect(e.opts.AccountID, n)
+	}
 	return nil
+}
+
+// original is one readable original and whether it came from an approved
+// read-only mount. stable is nil for API streams, whose length and checksum are
+// already negotiated by the source contract.
+type original struct {
+	io.ReadCloser
+	direct bool
+	stable func() bool
+}
+
+// openOriginal returns the bytes for one asset. An approved, eligible mount is
+// read in place and the Immich original is never requested; an absent or
+// ineligible mount falls back to the API stream. A suspicious path or changed
+// source identity fails closed instead of downloading other bytes.
+func (e *Engine) openOriginal(ctx context.Context, j *job) (*original, error) {
+	fromAPI := func() (*original, error) {
+		r, err := readRetry(ctx, func() (io.ReadCloser, error) { return e.source.Original(ctx, j.id) })
+		if err != nil {
+			return nil, err
+		}
+		j.read = "api"
+		return &original{ReadCloser: r}, nil
+	}
+	if !e.direct.Configured() {
+		return fromAPI()
+	}
+	a, err := readRetry(ctx, func() (bridge.Asset, error) { return e.source.Asset(ctx, j.id) })
+	if err != nil {
+		return nil, err
+	}
+	if a.ID != j.id {
+		return nil, errors.New(bridge.Protocol)
+	}
+	if (j.asset.Size >= 0 && a.Size >= 0 && a.Size != j.asset.Size) ||
+		(j.asset.SHA1 != "" && a.SHA1 != "" && a.SHA1 != j.asset.SHA1) {
+		return nil, errors.New("source_changed")
+	}
+	file, outcome := e.direct.Open(a.OriginalPath)
+	if file == nil {
+		if outcome.FailClosed() {
+			e.store.recordDirectFailure(e.opts.AccountID, outcome)
+			return nil, errors.New(outcome.Code())
+		}
+		e.store.recordDirectFallback(e.opts.AccountID, outcome)
+		return fromAPI()
+	}
+	j.read = "direct"
+	return &original{ReadCloser: file, direct: true, stable: file.Stable}, nil
 }
 
 type rateReader struct {

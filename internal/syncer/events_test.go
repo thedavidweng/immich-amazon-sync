@@ -39,7 +39,7 @@ func TestDurableEventValidatesAlbumScopeWithoutCompletingBackfill(t *testing.T) 
 	}
 	d := newAlbumTarget()
 	opts := options()
-	opts.MirrorAlbums = true
+	opts.AlbumSyncMode = bridge.AlbumSyncSelected
 	e := engine(t, store, s, d, opts)
 	if err := e.Enqueue(ctx, "new", 10); err != nil {
 		t.Fatal(err)

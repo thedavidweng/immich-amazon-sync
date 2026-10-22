@@ -11,12 +11,13 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/thedavidweng/immich-amazon-sync/internal/bridge"
 	"github.com/thedavidweng/immich-amazon-sync/internal/config"
 	"github.com/thedavidweng/immich-amazon-sync/internal/service"
 )
 
-func TestAdminRejectsUnusableMirrorScopeBeforePersistenceAndReload(t *testing.T) {
-	for _, mode := range []string{"library-mirror-conflict", "albums-mirror", "library-only"} {
+func TestAdminRejectsUnusableAlbumModeBeforePersistenceAndReload(t *testing.T) {
+	for _, mode := range []string{"library-selected-conflict", "albums-selected", "library-only", "library-all-accessible"} {
 		t.Run(mode, func(t *testing.T) {
 			d := openDashboard(t)
 			csrf := d.login(t)
@@ -31,15 +32,20 @@ func TestAdminRejectsUnusableMirrorScopeBeforePersistenceAndReload(t *testing.T)
 			}
 			form := d.accountForm(t, csrf, "first")
 			form.Set("original_id", "first")
-			if mode != "albums-mirror" {
+			if mode != "albums-selected" {
 				form.Del("album_ids")
 				form.Set("library", "on")
 			}
-			if mode != "library-only" {
-				form.Set("mirror_albums", "on")
+			switch mode {
+			case "library-selected-conflict", "albums-selected":
+				form.Set("album_sync_mode", "selected")
+			case "library-only":
+				form.Set("album_sync_mode", "off")
+			case "library-all-accessible":
+				form.Set("album_sync_mode", "all_accessible")
 			}
 			status, body := d.post(t, "/accounts/save", form)
-			if mode == "library-mirror-conflict" {
+			if mode == "library-selected-conflict" {
 				if status != http.StatusBadRequest || !strings.Contains(body, "source_scope_conflict") {
 					t.Errorf("unusable scope was accepted: %d %s", status, body)
 				}
@@ -48,7 +54,9 @@ func TestAdminRejectsUnusableMirrorScopeBeforePersistenceAndReload(t *testing.T)
 					t.Errorf("rejected scope changed persisted config: %v", err)
 				}
 				_, editor := d.get(t, "/accounts/first/edit")
-				if strings.Contains(editor, `name="library" checked`) || strings.Contains(editor, `name="mirror_albums" checked`) {
+				if strings.Contains(editor, `name="library" checked`) ||
+					strings.Contains(editor, `value="selected" selected`) ||
+					strings.Contains(editor, `value="all_accessible" selected`) {
 					t.Error("rejected scope changed running configuration")
 				}
 			} else {
@@ -57,9 +65,13 @@ func TestAdminRejectsUnusableMirrorScopeBeforePersistenceAndReload(t *testing.T)
 				}
 				cfg, err := config.Load(d.path)
 				if err != nil || len(cfg.Accounts) != 2 ||
-					cfg.Accounts[0].Library != (mode == "library-only") ||
-					cfg.Accounts[0].MirrorAlbums != (mode == "albums-mirror") {
-					t.Fatalf("valid scope was not persisted: %v", err)
+					cfg.Accounts[0].Library != (mode != "albums-selected") ||
+					cfg.Accounts[0].AlbumMode() != map[string]bridge.AlbumSyncMode{
+						"albums-selected":        bridge.AlbumSyncSelected,
+						"library-only":           bridge.AlbumSyncOff,
+						"library-all-accessible": bridge.AlbumSyncAllAccessible,
+					}[mode] {
+					t.Fatalf("valid mode was not persisted: %v", err)
 				}
 			}
 			for _, id := range []string{"first", "other"} {

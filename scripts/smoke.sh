@@ -18,7 +18,12 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 printf '%s\n' 'offline-smoke-admin-only' > "$scratch/admin"
-chmod 644 "$scratch/admin"
+printf '%s\n' 'offline-smoke-key' > "$scratch/key"
+printf '%s\n' 'offline-smoke-cookie' > "$scratch/cookie"
+cat > "$scratch/direct.json" <<'CONFIG'
+{"data_dir":"/data","listen":"127.0.0.1:8080","accounts":[{"id":"smoke","immich_url":"http://immich.invalid","immich_api_key_file":"/run/key","amazon_region":"us","amazon_cookie_file":"/run/cookie","library":true,"direct_roots":[{"immich_path":"/photos","host_path":"/originals"}]}]}
+CONFIG
+chmod 644 "$scratch/admin" "$scratch/key" "$scratch/cookie"
 
 check_admin() {
     docker exec -i "$container" sh -eu <<'ADMIN'
@@ -115,6 +120,22 @@ for platform do
 
     volume="$name-$arch"
     docker volume create "$volume" >/dev/null
+    if docker run --rm --network none --platform "$platform" \
+        --volume "$volume:/data" \
+        --mount "type=bind,source=$scratch/direct.json,target=/run/direct.json,readonly" \
+        --mount "type=bind,source=$scratch/key,target=/run/key,readonly" \
+        --mount "type=bind,source=$scratch/cookie,target=/run/cookie,readonly" \
+        "$image" --config /run/direct.json doctor --json > "$scratch/direct-doctor" 2>&1; then
+        echo "Doctor must fail without reachable upstreams" >&2
+        exit 1
+    fi
+    grep -q '"direct_roots":{"configured":1,"available":0}' "$scratch/direct-doctor"
+    if grep -q originals "$scratch/direct-doctor"; then
+        echo "Doctor leaked the approved root path" >&2
+        cat "$scratch/direct-doctor" >&2
+        exit 1
+    fi
+    echo "PASS $platform: absent originals mount falls back without leaking paths"
     docker run --rm --network none --platform "$platform" \
         --volume "$volume:/data" --entrypoint sh "$image" -ec \
         'test "$(id -u)" = 10001; test -w /data; printf persistent > /data/smoke-marker'

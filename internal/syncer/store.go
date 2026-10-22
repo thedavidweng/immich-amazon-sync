@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/thedavidweng/immich-amazon-sync/internal/direct"
 	_ "modernc.org/sqlite"
 )
 
@@ -20,6 +21,63 @@ type Store struct {
 	staging    sync.Mutex
 	stageBytes int64
 	stageFiles int
+	directMu   sync.Mutex
+	direct     map[string]*DirectCounters
+}
+
+// DirectCounters reports read-only mount diagnostics for one account. Counters
+// are process-local: they describe this process and reset on restart. No path,
+// filename or remote payload is ever recorded.
+type DirectCounters struct {
+	Reads        int            `json:"reads"`
+	BytesAvoided int64          `json:"bytes_avoided"`
+	Fallbacks    map[string]int `json:"fallbacks,omitempty"`
+	Failures     map[string]int `json:"failures,omitempty"`
+}
+
+func (s *Store) directFor(account string) *DirectCounters {
+	c := s.direct[account]
+	if c == nil {
+		c = &DirectCounters{Fallbacks: map[string]int{}, Failures: map[string]int{}}
+		s.direct[account] = c
+	}
+	return c
+}
+
+func (s *Store) recordDirect(account string, n int64) {
+	s.directMu.Lock()
+	defer s.directMu.Unlock()
+	c := s.directFor(account)
+	c.Reads++
+	c.BytesAvoided += n
+}
+
+func (s *Store) recordDirectFallback(account string, outcome direct.Outcome) {
+	s.directMu.Lock()
+	defer s.directMu.Unlock()
+	s.directFor(account).Fallbacks[string(outcome)]++
+}
+
+func (s *Store) recordDirectFailure(account string, outcome direct.Outcome) {
+	s.directMu.Lock()
+	defer s.directMu.Unlock()
+	s.directFor(account).Failures[string(outcome)]++
+}
+
+func (s *Store) directCounters(account string) DirectCounters {
+	s.directMu.Lock()
+	defer s.directMu.Unlock()
+	recorded := s.directFor(account)
+	counters := DirectCounters{Reads: recorded.Reads, BytesAvoided: recorded.BytesAvoided,
+		Fallbacks: make(map[string]int, len(recorded.Fallbacks)),
+		Failures:  make(map[string]int, len(recorded.Failures))}
+	for outcome, count := range recorded.Fallbacks {
+		counters.Fallbacks[outcome] = count
+	}
+	for outcome, count := range recorded.Failures {
+		counters.Failures[outcome] = count
+	}
+	return counters
 }
 
 func Open(dataDir string) (*Store, error) {
@@ -30,7 +88,7 @@ func Open(dataDir string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{dir: dataDir, lock: lock}
+	s := &Store{dir: dataDir, lock: lock, direct: make(map[string]*DirectCounters)}
 	dbPath := filepath.Join(dataDir, "sync.sqlite")
 	f, err := os.OpenFile(dbPath, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
@@ -142,20 +200,29 @@ func (s *Store) migrate() error {
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 3 {
+	if version > 4 {
 		return errors.New("unsupported_schema")
 	}
-	if version == 3 {
+	if version == 4 {
 		return nil
 	}
+	if version == 3 {
+		return s.migrateP3()
+	}
 	if version == 2 {
-		return s.migrateP2()
+		if err := s.migrateP2(); err != nil {
+			return err
+		}
+		return s.migrateP3()
 	}
 	if version == 1 {
 		if err := s.migrateP1(); err != nil {
 			return err
 		}
-		return s.migrateP2()
+		if err := s.migrateP2(); err != nil {
+			return err
+		}
+		return s.migrateP3()
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -225,7 +292,29 @@ func (s *Store) migrate() error {
 	if err := s.migrateP1(); err != nil {
 		return err
 	}
-	return s.migrateP2()
+	if err := s.migrateP2(); err != nil {
+		return err
+	}
+	return s.migrateP3()
+}
+
+// migrateP3 records how each album rule came into scope. Explicit rules are
+// configured; discovered rules follow the accessible album listing. Existing
+// mappings, cursors and memberships are preserved and no rule is widened.
+func (s *Store) migrateP3() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(`ALTER TABLE rules ADD COLUMN origin TEXT NOT NULL DEFAULT 'explicit';
+	ALTER TABLE rules ADD COLUMN discovered INTEGER NOT NULL DEFAULT 1;
+	ALTER TABLE rules ADD COLUMN discovered_at TEXT NOT NULL DEFAULT '';
+	PRAGMA user_version=4;`)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) migrateP1() error {

@@ -15,6 +15,9 @@ overview. There is no public JSON status endpoint.
 | `albums_pending` | Active managed albums lacking a target ID, current completed generation or applied name. |
 | `albums_failed` | Active managed albums with recorded errors. |
 | `albums_unconfirmed` | Album creation may have committed without an established returned target ID. |
+| `album_sync_mode` | Active mode: `off`, `selected` or `all_accessible`. |
+| `albums_active` | Album rules currently in scope and scheduling work. |
+| `albums_inaccessible` | Discovered albums absent from the latest complete accessible listing. Mirroring for them is stopped; their owned destination album, media and memberships are preserved. Also reported as `album_inaccessible` in `errors`. |
 | `associations_pending` | Active membership operations not settled as present or absent. |
 | `associations_failed` | Active membership operations with recorded errors. |
 | `associations_unconfirmed` | Membership addition/removal intents requiring reconciliation. |
@@ -27,11 +30,18 @@ overview. There is no public JSON status endpoint.
 | `deferral_reason` | `transfer_window` while deferred uploads wait for a closed window; omitted otherwise. |
 | `transfer_window` | Present only when the account configures a window: `timezone`, `start`, `end`, `open`, and `next_opening` when closed. `next_opening` is DST-correct local wall-clock time in that zone. |
 | `bytes_per_second` | Configured combined per-account cap for source-download and destination-upload bytes; zero means disabled. Metadata traffic is not counted. |
+| `direct` | Process-local read-only mount diagnostics: `reads`, `bytes_avoided`, per-reason `fallbacks` and fail-closed `failures`. Counters reset on restart and never contain a path. Zero everywhere when no `direct_roots` mapping is configured. |
 
 Counts such as pending, failed and unconfirmed album work overlap; do not add
 them to infer a total. Disabling album mirroring reports zero album/association
 counts without deleting preserved state. No private asset IDs, filenames, paths,
 URLs or raw remote errors are included in these aggregates.
+
+`all_accessible` reads the complete accessible album listing on a full pass and
+periodic reconcile, not on every bounded continuation. A failed listing changes
+nothing. An album absent from a successful listing stops mirroring and becomes
+`albums_inaccessible`; its mappings and memberships stay, and it is never
+treated as deletion evidence.
 
 `last_success` advances only after authoritative full scans, active incremental
 work and hints are complete, eligible media is settled, and requested managed

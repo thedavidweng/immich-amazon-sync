@@ -695,3 +695,38 @@ func TestTransferWindowIsEditableAndShownWithoutSecrets(t *testing.T) {
 		t.Fatalf("equal window bounds accepted: %d %s", status, body)
 	}
 }
+
+func TestEditingAnAccountPreservesItsApprovedReadOnlyRoots(t *testing.T) {
+	d := openDashboard(t)
+	csrf := d.login(t)
+	if status, body := d.post(t, "/accounts/save", d.accountForm(t, csrf, "family")); status != 200 {
+		t.Fatalf("first save: %d %s", status, body)
+	}
+	cfg, err := config.Load(d.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approved := []config.DirectRoot{{ImmichPath: "/photos", HostPath: "/originals"}}
+	cfg.Accounts[0].DirectRoots = approved
+	if err := d.run.Reload(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Save(d.path); err != nil {
+		t.Fatal(err)
+	}
+	form := d.accountForm(t, csrf, "family")
+	form.Set("original_id", "family")
+	form.Set("include_videos", "on")
+	status, body := d.post(t, "/accounts/save", form)
+	if status != 200 {
+		t.Fatalf("edit save: %d %s", status, body)
+	}
+	saved, err := config.Load(d.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.Accounts) != 1 || !saved.Accounts[0].IncludeVideos ||
+		len(saved.Accounts[0].DirectRoots) != 1 || saved.Accounts[0].DirectRoots[0] != approved[0] {
+		t.Fatalf("approved mapping was dropped by an account edit: %+v", saved.Accounts)
+	}
+}
