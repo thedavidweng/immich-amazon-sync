@@ -371,3 +371,67 @@ func TestPairRecoversWhenAPolicyChangeAdmitsTheCompanion(t *testing.T) {
 		t.Fatalf("admitted companion did not complete the pair: %+v uploads=%d", st, len(d.bodies))
 	}
 }
+
+// A source-trashed companion follows the existing deletion policy: with
+// propagation off nothing changes, and with it on only that companion Node is
+// trashed. Either way the pair stops claiming completeness, and the still Node
+// is never touched.
+func TestTrashedCompanionFollowsDeletionPolicy(t *testing.T) {
+	for _, deletions := range []bool{false, true} {
+		t.Run(fmt.Sprintf("deletions=%v", deletions), func(t *testing.T) {
+			still, companion := liveStill("still", "mov"), liveCompanion("mov")
+			assets := []bridge.Asset{still, companion}
+			data := map[string]string{"still": "hello", "mov": "world"}
+			for i := range 10 {
+				id := fmt.Sprintf("fill%d", i)
+				filler := bridge.Asset{ID: id, Name: id + ".jpg", MIME: "image/jpeg", Kind: "IMAGE", Size: 5}
+				assets = append(assets, filler)
+				data[id] = fmt.Sprintf("fill%d", i)
+			}
+			s := &sourceFake{identity: "source", pages: map[string]bridge.Page{"": {Assets: assets}}, data: data,
+				assets: map[string]bridge.Asset{"still": still, "mov": companion}}
+			d := &targetFake{identity: "target"}
+			dir := t.TempDir()
+			mode := func(page []bridge.Asset) syncer.Status {
+				s.pages[""] = bridge.Page{Assets: page}
+				store, err := syncer.Open(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer func() {
+					if err := store.Close(); err != nil {
+						t.Error(err)
+					}
+				}()
+				opts := options()
+				opts.Deletions = deletions
+				opts.LivePhotoMode = bridge.LivePhotoOriginalPair
+				e := engine(t, store, s, d, opts)
+				if err := e.Once(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				return status(t, e)
+			}
+			if st := mode(assets); st.Confirmed != 12 || st.PairsComplete != 1 {
+				t.Fatalf("baseline pair: %+v", st)
+			}
+			trashed := companion
+			trashed.ExcludedReason = "trashed"
+			page := append([]bridge.Asset{still, trashed}, assets[2:]...)
+			st := mode(page)
+			if deletions {
+				if st.Deleted != 1 || st.Confirmed != 11 || st.PairsComplete != 0 ||
+					st.PairsIncomplete != 0 || st.Errors["pair_incomplete"] != 0 {
+					t.Fatalf("companion trash was not isolated: %+v", st)
+				}
+				if len(d.trashed) != 1 {
+					t.Fatalf("expected exactly the companion to be trashed: %v", d.trashed)
+				}
+			} else {
+				if st.Deleted != 0 || st.Confirmed != 12 || st.PairsComplete != 1 || len(d.trashed) != 0 {
+					t.Fatalf("propagation off changed media: %+v trashed=%v", st, d.trashed)
+				}
+			}
+		})
+	}
+}

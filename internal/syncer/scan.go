@@ -257,6 +257,9 @@ func (e *Engine) discover(ctx context.Context, tx *sql.Tx, a bridge.Asset, metad
 	}
 	err := tx.QueryRowContext(ctx, "SELECT metadata,md5,sha1,size,state,node_id,prior_state,error_code,attempts,stage_name FROM assets WHERE account_id=? AND id=?",
 		e.opts.AccountID, a.ID).Scan(&oldMetadata, &digest, &checksum, &size, &state, &node, &prior, &code, &attempts, &stage)
+	// An opted-in source trash retires the relationship instead of reporting it
+	// incomplete; with propagation off the pair stays untouched.
+	retire := e.opts.Deletions && a.ExcludedReason == "trashed"
 	if errors.Is(err, sql.ErrNoRows) {
 		companion, err := e.companionIn(ctx, tx, a)
 		if err != nil {
@@ -272,7 +275,7 @@ func (e *Engine) discover(ctx context.Context, tx *sql.Tx, a bridge.Asset, metad
 		if err != nil {
 			return err
 		}
-		return e.discoverPair(ctx, tx, a, exclusion)
+		return e.discoverPair(ctx, tx, a, exclusion, retire)
 	}
 	if err != nil {
 		return err
@@ -352,7 +355,7 @@ func (e *Engine) discover(ctx context.Context, tx *sql.Tx, a bridge.Asset, metad
 	if err != nil {
 		return err
 	}
-	return e.discoverPair(ctx, tx, a, exclusion)
+	return e.discoverPair(ctx, tx, a, exclusion, retire)
 }
 
 // exclusion classifies an Asset for durable, non-destructive exclusion. Source

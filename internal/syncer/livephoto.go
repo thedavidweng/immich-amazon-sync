@@ -73,9 +73,16 @@ func (e *Engine) companionExclusion(a bridge.Asset) string {
 // source. An eligible still that references a companion owns one pair row; an
 // excluded still or a removed link withdraws it. Withdrawing bookkeeping never
 // downgrades a confirmed Node, and nothing here deletes remote media.
-func (e *Engine) discoverPair(ctx context.Context, tx *sql.Tx, a bridge.Asset, exclusion string) error {
+func (e *Engine) discoverPair(ctx context.Context, tx *sql.Tx, a bridge.Asset, exclusion string, retire bool) error {
 	if !e.pairsOn() {
 		return nil
+	}
+	if retire {
+		// An opted-in trash retires the pair: the source no longer holds it, so
+		// there is nothing to report as incomplete.
+		_, err := tx.ExecContext(ctx, `DELETE FROM live_pairs
+			WHERE account_id=? AND (still_id=? OR companion_id=?)`, e.opts.AccountID, a.ID, a.ID)
+		return err
 	}
 	if a.LivePhotoID == "" || exclusion != "" {
 		_, err := tx.ExecContext(ctx, "DELETE FROM live_pairs WHERE account_id=? AND still_id=?",

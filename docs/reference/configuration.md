@@ -73,6 +73,12 @@ already confirmed stills are not downloaded again. Disabling it withdraws pair
 bookkeeping and settles any unsettled companion as `live_photo_companion`,
 leaving every uploaded Node intact.
 
+Deletion propagation keeps its existing meaning. With `deletions: false`, a
+source-trashed companion changes nothing and an already complete pair stays
+complete. With `deletions: true`, a trashed companion is moved to the Amazon
+trash by the normal guarded pass and the pair is retired instead of reported
+incomplete, because the source no longer holds that pair.
+
 ### Eligibility filters
 
 Each account has one validated policy. A newly discovered Asset that the policy
