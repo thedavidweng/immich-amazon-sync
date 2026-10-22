@@ -30,8 +30,11 @@ an album is reconciled through the controlled account-wide MD5 lookup. Exactly
 one AVAILABLE, owned node with matching MD5 and size is reused: its staging file
 is released, the durable node mapping is kept and a requested album membership
 is still applied. The status counts that asset as `existing`, not `confirmed`.
-Zero matches, multiple matches, mismatched metadata, unproven ownership and
-incomplete pagination all remain fail-closed.
+Zero matches on a fresh asset mean no copy was found, so the normal upload
+proceeds; after an uncertain write, zero matches keep it `unconfirmed`. Multiple
+matches, mismatched metadata, unproven ownership and incomplete pagination are
+never reused: a fresh asset fails closed with the diagnostic, and an uncertain
+write stays `unconfirmed`.
 
 For `unconfirmed`, the write may have committed before its response was lost.
 Even a currently empty search result cannot prove noncommit: remote indexing

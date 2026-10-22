@@ -193,7 +193,7 @@ func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
 			j.state = "unconfirmed"
 			return errors.New(bridge.Unconfirmed)
 		}
-		return e.reuse(ctx, j, node)
+		return e.reuse(ctx, j, node, content.ParentID)
 	}
 	nodes, err := readRetry(ctx, func() ([]bridge.Node, error) { return e.target.Find(ctx, content) })
 	if err != nil {
@@ -228,7 +228,7 @@ func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
 			j.state = "unconfirmed"
 			return errors.New(bridge.Unconfirmed)
 		}
-		return e.reuse(ctx, j, verified)
+		return e.reuse(ctx, j, verified, content.ParentID)
 	}
 	// The target parent is strict. Only an authoritative account-wide lookup may
 	// prove that a copy already exists somewhere else in this account.
@@ -244,7 +244,7 @@ func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
 			j.state = "unconfirmed"
 			return errors.New(bridge.Unconfirmed)
 		}
-		return e.reuse(ctx, j, existing)
+		return e.reuse(ctx, j, existing, content.ParentID)
 	}
 	if uncertain {
 		// An incomplete or zero match cannot prove a prior write did not commit.
@@ -419,22 +419,25 @@ func (e *Engine) reconcile(ctx context.Context, j *job, content bridge.Content, 
 		j.state = "unconfirmed"
 		return errors.New(bridge.Unconfirmed)
 	}
-	return e.reuse(ctx, j, existing)
+	return e.reuse(ctx, j, existing, content.ParentID)
 }
 
 // reuse durably maps a verified remote node instead of uploading it. A node in
 // the target folder is a normal confirmation; a verified copy elsewhere in the
 // account is recorded as existing so membership can still be applied later.
 // Either way the staged original is no longer needed.
-func (e *Engine) reuse(ctx context.Context, j *job, n bridge.Node) error {
-	stage := j.stage
+func (e *Engine) reuse(ctx context.Context, j *job, n bridge.Node, target string) error {
+	stage, node, attempts, next := j.stage, j.node, j.attempts, j.next
 	j.node, j.stage = n.ID, ""
 	j.attempts, j.next = 0, 0
 	state := "confirmed"
-	if n.Placement("") != bridge.PlacementTarget {
+	if n.Placement(target) != bridge.PlacementTarget {
 		state = "existing"
 	}
 	if err := e.setState(ctx, j, state, ""); err != nil {
+		// Restore the job so the failure path persists the original staging
+		// reference and backoff instead of orphaning the staged file.
+		j.node, j.stage, j.attempts, j.next = node, stage, attempts, next
 		return err
 	}
 	e.cleanupStage(ctx, stage)

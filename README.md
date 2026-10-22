@@ -25,7 +25,10 @@ requires exactly one AVAILABLE, owned node with matching MD5 and byte size,
 re-read by ID; the staging file is released, the node mapping is kept and a
 requested album membership is still applied. Status counts that asset as
 `existing`, not `confirmed`. Zero or multiple matches, mismatched metadata,
-unproven ownership and incomplete pagination keep it `unconfirmed`.
+unproven ownership and incomplete pagination are never reused and never counted
+as `existing`; a fresh asset still uploads only when the complete lookup proves
+no copy, while an uncertain write stays `unconfirmed` unless one verified match
+is found.
 
 ## Compose quickstart
 

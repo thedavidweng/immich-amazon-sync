@@ -10,10 +10,13 @@ After the strict lookup proves no copy at the target parent, perform one
 controlled account-wide MD5 lookup before staging-derived upload. Reuse only an
 exactly-one AVAILABLE node owned by the authenticated account whose re-read MD5
 and byte size match the staged original. Re-read the node and every parent to
-prove kind, status and ownership. Zero matches mean the content is absent;
-multiple matches, mismatched metadata, unproven ownership, invalid pagination
-and any read failure stay `upload_unconfirmed`. A 409 or a filename is never
-placement evidence.
+prove kind, status and ownership. For a fresh job with no prior write intent,
+zero matches mean the content is absent, so the normal upload may proceed. For
+an uncertain write, zero matches prove nothing and keep it unconfirmed. Multiple
+matches, mismatched metadata, unproven ownership, invalid pagination and any
+read failure are never reused and never counted as `existing`; with a prior
+write intent they stay `upload_unconfirmed`, otherwise they fail closed with the
+reported diagnostic. A 409 or a filename is never placement evidence.
 
 Record reuse durably in the existing asset row: `confirmed` when the verified
 node is at the configured target parent, `existing` when it lives in another
