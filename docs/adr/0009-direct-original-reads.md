@@ -1,4 +1,4 @@
-# 0008: Opt-in direct reads from a read-only originals mount
+# 0009: Opt-in direct reads from a read-only originals mount
 
 Status: accepted. Date: 2026-10-22.
 
