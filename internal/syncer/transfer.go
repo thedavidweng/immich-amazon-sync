@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -42,14 +43,19 @@ const eligibleSQL = `(EXISTS(SELECT 1 FROM scope_assets m JOIN rules r ON r.acco
 	OR EXISTS(SELECT 1 FROM signals m JOIN rules r ON r.account_id=m.account_id AND r.scope=m.scope
 	WHERE m.account_id=a.account_id AND m.asset_id=a.id AND r.active=1 AND m.generation=r.generation AND r.error_code=''))`
 
+// errWindowClosed marks a job deferred by the transfer window. It is never
+// persisted as a failure and never consumes a retry.
+var errWindowClosed = errors.New("transfer_window_closed")
+
 func (e *Engine) drain(ctx context.Context, attempted map[string]bool) error {
 	var selectMu sync.Mutex
+	var windowClosed atomic.Bool
 	results := make(chan error, 64+e.opts.Workers)
 	var workers sync.WaitGroup
 	for range min(e.opts.Workers, e.opts.MaxStagingFiles) {
 		workers.Go(func() {
 			for {
-				if ctx.Err() != nil {
+				if ctx.Err() != nil || windowClosed.Load() {
 					return
 				}
 				paused, err := e.paused(ctx)
@@ -69,7 +75,14 @@ func (e *Engine) drain(ctx context.Context, attempted map[string]bool) error {
 				if j == nil {
 					return
 				}
-				results <- e.transfer(ctx, j)
+				err = e.transfer(ctx, j)
+				if errors.Is(err, errWindowClosed) {
+					// Stop selecting new uploads but let sibling workers finish
+					// any upload already streaming.
+					windowClosed.Store(true)
+					return
+				}
+				results <- err
 			}
 		})
 	}
@@ -84,10 +97,15 @@ func (e *Engine) drain(ctx context.Context, attempted map[string]bool) error {
 }
 
 func (e *Engine) nextJob(ctx context.Context, attempted map[string]bool) (*job, error) {
+	now := e.opts.Now()
+	deferAllowed := 0
+	if e.windowOpen(now) {
+		deferAllowed = 1
+	}
 	rows, err := e.store.db.QueryContext(ctx, `SELECT id,metadata,state,stage_name,md5,sha1,size,node_id,attempts FROM assets a
-		WHERE account_id=? AND state IN ('pending','staged','unconfirmed','failed') AND next_at<=unixepoch('subsec')*1000 AND attempts<5
-		AND error_code!='source_changed'
-		AND `+eligibleSQL+` ORDER BY priority DESC,id LIMIT 64`, e.opts.AccountID)
+		WHERE account_id=? AND state IN ('pending','staged','deferred','unconfirmed','failed') AND next_at<=? AND attempts<5
+		AND error_code!='source_changed' AND (state!='deferred' OR ?)
+		AND `+eligibleSQL+` ORDER BY priority DESC,id LIMIT 64`, e.opts.AccountID, now.UnixMilli(), deferAllowed)
 	if err != nil {
 		return nil, errors.New("storage_unavailable")
 	}
@@ -124,7 +142,7 @@ func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
 	var unlock func()
 	defer func() {
 		// Persist the outcome before allowing another worker to use this content.
-		if result != nil {
+		if result != nil && !errors.Is(result, errWindowClosed) {
 			result = e.fail(ctx, *j, result)
 		}
 		if unlock != nil {
@@ -167,6 +185,11 @@ func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
 			j.asset.MIME = mime.TypeByExtension(filepath.Ext(j.asset.Name))
 		}
 		if j.stage == "" {
+			// A closed window defers the upload before downloading source bytes so
+			// deferral cannot consume staging quota or retries.
+			if !e.windowOpen(e.opts.Now()) {
+				return e.deferUpload(ctx, j)
+			}
 			if err := e.stage(ctx, j); err != nil {
 				return err
 			}
@@ -251,6 +274,11 @@ func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
 		j.state = "unconfirmed"
 		return errors.New(bridge.Unconfirmed)
 	}
+	// Metadata reads above stay available outside the window; only the first
+	// remote write is gated. An upload already streaming never rechecks.
+	if !e.windowOpen(e.opts.Now()) {
+		return e.deferUpload(ctx, j)
+	}
 	if filepath.Base(j.stage) != j.stage || !strings.HasPrefix(j.stage, "original-") {
 		return errors.New("staging_corrupt")
 	}
@@ -329,11 +357,12 @@ func (e *Engine) logJob(ctx context.Context, j *job, started time.Time, result e
 		e.opts.AccountID, j.id, e.opts.AccountID, j.id).Scan(&scope)
 	st, _ := e.summary(ctx)
 	code := "ok"
-	if result != nil {
-		code = errorCode(result)
-	}
 	stage := j.state
-	if result != nil {
+	switch {
+	case errors.Is(result, errWindowClosed):
+		stage, code = "deferred", "transfer_window_closed"
+	case result != nil:
+		code = errorCode(result)
 		stage = "failed"
 		if j.state == "unconfirmed" || j.state == "running" {
 			stage = "unconfirmed"
@@ -385,6 +414,20 @@ func (e *Engine) setState(ctx context.Context, j *job, state, code string) error
 	}
 	j.state = state
 	return nil
+}
+
+// deferUpload persists a job as deferred without consuming a retry. The window
+// state, not a stored timestamp, decides when it becomes dispatchable again, so
+// an edited window applies to the next dispatch.
+func (e *Engine) deferUpload(ctx context.Context, j *job) error {
+	if e.currentWindow() == nil {
+		return nil
+	}
+	j.next = 0
+	if err := e.setState(ctx, j, "deferred", ""); err != nil {
+		return err
+	}
+	return errWindowClosed
 }
 
 func (e *Engine) confirm(ctx context.Context, j *job) error {
@@ -467,7 +510,7 @@ func (e *Engine) fail(ctx context.Context, j job, err error) error {
 	ctx = context.WithoutCancel(ctx)
 	code := errorCode(err)
 	j.attempts++
-	j.next = time.Now().Add(retryDelay(j.attempts-1, err)).UnixMilli()
+	j.next = e.opts.Now().Add(retryDelay(j.attempts-1, err)).UnixMilli()
 	state := "blocked"
 	if j.state == "unconfirmed" || j.state == "running" {
 		state = "unconfirmed"

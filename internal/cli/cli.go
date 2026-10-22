@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/thedavidweng/immich-amazon-sync/internal/config"
@@ -202,10 +203,37 @@ func printReport(out io.Writer, report service.Report, asJSON bool) error {
 		return outputError(json.NewEncoder(out).Encode(report))
 	}
 	for _, account := range report.Accounts {
-		if _, err := fmt.Fprintf(out, "%s %s confirmed=%d existing=%d deleted=%d deletion_pending=%d pending=%d failed=%d unconfirmed=%d\n",
+		if _, err := fmt.Fprintf(out, "%s %s confirmed=%d existing=%d deleted=%d deletion_pending=%d pending=%d failed=%d unconfirmed=%d deferred=%d",
 			account.Account, account.Code, account.Status.Confirmed, account.Status.Existing,
 			account.Status.Deleted, account.Status.DeletePending, account.Status.Pending,
-			account.Status.Failed, account.Status.Unconfirmed); err != nil {
+			account.Status.Failed, account.Status.Unconfirmed, account.Status.Deferred); err != nil {
+			return outputError(err)
+		}
+		if window := account.Status.TransferWindow; window != nil {
+			state := "open"
+			if !window.Open {
+				state = "closed"
+			}
+			if _, err := fmt.Fprintf(out, " window=%s %s-%s %s", window.Timezone, window.Start, window.End, state); err != nil {
+				return outputError(err)
+			}
+			if window.NextOpening != nil {
+				if _, err := fmt.Fprintf(out, " next_opening=%s", window.NextOpening.UTC().Format(time.RFC3339)); err != nil {
+					return outputError(err)
+				}
+			}
+		}
+		if account.Status.DeferralReason != "" {
+			if _, err := fmt.Fprintf(out, " deferral_reason=%s", account.Status.DeferralReason); err != nil {
+				return outputError(err)
+			}
+		}
+		if account.Status.NextAttempt != nil {
+			if _, err := fmt.Fprintf(out, " next_attempt=%s", account.Status.NextAttempt.UTC().Format(time.RFC3339)); err != nil {
+				return outputError(err)
+			}
+		}
+		if _, err := fmt.Fprintln(out); err != nil {
 			return outputError(err)
 		}
 	}

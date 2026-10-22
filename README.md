@@ -36,6 +36,13 @@ as `existing`; a fresh asset still uploads only when the complete lookup proves
 no copy, while an uncertain write stays `unconfirmed` unless one verified match
 is found.
 
+Each account can optionally limit new uploads to one daily window in an IANA
+timezone, including windows that cross midnight. Outside it, scans and metadata
+checks continue, an upload already running finishes, and waiting work is
+reported as `deferred` rather than failed. The scheduler wakes at the next
+DST-correct opening, and editing the window applies without restart. See
+[transfer hour limits](docs/how-to/operations.md#limit-transfer-hours).
+
 ## Compose quickstart
 
 Requires Docker Engine with Compose v2+ and buildx, on Linux amd64 or arm64.

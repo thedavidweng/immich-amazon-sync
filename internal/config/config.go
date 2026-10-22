@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	// Embed the IANA database so validation works in containers without tzdata.
+	_ "time/tzdata"
 
 	"github.com/thedavidweng/amazon-photos/pkg/aphotos"
 )
@@ -45,8 +47,20 @@ type Account struct {
 	// requires DeletionConfirmation to equal DeletionConfirmationPhrase.
 	Deletions            bool   `json:"deletions"`
 	DeletionConfirmation string `json:"deletions_confirmation,omitempty"`
-	apiKey               string
-	cookie               string
+	// TransferWindow restricts new outbound uploads to a daily local-time
+	// window. Absent means transfers are always allowed.
+	TransferWindow *TransferWindow `json:"transfer_window,omitempty"`
+	apiKey         string
+	cookie         string
+}
+
+// TransferWindow is one optional daily upload window in an IANA timezone.
+// Start and End are local "HH:MM" wall-clock times; Start may be later than End
+// to cross midnight. A nil window preserves continuous transfers.
+type TransferWindow struct {
+	Timezone string `json:"timezone"`
+	Start    string `json:"start"`
+	End      string `json:"end"`
 }
 
 // DeletionConfirmationPhrase is the exact text a configuration must contain to
@@ -100,6 +114,8 @@ func Load(path string) (Config, error) {
 			CookieFile:   os.Getenv("AMAZON_COOKIE_FILE"), cookie: os.Getenv("AMAZON_COOKIE"),
 			AlbumIDs:      splitIDs(os.Getenv("ALBUM_IDS")),
 			IncludeVideos: includeVideos,
+			TransferWindow: environmentWindow(os.Getenv("TRANSFER_TIMEZONE"),
+				os.Getenv("TRANSFER_WINDOW_START"), os.Getenv("TRANSFER_WINDOW_END")),
 		}}
 	}
 	if value := os.Getenv("DATA_DIR"); value != "" {
@@ -118,6 +134,50 @@ func Load(path string) (Config, error) {
 }
 
 var identifier = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$`)
+
+// environmentWindow builds the environment-mode transfer window. Empty values
+// leave the window absent; partial or invalid values fail validation.
+func environmentWindow(timezone, start, end string) *TransferWindow {
+	if timezone == "" && start == "" && end == "" {
+		return nil
+	}
+	return &TransferWindow{Timezone: timezone, Start: start, End: end}
+}
+
+func (w *TransferWindow) validate() error {
+	if w == nil {
+		return nil
+	}
+	if w.Timezone == "" || w.Timezone == "Local" {
+		return errors.New("transfer_window_timezone_invalid")
+	}
+	if _, err := time.LoadLocation(w.Timezone); err != nil {
+		return errors.New("transfer_window_timezone_invalid")
+	}
+	start, err := windowClock(w.Start)
+	if err != nil {
+		return err
+	}
+	end, err := windowClock(w.End)
+	if err != nil {
+		return err
+	}
+	if start == end {
+		return errors.New("transfer_window_bounds_invalid")
+	}
+	return nil
+}
+
+func windowClock(value string) (int, error) {
+	if len(value) != 5 || value[2] != ':' {
+		return 0, errors.New("transfer_window_time_invalid")
+	}
+	parsed, err := time.Parse("15:04", value)
+	if err != nil {
+		return 0, errors.New("transfer_window_time_invalid")
+	}
+	return parsed.Hour()*60 + parsed.Minute(), nil
+}
 
 func (c Config) Validate() error {
 	if strings.TrimSpace(c.DataDir) == "" {
@@ -171,6 +231,9 @@ func (c Config) Validate() error {
 		}
 		if account.Deletions && account.DeletionConfirmation != DeletionConfirmationPhrase {
 			return errors.New("deletion_confirmation_required")
+		}
+		if err := account.TransferWindow.validate(); err != nil {
+			return err
 		}
 		for _, id := range account.AlbumIDs {
 			if !identifier.MatchString(id) {

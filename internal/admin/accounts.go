@@ -66,6 +66,15 @@ func formAccount(r *http.Request) config.Account {
 			ids = append(ids, id)
 		}
 	}
+	window := config.TransferWindow{
+		Timezone: strings.TrimSpace(r.PostForm.Get("transfer_timezone")),
+		Start:    strings.TrimSpace(r.PostForm.Get("transfer_window_start")),
+		End:      strings.TrimSpace(r.PostForm.Get("transfer_window_end")),
+	}
+	var transferWindow *config.TransferWindow
+	if window != (config.TransferWindow{}) {
+		transferWindow = &window
+	}
 	return config.Account{
 		ID: r.PostForm.Get("id"), ImmichURL: r.PostForm.Get("immich_url"),
 		APIKeyFile: r.PostForm.Get("key_file"), CookieFile: r.PostForm.Get("cookie_file"),
@@ -75,6 +84,7 @@ func formAccount(r *http.Request) config.Account {
 		MirrorAlbums:         r.PostForm.Get("mirror_albums") == "on",
 		Deletions:            r.PostForm.Get("deletions") == "on",
 		DeletionConfirmation: r.PostForm.Get("deletions_confirmation"),
+		TransferWindow:       transferWindow,
 	}
 }
 
