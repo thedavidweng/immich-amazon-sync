@@ -227,7 +227,18 @@ exercised.
 | Apple Live Photo | Still and hidden MOV can be separate originals | Still-only backup does not preserve the complete pair; no full Live Photo claim. |
 | Hidden/locked/trashed/offline media | Excluded or explicitly reported as unsupported | Only an explicit `isTrashed` observation, with opt-in propagation and a re-verified node, can move a mapped node to the Amazon trash. Hidden, locked and offline states never do. |
 | Embedded EXIF | Preserved inside unchanged original bytes | No metadata rewriting. |
-| Immich-only capture-date edits | Not written separately by the current SDK | Amazon inferred dates can differ. |
+| Source original bytes and filesystem mtimes | Read-only on every upload path | Staged and direct originals are never rewritten: no `utime`, no EXIF rewrite, no recompression. Tests assert unchanged bytes and mtimes. |
+| Immich-only capture-date edits | Not written separately by the pinned SDK; doctor and status report `capture_date=metadata_not_supported` | Amazon infers the displayed date from the original bytes. When a capture date exists only in Immich metadata, or the original has no usable EXIF date, Amazon's displayed date can differ from Immich's capture date. |
+
+Capture-date support is a capability, not an assumption. The pinned `aphotos`
+v0.1.4 release exposes `contentDate` and the EXIF date properties only as
+response data; its upload request, settings PATCH and rename cannot set them.
+`doctor` and the status object therefore report the finite
+`capture_date=metadata_not_supported` and the service never claims that an
+Immich-only date edit is mirrored. If a future release adds a setter, it must be
+proven by that released SDK and verified by an authoritative read-back of the
+resulting node before `supported` is reported. Rewriting original bytes, EXIF or
+filesystem timestamps is never an acceptable substitute.
 
 Immich's public `checksum` is base64 SHA-1 bytes, never Amazon MD5. Current
 external-library imports may use `SHA1("path:" + normalizedPath)`; the public

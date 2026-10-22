@@ -111,7 +111,8 @@ func TestDoctorProbesReadOnlyWithoutClaimingWritePermissions(t *testing.T) {
 	}
 	data, _ := json.Marshal(report)
 	text := string(data)
-	if !strings.Contains(text, `"version":"3.3.4"`) || !strings.Contains(text, `"target_writes":"untested"`) || !strings.Contains(text, `"code":"ok"`) {
+	if !strings.Contains(text, `"version":"3.3.4"`) || !strings.Contains(text, `"target_writes":"untested"`) ||
+		!strings.Contains(text, `"capture_date":"metadata_not_supported"`) || !strings.Contains(text, `"code":"ok"`) {
 		t.Fatalf("missing read/write evidence: %s", text)
 	}
 	if !strings.Contains(text, `"state":"observed"`) || !strings.Contains(text, `"capacity":"unknown"`) ||

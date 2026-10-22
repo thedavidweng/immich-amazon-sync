@@ -137,6 +137,7 @@ func (b *adminBackend) Diagnose(ctx context.Context, id string) ([]admin.Diagnos
 			admin.Diagnostic{Name: "original_read", Code: account.OriginalRead},
 			admin.Diagnostic{Name: "usage_capacity", Code: account.Usage.Capacity},
 			admin.Diagnostic{Name: "usage_entitlement", Code: account.Usage.Entitlement},
+			admin.Diagnostic{Name: "capture_date", Code: account.CaptureDate},
 		)
 		if account.Usage.State != "unavailable" {
 			for _, category := range []struct {

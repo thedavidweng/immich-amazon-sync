@@ -71,7 +71,11 @@ byte-checksum mismatch remains an error.
 
 Preserving an original preserves its embedded EXIF and any embedded motion
 bytes. It does not copy Immich-only timestamp edits: the SDK has no public
-upload capture-date field/setter. Apple Live Photo hidden MOV companions are
+upload capture-date field/setter, so doctor and status report the finite
+`metadata_not_supported` capability and Amazon's inferred date can differ from
+Immich's capture date. If a later SDK release adds a setter, require an
+authoritative read-back before reporting `supported`; never rewrite EXIF or
+filesystem mtimes instead. Apple Live Photo hidden MOV companions are
 separate assets and may not be enumerated with the still. Do not claim complete
 paired-original backup or Amazon Live Photo playback without a separate tested
 companion policy. HEIC/RAW/video acceptance and all regional/album mutations
