@@ -2,6 +2,7 @@ package admin_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"io"
 	"net"
@@ -187,7 +188,8 @@ func (d dashboard) accountForm(t *testing.T, csrf, id string) url.Values {
 	return url.Values{
 		"csrf": {csrf}, "id": {id}, "immich_url": {"http://127.0.0.1:1"},
 		"key_file": {key}, "cookie_file": {cookie}, "region": {"us"},
-		"album_ids": {"11111111-1111-4111-8111-111111111111"},
+		"album_ids":   {"11111111-1111-4111-8111-111111111111"},
+		"media_image": {"on"}, "include_archived": {"on"},
 	}
 }
 
@@ -655,4 +657,60 @@ func TestDashboardShowsAccountIsolatedBacklogsAndReadyWork(t *testing.T) {
 	}
 	check(body, "first", "1", "none ready to run")
 	check(body, "second", "0", "none ready to run")
+}
+
+func TestAdminFilterPolicyIsValidatedPersistedAndRendered(t *testing.T) {
+	d := openDashboard(t)
+	csrf := d.login(t)
+	const tag = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	form := d.accountForm(t, csrf, "family")
+	form.Set("media_video", "on")
+	form.Set("max_original_bytes", "100")
+	form.Set("skip_raw", "on")
+	form.Del("include_archived")
+	form.Set("excluded_tags", tag)
+	if status, body := d.post(t, "/accounts/save", form); status != http.StatusOK {
+		t.Fatalf("save filters: %d %s", status, body)
+	}
+	cfg, err := config.Load(d.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := cfg.Accounts[0].Policy()
+	if len(policy.MediaTypes) != 2 || policy.MaxOriginalBytes != 100 || !policy.SkipRAW ||
+		policy.ArchivedIncluded() || len(policy.ExcludedTags) != 1 || policy.ExcludedTags[0] != tag {
+		t.Fatalf("filters were not persisted: %+v", policy)
+	}
+	_, edit := d.get(t, "/accounts/family/edit")
+	for _, want := range []string{`name="media_image" checked`, `name="media_video" checked`, `name="skip_raw" checked`,
+		`name="excluded_tags"`, tag, `value="100"`} {
+		if !strings.Contains(edit, want) {
+			t.Errorf("editor missing %q", want)
+		}
+	}
+	if strings.Contains(edit, `name="include_archived" checked`) {
+		t.Error("explicit archive exclusion rendered as included")
+	}
+
+	previous, err := os.ReadFile(d.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := d.accountForm(t, csrf, "family")
+	bad.Set("max_original_bytes", "-1")
+	if status, body := d.post(t, "/accounts/save", bad); status != http.StatusBadRequest ||
+		!strings.Contains(body, "filter_max_original_bytes_invalid") {
+		t.Fatalf("invalid size accepted: %d %s", status, body)
+	}
+	current, err := os.ReadFile(d.path)
+	if err != nil || !bytes.Equal(current, previous) {
+		t.Fatal("rejected filter edit changed persisted configuration")
+	}
+	noMedia := d.accountForm(t, csrf, "family")
+	noMedia.Del("media_image")
+	noMedia.Del("media_video")
+	if status, body := d.post(t, "/accounts/save", noMedia); status != http.StatusBadRequest ||
+		!strings.Contains(body, "filter_media_type_invalid") {
+		t.Fatalf("empty media selection accepted: %d %s", status, body)
+	}
 }

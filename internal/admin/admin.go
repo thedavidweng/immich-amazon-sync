@@ -368,7 +368,7 @@ func (d *dashboard) index(w http.ResponseWriter, r *http.Request) {
 	for _, account := range d.backend.Config().Accounts {
 		status, err := d.backend.Status(r.Context(), account.ID)
 		view.Accounts = append(view.Accounts, accountView{
-			Account: account, Status: status, Code: d.backend.Code(err),
+			Account: account, Policy: account.Policy(), Status: status, Code: d.backend.Code(err),
 		})
 	}
 	d.render(w, "index", view)
