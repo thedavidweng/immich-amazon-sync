@@ -142,20 +142,29 @@ func (s *Store) migrate() error {
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 3 {
+	if version > 4 {
 		return errors.New("unsupported_schema")
 	}
-	if version == 3 {
+	if version == 4 {
 		return nil
 	}
+	if version == 3 {
+		return s.migrateP3()
+	}
 	if version == 2 {
-		return s.migrateP2()
+		if err := s.migrateP2(); err != nil {
+			return err
+		}
+		return s.migrateP3()
 	}
 	if version == 1 {
 		if err := s.migrateP1(); err != nil {
 			return err
 		}
-		return s.migrateP2()
+		if err := s.migrateP2(); err != nil {
+			return err
+		}
+		return s.migrateP3()
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -225,7 +234,10 @@ func (s *Store) migrate() error {
 	if err := s.migrateP1(); err != nil {
 		return err
 	}
-	return s.migrateP2()
+	if err := s.migrateP2(); err != nil {
+		return err
+	}
+	return s.migrateP3()
 }
 
 func (s *Store) migrateP1() error {
@@ -288,6 +300,30 @@ func (s *Store) migrateP2() error {
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.Exec(`ALTER TABLE assets ADD COLUMN prior_state TEXT NOT NULL DEFAULT '';
 	PRAGMA user_version=3;`)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) migrateP3() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	// Purely additive: existing mappings, cursors, deletion states and staging
+	// references are untouched, and no account gains workflow scope by migration.
+	_, err = tx.Exec(`CREATE TABLE workflows (
+		account_id TEXT PRIMARY KEY REFERENCES accounts(id),
+		workflow_id TEXT NOT NULL DEFAULT '',
+		contract TEXT NOT NULL DEFAULT '',
+		state TEXT NOT NULL DEFAULT '',
+		error_code TEXT NOT NULL DEFAULT '',
+		desired_hash TEXT NOT NULL DEFAULT '',
+		attempts INTEGER NOT NULL DEFAULT 0,
+		updated_at TEXT NOT NULL DEFAULT '');
+	PRAGMA user_version=4;`)
 	if err != nil {
 		return err
 	}
