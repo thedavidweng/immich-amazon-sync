@@ -52,9 +52,10 @@ Checked with `gh api repos/ImAleeexx/immich-gphotos/pulls/<n>`; `merged` was
 | Strict dedup and verified remote identity (MD5, size, owned Node) | SHA-1 via `gpmc` | MD5/size/owned Node; `confirmed`/`existing` | Live evidence | #17 preserves |
 | Byte-identical originals; no recompression | Yes | Yes | Offline contract + live evidence | #17 preserves; #31 asserts unchanged bytes and mtimes on both upload paths |
 | Opt-in trash propagation, 500-item/10% guard, trash only | Yes | Yes (PR #15) | Live evidence (CA, 2026-10-22) | #17 regression coverage; #15 shipped |
-| Favorite reads with field-presence semantics | PR #6 tree | Not exposed; fixtures pinned | Offline contract | #18 |
-| Star new uploads and Existing Nodes | Yes | No | Not yet tested | #18 |
-| Add-only mode that never unstars | Not offered | No | Not yet tested | #18 |
+| Favorite reads with field-presence semantics | PR #6 tree | Presence-aware `isFavorite`; every Amazon read must prove an explicit raw `settings.favorite` | Offline contract | #18 |
+| Star new uploads and Existing Nodes | Yes | Yes, when `favorites: add_only`; verified by re-read | Offline contract | #18 |
+| Add-only mode that never unstars | Not offered | Yes (`off` is the default) | Offline contract | #18 |
+| Durable per-Node favorite outcome and independent retry | No | One row per node; a lost mutation is retried only after a fresh read | Offline contract | #18 |
 | Authoritative mirror/unstar with consent | PR #6 tree | No | Not yet tested | #19 |
 | Shared-Node conflict, drift repair, read-before-retry | No | No | Not yet tested | #19 |
 | Trusted read-only direct originals with API fallback | PR #5 tree (mtime re-date) | No | Not yet tested | #23 |
@@ -143,3 +144,10 @@ confirmed/existing distinction, read-only Unconfirmed recovery with no second
 POST, the deletion guard (exactly 500 allowed, 501 refused, exactly 10% allowed,
 above 10% refused) and the owned-membership removal guard under deletion-on and
 deletion-off settings where deletion state is relevant.
+
+`internal/syncer/favorites_test.go` pins add-only behavior under deletion-on and
+deletion-off: new and Existing Nodes are starred once, an absent source field
+performs no write, an absent Amazon field is `favorite_unconfirmed`, a shared
+Node yields one write, and Trashed, Deleted and Unconfirmed Nodes are skipped.
+`TestVersionThreeStoreMigratesFavoritesWithoutWideningScope` proves the
+version-6 migration adds favorite state as unknown without authorizing writes.

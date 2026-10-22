@@ -233,3 +233,24 @@ edits that move `updatedAt` do not mark the asset as changed.
 Sources: [library checksum assignment](https://github.com/immich-app/immich/blob/69e0cb8606137c4f8dc0e7207a672ff8be39f358/server/src/services/library.service.ts),
 [Live/Motion linking](https://github.com/immich-app/immich/blob/69e0cb8606137c4f8dc0e7207a672ff8be39f358/server/src/services/metadata.service.ts),
 [SDK upload fields](https://github.com/thedavidweng/amazon-photos/blob/v0.1.4/pkg/aphotos/upload.go).
+
+## Favorite contracts
+
+Immich `AssetResponseDto` at the pinned version requires a non-nullable
+`isFavorite`, and the pinned example fixture also covers an absent field. The
+adapter maps absence to unknown (`Favorite == nil`) and never to false. A source
+without the field therefore performs no favorite write and reports
+`favorites_unknown`.
+
+The aphotos `NodeSettings.Favorite` typed value cannot prove presence: a
+`settings` object without `favorite` decodes as a synthetic false, and the SDK
+also synthesises a `NodeSettings` fallback when a PATCH response omits
+`settings`. The adapter therefore reads the retained raw payload and requires an
+explicit `settings.favorite` boolean for both the pre-write read and the
+post-write verification. A missing field is `favorite_unconfirmed`, and the PATCH
+response is never accepted as proof. A lost or timed-out mutation stays
+uncertain until a fresh read settles it; no media is uploaded again.
+
+These are offline contract grades from the pinned fixtures. A live disposable
+account has not exercised `SetFavorite`; the dated provider matrix remains
+issue #28 work.

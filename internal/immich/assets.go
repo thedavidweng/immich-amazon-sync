@@ -93,6 +93,7 @@ type assetResponse struct {
 	OriginalPath     string          `json:"originalPath"`
 	LibraryID        json.RawMessage `json:"libraryId"`
 	Visibility       string          `json:"visibility"`
+	Favorite         *bool           `json:"isFavorite"`
 	Offline          *bool           `json:"isOffline"`
 	Trashed          *bool           `json:"isTrashed"`
 	Exif             *struct {
@@ -153,6 +154,7 @@ func (a assetResponse) asset() (bridge.Asset, error) {
 		ID: a.ID, Name: a.Name, MIME: a.MIME, Kind: a.Kind, Size: size,
 		SHA1: sha1, TakenAt: a.TakenAt, FileModifiedAt: a.FileModifiedAt,
 		LivePhotoVideo: a.Kind == "VIDEO" && a.Visibility == "hidden",
+		Favorite:       a.Favorite,
 		ExcludedReason: reason, OriginalPath: a.OriginalPath,
 	}, nil
 }

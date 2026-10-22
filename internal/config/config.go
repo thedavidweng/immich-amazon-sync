@@ -48,6 +48,10 @@ type Account struct {
 	// legacy boolean form: true maps to selected and never to all_accessible.
 	AlbumSyncMode string `json:"album_sync_mode,omitempty"`
 	MirrorAlbums  bool   `json:"mirror_albums,omitempty"`
+	// Favorites is "off" (default) or "add_only". Add-only stars a verified
+	// node when the source explicitly reports the asset favorite and never
+	// unstars.
+	Favorites string `json:"favorites,omitempty"`
 	// Deletions propagates a source trash to the Amazon node. Enabling it also
 	// requires DeletionConfirmation to equal DeletionConfirmationPhrase.
 	Deletions            bool   `json:"deletions"`
@@ -156,6 +160,7 @@ func Load(path string) (Config, error) {
 			Library:             library,
 			AlbumSyncMode:       os.Getenv("ALBUM_SYNC_MODE"),
 			IncludeVideos:       includeVideos,
+			Favorites:           os.Getenv("FAVORITES"),
 			ManagedWorkflow:     managedWorkflow,
 			WorkflowAPIKeyFile:  os.Getenv("IMMICH_WORKFLOW_API_KEY_FILE"),
 			WorkflowCallbackURL: os.Getenv("WORKFLOW_CALLBACK_URL"),
@@ -312,6 +317,11 @@ func (c Config) Validate() error {
 			if account.WorkflowAPIKeyFile == "" || account.WorkflowSecretFile == "" || account.WorkflowCallbackURL == "" {
 				return errors.New("workflow_configuration_required")
 			}
+		}
+		switch account.Favorites {
+		case "", "off", "add_only":
+		default:
+			return errors.New("favorites_invalid")
 		}
 		if err := account.TransferWindow.validate(); err != nil {
 			return err

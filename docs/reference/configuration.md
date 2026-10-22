@@ -31,6 +31,7 @@ See [config.example.json](config.example.json) for the minimal deployment shape.
 | `include_videos` | `false` | Include eligible standalone originals classified as video. |
 | `album_sync_mode` | `off` | Album mirroring scope: `off`, `selected` (requires `album_ids` and `library: false`) or `all_accessible` (discovers every album the API key can read, including with `library: true`). |
 | `mirror_albums` | unset | Deprecated boolean form of `album_sync_mode`. `true` maps to `selected` and never to `all_accessible`; combining it with a different mode returns `album_sync_mode_conflict`. |
+| `favorites` | `off` | `off` or `add_only`. Add-only stars a verified Amazon Node when the source explicitly reports `isFavorite`; it never unstars. An absent source field is unknown and performs no write. |
 | `deletions` | `false` | Propagate an Immich trash to the Amazon trash for mapped assets. Off by default; never permanently deletes. |
 | `deletions_confirmation` | unset | Must be exactly `ENABLE DELETIONS` while `deletions` is true; a missing or different phrase rejects the config with `deletion_confirmation_required`. |
 | `managed_workflow` | `false` | Opt-in to creating one owned native Immich Workflow. Requires all three workflow fields below. Polling stays enabled; nothing is created on Immich v2 or without the required grants. |
@@ -116,9 +117,10 @@ admin-secret path or webhook-secret path require restart. See
 Without `--config`, the single-account environment mode uses `IMMICH_URL`,
 `IMMICH_API_KEY_FILE`, `AMAZON_REGION`, `AMAZON_COOKIE_FILE`, comma-separated
 `ALBUM_IDS`, `LIBRARY` (`true`/`false`), `ALBUM_SYNC_MODE` (`off`, `selected`,
-`all_accessible`) and `INCLUDE_VIDEOS` (`true`/`false`). Its account ID is
-`default`. Optional environment-mode window values are `TRANSFER_TIMEZONE`,
-`TRANSFER_WINDOW_START` and `TRANSFER_WINDOW_END`; set all three together or none.
+`all_accessible`), `INCLUDE_VIDEOS` (`true`/`false`) and `FAVORITES`
+(`off`/`add_only`). Its account ID is `default`. Optional environment-mode window
+values are `TRANSFER_TIMEZONE`, `TRANSFER_WINDOW_START` and
+`TRANSFER_WINDOW_END`; set all three together or none.
 Use JSON for multiple accounts.
 `DATA_DIR`, `LISTEN`, `ADMIN_PASSWORD_FILE` and `WEBHOOK_SECRET_FILE` override
 their corresponding values even with a JSON file. Environment-only accounts also

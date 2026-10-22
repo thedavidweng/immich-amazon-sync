@@ -200,20 +200,29 @@ func (s *Store) migrate() error {
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 5 {
+	if version > 6 {
 		return errors.New("unsupported_schema")
 	}
-	if version == 5 {
+	if version == 6 {
 		return nil
 	}
+	if version == 5 {
+		return s.migrateP5()
+	}
 	if version == 4 {
-		return s.migrateP4()
+		if err := s.migrateP4(); err != nil {
+			return err
+		}
+		return s.migrateP5()
 	}
 	if version == 3 {
 		if err := s.migrateP3(); err != nil {
 			return err
 		}
-		return s.migrateP4()
+		if err := s.migrateP4(); err != nil {
+			return err
+		}
+		return s.migrateP5()
 	}
 	if version == 2 {
 		if err := s.migrateP2(); err != nil {
@@ -222,7 +231,10 @@ func (s *Store) migrate() error {
 		if err := s.migrateP3(); err != nil {
 			return err
 		}
-		return s.migrateP4()
+		if err := s.migrateP4(); err != nil {
+			return err
+		}
+		return s.migrateP5()
 	}
 	if version == 1 {
 		if err := s.migrateP1(); err != nil {
@@ -234,7 +246,10 @@ func (s *Store) migrate() error {
 		if err := s.migrateP3(); err != nil {
 			return err
 		}
-		return s.migrateP4()
+		if err := s.migrateP4(); err != nil {
+			return err
+		}
+		return s.migrateP5()
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -310,7 +325,10 @@ func (s *Store) migrate() error {
 	if err := s.migrateP3(); err != nil {
 		return err
 	}
-	return s.migrateP4()
+	if err := s.migrateP4(); err != nil {
+		return err
+	}
+	return s.migrateP5()
 }
 
 // migrateP3 records how each album rule came into scope. Explicit rules are
@@ -417,6 +435,37 @@ func (s *Store) migrateP4() error {
 		attempts INTEGER NOT NULL DEFAULT 0,
 		updated_at TEXT NOT NULL DEFAULT '');
 	PRAGMA user_version=5;`)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// migrateP5 adds the source favorite presence column and one durable favorite
+// outcome per verified Amazon node. Existing accounts migrate with favorites
+// unknown (-1) and no desired rows, so the migration never widens write scope.
+func (s *Store) migrateP5() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(`ALTER TABLE assets ADD COLUMN favorite INTEGER NOT NULL DEFAULT -1;
+	CREATE TABLE favorites (
+		account_id TEXT NOT NULL REFERENCES accounts(id),
+		node_id TEXT NOT NULL,
+		desired INTEGER NOT NULL DEFAULT 0,
+		applied INTEGER NOT NULL DEFAULT 0,
+		observed INTEGER NOT NULL DEFAULT -1,
+		state TEXT NOT NULL DEFAULT 'pending',
+		error_code TEXT NOT NULL DEFAULT '',
+		attempts INTEGER NOT NULL DEFAULT 0,
+		next_at INTEGER NOT NULL DEFAULT 0,
+		updated_at TEXT NOT NULL DEFAULT '',
+		PRIMARY KEY(account_id,node_id)
+	);
+	CREATE INDEX favorite_queue ON favorites(account_id,state,next_at);
+	PRAGMA user_version=6;`)
 	if err != nil {
 		return err
 	}

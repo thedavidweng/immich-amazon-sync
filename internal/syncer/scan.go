@@ -247,10 +247,18 @@ func (e *Engine) scanPage(ctx context.Context) (bool, error) {
 func (e *Engine) discover(ctx context.Context, tx *sql.Tx, a bridge.Asset, metadata string) error {
 	var oldMetadata, digest, checksum, node, state, prior string
 	var size int64
+	favorite := -1
+	if a.Favorite != nil {
+		favorite = 0
+		if *a.Favorite {
+			favorite = 1
+		}
+	}
 	err := tx.QueryRowContext(ctx, "SELECT metadata,md5,sha1,size,state,node_id,prior_state FROM assets WHERE account_id=? AND id=?",
 		e.opts.AccountID, a.ID).Scan(&oldMetadata, &digest, &checksum, &size, &state, &node, &prior)
 	if errors.Is(err, sql.ErrNoRows) {
-		_, err = tx.ExecContext(ctx, "INSERT INTO assets(account_id,id,metadata) VALUES(?,?,?)", e.opts.AccountID, a.ID, metadata)
+		_, err = tx.ExecContext(ctx, "INSERT INTO assets(account_id,id,metadata,favorite) VALUES(?,?,?,?)",
+			e.opts.AccountID, a.ID, metadata, favorite)
 		return err
 	}
 	if err != nil {
@@ -294,11 +302,11 @@ func (e *Engine) discover(ctx context.Context, tx *sql.Tx, a bridge.Asset, metad
 			e.opts.AccountID, a.ID)
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE assets SET metadata=?,
+	_, err = tx.ExecContext(ctx, `UPDATE assets SET metadata=?,favorite=?,
 		state=CASE WHEN state='skipped' OR (md5='' AND metadata!=?) THEN 'pending' ELSE state END,
 		error_code=CASE WHEN state='skipped' OR error_code='source_changed' OR (md5='' AND metadata!=?) THEN '' ELSE error_code END,
 		attempts=CASE WHEN state='skipped' OR (md5='' AND metadata!=?) THEN 0 ELSE attempts END
-		WHERE account_id=? AND id=?`, metadata, metadata, metadata, metadata, e.opts.AccountID, a.ID)
+		WHERE account_id=? AND id=?`, metadata, favorite, metadata, metadata, metadata, e.opts.AccountID, a.ID)
 	return err
 }
 
@@ -337,6 +345,14 @@ func (e *Engine) finishScan(ctx context.Context) error {
 			ON a.account_id=r.account_id AND a.scope=r.scope WHERE r.account_id=? AND r.active=1 AND r.album_id!=''
 			AND r.error_code=''
 			AND (a.target_id IS NULL OR a.target_id='' OR a.complete_generation!=r.generation OR a.error_code!='')`,
+			e.opts.AccountID).Scan(&outstanding)
+		if err != nil || outstanding != 0 {
+			return err
+		}
+	}
+	if e.favoritesOn() {
+		err = e.store.db.QueryRowContext(ctx, `SELECT count(*) FROM favorites
+			WHERE account_id=? AND state IN ('pending','failed','uncertain') AND `+favoriteEligibleSQL,
 			e.opts.AccountID).Scan(&outstanding)
 		if err != nil || outstanding != 0 {
 			return err

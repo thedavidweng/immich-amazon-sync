@@ -83,6 +83,7 @@ func formAccount(r *http.Request) config.Account {
 		AlbumIDs:     ids,
 		Library:      r.PostForm.Get("library") == "on", IncludeVideos: r.PostForm.Get("include_videos") == "on",
 		AlbumSyncMode:        r.PostForm.Get("album_sync_mode"),
+		Favorites:            r.PostForm.Get("favorites"),
 		Deletions:            r.PostForm.Get("deletions") == "on",
 		DeletionConfirmation: r.PostForm.Get("deletions_confirmation"),
 		ManagedWorkflow:      r.PostForm.Get("managed_workflow") == "on",

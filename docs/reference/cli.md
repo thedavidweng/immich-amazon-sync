@@ -8,7 +8,7 @@ immich-amazon-sync [--config PATH] [--account ID] [--json] COMMAND
 | --- | --- |
 | `serve` | Run the local service and scheduled backups; stop with SIGTERM. |
 | `serve --setup --config PATH` | Explicit first UI setup with a mounted admin secret and a new writable config path. |
-| `sync once` | Start/resume a bounded explicit full-scan pass; can write media, managed membership and -- only when explicitly enabled -- Amazon trashing. |
+| `sync once` | Start/resume a bounded explicit full-scan pass; can write media, managed membership, add-only favorite stars and -- only when explicitly enabled -- Amazon trashing. |
 | `deletions plan` | Read-only manifest of assets pending deletion propagation: count, synced total, blocked reason and asset IDs. Changes nothing. |
 | `albums list` | Read accessible source album IDs, names and counts. |
 | `workflow status` | Read-only persisted managed-Workflow state, contract and finite code; no remote calls. |
@@ -40,11 +40,13 @@ Stop `serve` before running a separate stateful CLI invocation.
 
 Human-readable account lines report `album_sync_mode`, `confirmed`, `existing`,
 `deleted`, `deletion_pending`, `pending`, `failed`, `unconfirmed`, `deferred`,
-`albums_active` and `albums_inaccessible`. `existing` means a verified copy was
-reused from elsewhere in the same Amazon account; it is backed up but not at the
-configured target parent. `deferred` means new upload dispatch waits for a
-transfer window; it is not a failure. When a window is configured the line also
-reports its timezone, bounds, open/closed state, `next_opening`,
+`albums_active` and `albums_inaccessible`, then the `favorites_mode` setting and
+`favorites_desired`, `favorites_applied`, `favorites_pending`, `favorites_failed`,
+`favorites_uncertain` and `favorites_unknown` counters. `existing` means a
+verified copy was reused from elsewhere in the same Amazon account; it is backed
+up but not at the configured target parent. `deferred` means new upload dispatch
+waits for a transfer window; it is not a failure. When a window is configured the
+line also reports its timezone, bounds, open/closed state, `next_opening`,
 `deferral_reason` and the next scheduled wake. `--json` carries the full status
 object, including the finite `capture_date` capability. `doctor` reports the same
 capability per account as `capture_date=metadata_not_supported` or

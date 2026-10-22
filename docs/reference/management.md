@@ -13,7 +13,7 @@ when an admin passphrase file is configured. They share the normal listener;
 | `GET /accounts/new` | Source and Destination editor for a new account. |
 | `GET /accounts/{id}/edit` | Existing account editor. |
 | `POST /accounts/discover` | `csrf`, source URL/key file and editor fields; source-only album lookup without save or scope selection. |
-| `POST /accounts/save` | `csrf`, `original_id`, `id`, `immich_url`, `key_file`, `region`, `cookie_file`, `album_ids`, repeated `album_id`, optional `library`, `include_videos`, `album_sync_mode`, `deletions`, `deletions_confirmation`, the optional transfer-window fields `transfer_timezone`, `transfer_window_start`, `transfer_window_end`, and the managed-workflow fields `managed_workflow`, `workflow_key_file`, `workflow_callback_url`, `workflow_secret_file`. |
+| `POST /accounts/save` | `csrf`, `original_id`, `id`, `immich_url`, `key_file`, `region`, `cookie_file`, `album_ids`, repeated `album_id`, optional `library`, `include_videos`, `album_sync_mode`, `favorites`, `deletions`, `deletions_confirmation`, the optional transfer-window fields `transfer_timezone`, `transfer_window_start`, `transfer_window_end`, and the managed-workflow fields `managed_workflow`, `workflow_key_file`, `workflow_callback_url`, `workflow_secret_file`. |
 | `POST /accounts/{id}/pause`, `/resume`, `/retry`, `/doctor` | `csrf`; account control or read-only diagnostics, not a cloud-write probe. |
 | `POST /accounts/{id}/remove` | `csrf`; configuration removal, not local-history or cloud-media deletion. |
 

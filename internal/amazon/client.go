@@ -49,6 +49,14 @@ func (s metadataSDK) MoveToTrash(ctx context.Context, nodeIDs []string) error {
 	return err
 }
 
+func (s metadataSDK) SetFavorite(ctx context.Context, nodeIDs []string, favorite bool) error {
+	_, err := metadataCall(ctx, func(ctx context.Context) (struct{}, error) {
+		_, err := s.Client.SetFavorite(ctx, nodeIDs, favorite)
+		return struct{}{}, err
+	})
+	return err
+}
+
 func (s metadataSDK) QueryNodes(ctx context.Context, opts aphotos.NodeQueryOptions) (*aphotos.Page[aphotos.Node], error) {
 	return metadataCall(ctx, func(ctx context.Context) (*aphotos.Page[aphotos.Node], error) {
 		return s.Client.QueryNodes(ctx, opts)

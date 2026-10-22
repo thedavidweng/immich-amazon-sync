@@ -23,6 +23,13 @@ overview. There is no public JSON status endpoint.
 | `associations_unconfirmed` | Membership addition/removal intents requiring reconciliation. |
 | `events_pending` | Durable unresolved hints, including failed hints. |
 | `events_failed` | Hints with a recorded processing error. |
+| `favorites_mode` | Effective per-account favorite setting: `off` (default) or `add_only`. |
+| `favorites_desired` | Nodes whose source asset explicitly reports favorite, including ones already applied. |
+| `favorites_pending` | Desired nodes awaiting a verified star. |
+| `favorites_applied` | Nodes whose star was confirmed by an authoritative Amazon re-read. |
+| `favorites_failed` | Favorite operations with a definite finite error awaiting their own retry. |
+| `favorites_uncertain` | A favorite mutation or read whose committed state is unproven (`favorite_unconfirmed`). Retried only after a fresh read. |
+| `favorites_unknown` | Nodes whose source omitted the favorite field; no write is issued and the state is not treated as false. |
 | `workflow` | Managed Immich Workflow state: `active`, `polling`, `creating`, `unconfirmed`, `failed`, `cleanup_failed`, `removed` or `disabled`; omitted when never requested. |
 | `workflow_code` | Optional finite notice or failure for the workflow state, such as `workflow_version_unsupported`, `workflow_permission_missing`, `workflow_unconfirmed` or `workflow_cleanup_failed`. Omitted when healthy. |
 | `incremental_scanning` | A library delta scan is active. |
@@ -37,8 +44,13 @@ overview. There is no public JSON status endpoint.
 
 A `polling` workflow state is a capability notice, not a media failure: periodic
 reconciliation is never disabled. Counts such as pending, failed and unconfirmed
-album work overlap; do not add them to infer a total. Disabling album mirroring reports zero album/association
-counts without deleting preserved state. No private asset IDs, filenames, paths,
+album work overlap; do not add them to infer a total. Favorite counters are
+separate from media states: a `confirmed` or `existing` node can also be
+`favorites_applied`, and favorite retries never change `confirmed`, `existing`
+or `unconfirmed` media counts. Disabled favorite sync performs no write and
+withdraws unsettled intents while keeping an already-applied star. Disabling
+album mirroring reports zero album/association counts without deleting preserved
+state. No private asset IDs, filenames, paths,
 URLs or raw remote errors are included in these aggregates.
 
 `all_accessible` reads the complete accessible album listing on a full pass and

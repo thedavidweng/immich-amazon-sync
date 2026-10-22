@@ -86,6 +86,44 @@ type targetFake struct {
 	trashed   []string
 	authErr   error
 	lookedAll int
+	favorites map[string]bool
+	readFav   func(context.Context, bridge.Content, string) (bool, error)
+	setFav    func(context.Context, bridge.Content, string) error
+	favWrites []string
+}
+
+// ReadFavorite models an authoritative read that only proves an explicit field
+// when the test populated one; an unknown node is unconfirmed, never false.
+func (t *targetFake) ReadFavorite(ctx context.Context, c bridge.Content, id string) (bool, error) {
+	if t.readFav != nil {
+		return t.readFav(ctx, c, id)
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	// A known node models a payload with an explicit settings.favorite field;
+	// only tests that need an absent field override readFav.
+	for _, n := range t.nodes {
+		if n.ID == id {
+			return t.favorites[id], nil
+		}
+	}
+	return false, &bridge.Error{Code: bridge.NotFound}
+}
+
+// SetFavorite models one SDK mutation followed by the engine's re-read. The
+// engine never passes a value: add-only only stars.
+func (t *targetFake) SetFavorite(ctx context.Context, c bridge.Content, id string) error {
+	if t.setFav != nil {
+		return t.setFav(ctx, c, id)
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.favorites == nil {
+		t.favorites = map[string]bool{}
+	}
+	t.favWrites = append(t.favWrites, id)
+	t.favorites[id] = true
+	return nil
 }
 
 func (t *targetFake) Probe(context.Context) (bridge.Capabilities, error) {

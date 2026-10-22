@@ -20,6 +20,7 @@
       "album_sync_mode": "off",
       "deletions": false,
       "deletions_confirmation": "",
+      "favorites": "off",
       "managed_workflow": false,
       "immich_workflow_api_key_file": "/run/secrets/immich_workflow_key",
       "workflow_callback_url": "https://sync.example.org/events/home",
