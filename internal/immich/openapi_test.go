@@ -16,6 +16,7 @@ type schema struct {
 	Properties map[string]*schema `json:"properties"`
 	Items      *schema            `json:"items"`
 	Required   []string           `json:"required"`
+	Enum       []string           `json:"enum"`
 }
 
 // The fixture is an extraction of official source, independent of our HTTP stubs.
@@ -115,5 +116,138 @@ func TestPinnedOfficialOpenAPIContract(t *testing.T) {
 	}
 	if _, embedded := doc.Components.Schemas["AlbumResponseDto"].Properties["assets"]; embedded {
 		t.Fatal("review album response change; membership must still use paged search")
+	}
+}
+
+// The managed Workflow capability consumes these pinned operations; any upstream
+// contract drift must fail here before it can create or mutate a remote object.
+func TestPinnedOfficialWorkflowContract(t *testing.T) {
+	data, err := os.ReadFile("testdata/immich-v3.3.4.openapi.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	type operation struct {
+		Permission string `json:"x-immich-permission"`
+		Security   []map[string][]string
+		Deprecated bool `json:"deprecated"`
+		Responses  map[string]struct {
+			Content map[string]struct{ Schema schema }
+		}
+		RequestBody struct {
+			Content map[string]struct{ Schema schema }
+		}
+	}
+	var doc struct {
+		Source     struct{ Version, Commit, SHA256 string } `json:"x-source"`
+		Paths      map[string]map[string]operation
+		Components struct {
+			Schemas map[string]schema
+		}
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Source.Version != "v3.3.4" || doc.Source.Commit != "69e0cb8606137c4f8dc0e7207a672ff8be39f358" {
+		t.Fatal("fixture must retain pinned upstream provenance")
+	}
+	for _, tt := range []struct {
+		method, path, permission, request, response string
+	}{
+		{"get", "/api-keys/me", "", "", "ApiKeyResponseDto"},
+		{"get", "/workflows", "workflow.read", "", "WorkflowResponseDto"},
+		{"post", "/workflows", "workflow.create", "WorkflowCreateDto", "WorkflowResponseDto"},
+		{"get", "/workflows/triggers", "", "", "WorkflowTriggerResponseDto"},
+		{"get", "/workflows/{id}", "workflow.read", "", "WorkflowResponseDto"},
+		{"put", "/workflows/{id}", "workflow.update", "WorkflowUpdateDto", "WorkflowResponseDto"},
+		{"delete", "/workflows/{id}", "workflow.delete", "", ""},
+		{"get", "/workflows/{id}/logs", "workflow.logs", "", "WorkflowLogEntryDto"},
+	} {
+		op, ok := doc.Paths[tt.path][tt.method]
+		if !ok || op.Permission != tt.permission {
+			t.Fatalf("workflow operation/permission changed: %s %s", tt.method, tt.path)
+		}
+		if !slices.ContainsFunc(op.Security, func(s map[string][]string) bool {
+			_, exists := s["api_key"]
+			return exists
+		}) {
+			t.Fatalf("API-key access absent: %s %s", tt.method, tt.path)
+		}
+		if tt.request != "" && op.RequestBody.Content["application/json"].Schema.Ref != "#/components/schemas/"+tt.request {
+			t.Fatalf("request schema changed: %s %s", tt.method, tt.path)
+		}
+		if tt.response == "" {
+			continue
+		}
+		content, ok := op.Responses["200"]
+		if !ok {
+			content, ok = op.Responses["201"]
+		}
+		if !ok {
+			t.Fatalf("success response missing: %s %s", tt.method, tt.path)
+		}
+		response := content.Content["application/json"].Schema
+		ref := response.Ref
+		if ref == "" && response.Items != nil {
+			ref = response.Items.Ref
+		}
+		if ref != "#/components/schemas/"+tt.response {
+			t.Fatalf("success schema changed: %s %s (%q)", tt.method, tt.path, ref)
+		}
+	}
+	for name, fields := range map[string]map[string]string{
+		"WorkflowCreateDto": {"trigger": "string", "name": "string", "description": "string", "steps": "array"},
+		"WorkflowUpdateDto": {"trigger": "string", "steps": "array"},
+		"WorkflowResponseDto": {
+			"id": "string", "trigger": "string", "name": "string", "description": "string",
+			"enabled": "boolean", "logging": "boolean", "steps": "array",
+		},
+		"WorkflowStepDto":     {"method": "string", "config": "object"},
+		"WorkflowLogEntryDto": {"at": "string", "result": "string", "triggerDataId": "string", "lastStep": "object"},
+		"ApiKeyResponseDto":   {"permissions": "array"},
+	} {
+		for field, kind := range fields {
+			property := doc.Components.Schemas[name].Properties[field]
+			if property != nil && property.Ref != "" {
+				resolved := doc.Components.Schemas[strings.TrimPrefix(property.Ref, "#/components/schemas/")]
+				property = &resolved
+			}
+			if property == nil || property.Type != kind {
+				t.Fatalf("consumed field type changed: %s.%s must be %s", name, field, kind)
+			}
+		}
+	}
+	for _, field := range []string{"method", "config"} {
+		if !slices.Contains(doc.Components.Schemas["WorkflowStepDto"].Required, field) {
+			t.Fatalf("workflow step contract lost required field %s", field)
+		}
+	}
+	if !slices.Contains(doc.Components.Schemas["WorkflowCreateDto"].Required, "trigger") {
+		t.Fatal("workflow create must require a trigger")
+	}
+	for _, field := range []string{"at", "id", "result"} {
+		if !slices.Contains(doc.Components.Schemas["WorkflowLogEntryDto"].Required, field) {
+			t.Fatalf("workflow log contract lost required field %s", field)
+		}
+	}
+	triggers := doc.Components.Schemas["WorkflowTrigger"].Enum
+	for _, expected := range []string{"AssetCreate", "AssetMetadataExtraction", "AssetTagged"} {
+		if !slices.Contains(triggers, expected) {
+			t.Fatalf("declared trigger %s disappeared", expected)
+		}
+	}
+	results := doc.Components.Schemas["WorkflowResult"].Enum
+	for _, expected := range []string{"completed", "halted", "error"} {
+		if !slices.Contains(results, expected) {
+			t.Fatalf("workflow result %s disappeared", expected)
+		}
+	}
+	permissions := doc.Components.Schemas["Permission"].Enum
+	for _, expected := range []string{"workflow.create", "workflow.read", "workflow.update", "workflow.delete", "workflow.logs"} {
+		if !slices.Contains(permissions, expected) {
+			t.Fatalf("workflow permission %s disappeared", expected)
+		}
+	}
+	if op := doc.Paths["/workflows/{id}"]["put"]; !op.Deprecated {
+		t.Fatal("upstream stopped marking PUT deprecated; re-check the documented update operation")
 	}
 }
