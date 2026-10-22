@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thedavidweng/immich-amazon-sync/internal/bridge"
 	"github.com/thedavidweng/immich-amazon-sync/internal/config"
 )
 
@@ -464,5 +465,71 @@ func TestFilterEnvironmentMigratesAndRejectsInvalidValues(t *testing.T) {
 				t.Fatalf("got %v, want %s", err, tt.code)
 			}
 		})
+	}
+}
+
+// A configuration written for the deployed release must keep today's write
+// surface after an image upgrade. Every new mutating feature is off, bounded
+// retry keeps its conservative defaults and the legacy video toggle still means
+// exactly images plus videos with archive included.
+func TestUpgradedConfigurationKeepsEveryNewMutatingFeatureOff(t *testing.T) {
+	dir := t.TempDir()
+	key := filepath.Join(dir, "key")
+	cookie := filepath.Join(dir, "cookie")
+	if err := os.WriteFile(key, []byte("private-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cookie, []byte("private-cookie\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "config.json")
+	body := `{"accounts":[{"id":"legacy","immich_url":"http://immich:2283","immich_api_key_file":"` + key +
+		`","amazon_region":"ca","amazon_cookie_file":"` + cookie + `","album_ids":["album-one"],"mirror_albums":true,"include_videos":true}]}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Metrics || cfg.MetricsTokenFile != "" {
+		t.Fatalf("metrics gained a default: %+v", cfg)
+	}
+	account := cfg.Accounts[0]
+	if account.Favorites != "" || account.FavoritesTakeover {
+		t.Fatalf("favorite scope gained a default: %q takeover=%v", account.Favorites, account.FavoritesTakeover)
+	}
+	if account.PairMode() != bridge.LivePhotoStillOnly {
+		t.Fatalf("Live Photo pair mode gained a default: %q", account.PairMode())
+	}
+	if account.AlbumMode() != bridge.AlbumSyncSelected {
+		t.Fatalf("legacy mirror_albums no longer means selected: %q", account.AlbumMode())
+	}
+	if account.Deletions || account.DeletionConfirmation != "" {
+		t.Fatalf("deletion propagation gained a default: %v %q", account.Deletions, account.DeletionConfirmation)
+	}
+	if account.ManagedWorkflow || account.WorkflowAPIKeyFile != "" || account.WorkflowCallbackURL != "" || account.WorkflowSecretFile != "" {
+		t.Fatalf("managed Workflow gained a default: %+v", account)
+	}
+	if account.TransferWindow != nil {
+		t.Fatalf("transfer window gained a default: %+v", account.TransferWindow)
+	}
+	if len(account.DirectRoots) != 0 {
+		t.Fatalf("direct roots gained a default: %+v", account.DirectRoots)
+	}
+	if account.VideoUsageThresholdBytes != 0 || account.HoldVideosAtThreshold {
+		t.Fatalf("usage hold gained a default: %d %v", account.VideoUsageThresholdBytes, account.HoldVideosAtThreshold)
+	}
+	if account.RetryMaxAttempts() != config.DefaultMaxAttempts || account.RetryMaxDelay() != config.DefaultRetryDelay {
+		t.Fatalf("retry defaults changed: %d %v", account.RetryMaxAttempts(), account.RetryMaxDelay())
+	}
+	policy := account.Policy()
+	if !slices.Equal(policy.MediaTypes, []string{"image", "video"}) || policy.MaxOriginalBytes != 0 ||
+		policy.SkipRAW || policy.IncludeArchived == nil || !*policy.IncludeArchived ||
+		len(policy.ExcludedTags) != 0 {
+		t.Fatalf("legacy include_videos changed scope: %+v", policy)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -335,42 +336,50 @@ func TestUnconfirmedWriteStillReconcilesWhileWindowClosed(t *testing.T) {
 }
 
 func TestTransferWindowDoesNotGateDeletionPropagation(t *testing.T) {
-	clock := &testClock{now: time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)}
-	opts, state := windowedOptions(t, clock, "UTC", "09:00", "17:00")
-	opts.Deletions = true
-	assets := photos(11)
-	source := &sourceFake{identity: "source", pages: map[string]bridge.Page{"": {Assets: assets}},
-		data: map[string]string{}}
-	for _, asset := range assets {
-		source.data[asset.ID] = "hello"
-	}
-	target := &targetFake{identity: "target"}
-	store, err := syncer.Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	e := engine(t, store, source, target, opts)
-	if err := e.Once(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if st := status(t, e); st.Confirmed != 11 {
-		t.Fatalf("setup: %+v", st)
-	}
-	uploads := len(target.bodies)
-	state.Set(mustWindow(t, "UTC", "23:00", "06:00"))
-	clock.Set(time.Date(2026, 10, 22, 18, 0, 0, 0, time.UTC))
-	trashed := photo("one")
-	trashed.ExcludedReason = "trashed"
-	source.pages[""] = bridge.Page{Assets: append([]bridge.Asset{trashed}, photos(11)[1:]...)}
-	if err := e.Once(t.Context()); err != nil {
-		t.Fatalf("deletion pass was blocked by the transfer window: %v", err)
-	}
-	st := status(t, e)
-	if st.Deleted != 1 || st.DeletePending != 0 || st.Confirmed != 10 {
-		t.Fatalf("deletion did not settle outside the window: %+v", st)
-	}
-	if len(target.trashed) != 1 || len(target.bodies) != uploads {
-		t.Fatalf("window changed deletion behaviour: trash=%v uploads=%d want=%d", target.trashed, len(target.bodies), uploads)
+	for _, deletions := range []bool{false, true} {
+		t.Run(fmt.Sprintf("deletions=%v", deletions), func(t *testing.T) {
+			clock := &testClock{now: time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)}
+			opts, state := windowedOptions(t, clock, "UTC", "09:00", "17:00")
+			opts.Deletions = deletions
+			assets := photos(11)
+			source := &sourceFake{identity: "source", pages: map[string]bridge.Page{"": {Assets: assets}},
+				data: map[string]string{}}
+			for _, asset := range assets {
+				source.data[asset.ID] = "hello"
+			}
+			target := &targetFake{identity: "target"}
+			store, err := syncer.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			e := engine(t, store, source, target, opts)
+			if err := e.Once(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if st := status(t, e); st.Confirmed != 11 {
+				t.Fatalf("setup: %+v", st)
+			}
+			uploads := len(target.bodies)
+			state.Set(mustWindow(t, "UTC", "23:00", "06:00"))
+			clock.Set(time.Date(2026, 10, 22, 18, 0, 0, 0, time.UTC))
+			trashed := photo("one")
+			trashed.ExcludedReason = "trashed"
+			source.pages[""] = bridge.Page{Assets: append([]bridge.Asset{trashed}, photos(11)[1:]...)}
+			if err := e.Once(t.Context()); err != nil {
+				t.Fatalf("deletion pass was blocked by the transfer window: %v", err)
+			}
+			st := status(t, e)
+			if len(target.bodies) != uploads {
+				t.Fatalf("window changed upload behaviour: uploads=%d want=%d", len(target.bodies), uploads)
+			}
+			if deletions {
+				if st.Deleted != 1 || st.DeletePending != 0 || st.Confirmed != 10 || len(target.trashed) != 1 {
+					t.Fatalf("deletion did not settle outside the window: %+v trash=%v", st, target.trashed)
+				}
+			} else if st.Deleted != 0 || st.DeletePending != 0 || st.Confirmed != 11 || len(target.trashed) != 0 {
+				t.Fatalf("deletion-disabled pass changed media: %+v trash=%v", st, target.trashed)
+			}
+		})
 	}
 }

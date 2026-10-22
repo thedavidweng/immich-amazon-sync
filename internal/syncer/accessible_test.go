@@ -333,3 +333,69 @@ func TestAllAccessibleAlbumMembershipFollowsOptInDeletionWithoutDeletingTheAlbum
 		t.Fatalf("album mirroring failed after deletion: %+v", st)
 	}
 }
+
+// Deletion-off regression for all-accessible mirroring: a source trash never
+// becomes media deletion. The mapping and the owned album survive; the absent
+// asset leaves the source album, so complete-scan membership reconciliation may
+// drop that one relation without touching media or the album's identity.
+func TestAllAccessibleDeletionOffKeepsMediaAndOwnedAlbum(t *testing.T) {
+	store, err := syncer.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	names := []string{"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven"}
+	assets := make([]bridge.Asset, 0, len(names))
+	data := make(map[string]string, len(names))
+	for i, name := range names {
+		content := fmt.Sprintf("item-%02d", i)
+		assets = append(assets, contentPhoto(name, content))
+		data[name] = content
+	}
+	s := &sourceFake{
+		identity: "source",
+		albums:   []bridge.Album{{ID: "album-a", Name: "Family", Count: len(assets)}},
+		scoped: map[string]bridge.Page{
+			"album-a\x00": {Assets: assets},
+			"\x00":        {Assets: assets},
+		},
+		data: data,
+	}
+	d := newAlbumTarget()
+	byID := make(map[string]bridge.Asset, len(assets))
+	for _, asset := range assets {
+		byID[asset.ID] = asset
+	}
+	s.assets = byID
+	e := engine(t, store, s, d, accessibleOptions())
+	if err := e.Once(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if d.creates != 1 || len(d.albums["album-1"]) != len(assets) {
+		t.Fatalf("setup did not mirror the album: creates=%d albums=%v", d.creates, d.albums)
+	}
+	trashed := assets[0]
+	trashed.ExcludedReason = "trashed"
+	s.assets[trashed.ID] = trashed
+	s.scoped["album-a\x00"] = bridge.Page{Assets: assets[1:]}
+	s.scoped["\x00"] = bridge.Page{Assets: assets[1:]}
+	s.albums[0].Count = len(assets) - 1
+	if err := e.Once(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	st := status(t, e)
+	if st.Deleted != 0 || st.DeletePending != 0 || st.Confirmed != len(assets) || len(d.trashed) != 0 {
+		t.Fatalf("deletion-disabled mirroring changed media: %+v trashed=%v", st, d.trashed)
+	}
+	if d.creates != 1 || len(d.albums["album-1"]) != len(assets)-1 {
+		t.Fatalf("deletion-disabled mirroring changed more than the absent relation: creates=%d albums=%v", d.creates, d.albums)
+	}
+	absent := nodeFor(t, d, data[trashed.ID])
+	if slices.Contains(d.albums["album-1"], absent) {
+		t.Fatalf("bounded reconciliation kept the absent relation: %v", d.albums["album-1"])
+	}
+}

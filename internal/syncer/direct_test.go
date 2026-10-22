@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -455,5 +456,82 @@ func TestMountedOriginalRespectsTheStagingQuota(t *testing.T) {
 	files, err := os.ReadDir(filepath.Join(dataDir, "staging"))
 	if err != nil || len(files) != 0 {
 		t.Fatalf("partial staging remains: %v %v", files, err)
+	}
+}
+
+// The fast path changes only where original bytes come from. It must not change
+// deletion behaviour: with propagation off a source trash is inert, and with it
+// on the guarded pass trashes the mapped node without re-reading any mount.
+func TestMountedOriginalFollowsOptInDeletion(t *testing.T) {
+	for _, deletions := range []bool{false, true} {
+		t.Run(fmt.Sprintf("deletions=%v", deletions), func(t *testing.T) {
+			host := t.TempDir()
+			assets := make([]bridge.Asset, 0, 11)
+			data := make(map[string]string, 11)
+			for i := range 11 {
+				id := fmt.Sprintf("mounted-%d", i)
+				content := fmt.Sprintf("content-%02d", i)
+				path := filepath.Join(host, "library", id+".jpg")
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				asset := photo(id)
+				asset.Size, asset.SHA1 = int64(len(content)), ""
+				asset.OriginalPath = mountSource + "/library/" + id + ".jpg"
+				assets = append(assets, asset)
+				data[id] = content
+			}
+			source := &sourceFake{identity: "source", pages: map[string]bridge.Page{"": {Assets: assets}}, data: data,
+				assets: make(map[string]bridge.Asset, len(assets))}
+			for _, asset := range assets {
+				source.assets[asset.ID] = asset
+			}
+			apiReads := 0
+			source.original = func(context.Context, string) (io.ReadCloser, error) {
+				apiReads++
+				return io.NopCloser(strings.NewReader("")), nil
+			}
+			target := &targetFake{identity: "target"}
+			store, err := syncer.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := store.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
+			opts := directOptions(host)
+			opts.Deletions = deletions
+			e := engine(t, store, source, target, opts)
+			if err := e.Once(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			st := status(t, e)
+			if st.Confirmed != 11 || st.Direct.Reads != 11 || apiReads != 0 {
+				t.Fatalf("setup did not use the mount: %+v api=%d", st, apiReads)
+			}
+			trashed := assets[0]
+			trashed.ExcludedReason = "trashed"
+			source.assets[trashed.ID] = trashed
+			source.pages[""] = bridge.Page{Assets: append([]bridge.Asset{trashed}, assets[1:]...)}
+			if err := e.Once(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			st = status(t, e)
+			if deletions {
+				if st.Deleted != 1 || st.Confirmed != 10 || st.DeletePending != 0 || len(target.trashed) != 1 {
+					t.Fatalf("deletion-enabled pass did not trash exactly one mapped node: %+v trash=%v", st, target.trashed)
+				}
+			} else if st.Deleted != 0 || st.Confirmed != 11 || st.DeletePending != 0 || len(target.trashed) != 0 {
+				t.Fatalf("deletion-disabled pass changed media: %+v trash=%v", st, target.trashed)
+			}
+			if st.Direct.Reads != 11 || apiReads != 0 {
+				t.Fatalf("deletion changed original reads: %+v api=%d", st.Direct, apiReads)
+			}
+		})
 	}
 }

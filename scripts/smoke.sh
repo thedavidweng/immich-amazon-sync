@@ -19,11 +19,29 @@ trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 printf '%s\n' 'offline-smoke-admin-only' > "$scratch/admin"
 printf '%s\n' 'offline-smoke-key' > "$scratch/key"
-printf '%s\n' 'offline-smoke-cookie' > "$scratch/cookie"
+printf '%s\n' 'session-id=offline-smoke; ubid-main=offline-smoke; at-main=offline-smoke' > "$scratch/cookie"
 cat > "$scratch/direct.json" <<'CONFIG'
 {"data_dir":"/data","listen":"127.0.0.1:8080","accounts":[{"id":"smoke","immich_url":"http://immich.invalid","immich_api_key_file":"/run/key","amazon_region":"us","amazon_cookie_file":"/run/cookie","library":true,"direct_roots":[{"immich_path":"/photos","host_path":"/originals"}]}]}
 CONFIG
 chmod 644 "$scratch/admin" "$scratch/key" "$scratch/cookie"
+
+# A present read-only originals mount must be discovered and never written.
+mkdir -p "$scratch/originals/upload/library"
+printf '%s' 'mounted-original' > "$scratch/originals/upload/library/smoke.jpg"
+snapshot_originals() {
+    (cd "$scratch/originals" && find . -type f -print | sort && cksum upload/library/smoke.jpg)
+}
+originals_before=$(snapshot_originals)
+
+# A checked-in version-3 ledger seeds the in-place container migration. A copy
+# with a patched header (offset 60: user_version) models an unknown future
+# schema that must fail closed instead of being treated as current.
+gunzip -c scripts/testdata/legacy-v3.sqlite.gz > "$scratch/legacy.sqlite"
+cp "$scratch/legacy.sqlite" "$scratch/future.sqlite"
+printf '\000\000\000\013' | dd of="$scratch/future.sqlite" bs=1 seek=60 conv=notrunc 2>/dev/null
+cat > "$scratch/ledger.json" <<'CONFIG'
+{"data_dir":"/data","listen":"127.0.0.1:8080","accounts":[{"id":"legacy","immich_url":"http://immich.invalid","immich_api_key_file":"/run/key","amazon_region":"us","amazon_cookie_file":"/run/cookie","album_ids":["album-a"]}]}
+CONFIG
 
 check_admin() {
     docker exec -i "$container" sh -eu <<'ADMIN'
@@ -136,6 +154,27 @@ for platform do
         exit 1
     fi
     echo "PASS $platform: absent originals mount falls back without leaking paths"
+    if docker run --rm --network none --read-only --tmpfs /tmp --platform "$platform" \
+        --volume "$volume:/data" \
+        --mount "type=bind,source=$scratch/originals,target=/originals,readonly" \
+        --mount "type=bind,source=$scratch/direct.json,target=/run/direct.json,readonly" \
+        --mount "type=bind,source=$scratch/key,target=/run/key,readonly" \
+        --mount "type=bind,source=$scratch/cookie,target=/run/cookie,readonly" \
+        "$image" --config /run/direct.json doctor --json > "$scratch/direct-mount-doctor" 2>&1; then
+        echo "Doctor must fail without reachable upstreams" >&2
+        exit 1
+    fi
+    grep -q '"direct_roots":{"configured":1,"available":1}' "$scratch/direct-mount-doctor"
+    if grep -q originals "$scratch/direct-mount-doctor"; then
+        echo "Doctor leaked the approved root path" >&2
+        cat "$scratch/direct-mount-doctor" >&2
+        exit 1
+    fi
+    docker run --rm --network none --read-only --tmpfs /tmp --platform "$platform" \
+        --mount "type=bind,source=$scratch/originals,target=/originals,readonly" \
+        --entrypoint sh "$image" -ec 'if touch /originals/probe 2>/dev/null; then exit 1; fi'
+    test "$(snapshot_originals)" = "$originals_before"
+    echo "PASS $platform: present read-only originals mount is detected and never written"
     docker run --rm --network none --platform "$platform" \
         --volume "$volume:/data" --entrypoint sh "$image" -ec \
         'test "$(id -u)" = 10001; test -w /data; printf persistent > /data/smoke-marker'
@@ -175,5 +214,44 @@ for platform do
     done
     docker volume rm "$volume" >/dev/null
     volume=
+    volume="$name-$arch-ledger"
+    docker volume create "$volume" >/dev/null
+    docker run --rm --network none --platform "$platform" --volume "$volume:/data" \
+        --mount "type=bind,source=$scratch/legacy.sqlite,target=/run/legacy.sqlite,readonly" \
+        --entrypoint sh "$image" -ec 'cp /run/legacy.sqlite /data/sync.sqlite'
+    docker run --rm --network none --platform "$platform" --volume "$volume:/data" \
+        --mount "type=bind,source=$scratch/ledger.json,target=/run/ledger.json,readonly" \
+        --mount "type=bind,source=$scratch/key,target=/run/key,readonly" \
+        --mount "type=bind,source=$scratch/cookie,target=/run/cookie,readonly" \
+        "$image" --config /run/ledger.json status --json > "$scratch/legacy-status"
+    grep -q '"confirmed":1' "$scratch/legacy-status"
+    grep -q '"favorites_mode":"off"' "$scratch/legacy-status"
+    grep -q '"live_photo_mode":"still_only"' "$scratch/legacy-status"
+    grep -q '"deleted":0' "$scratch/legacy-status"
+    docker run --rm --network none --platform "$platform" --volume "$volume:/data" \
+        --mount "type=bind,source=$scratch/ledger.json,target=/run/ledger.json,readonly" \
+        --mount "type=bind,source=$scratch/key,target=/run/key,readonly" \
+        --mount "type=bind,source=$scratch/cookie,target=/run/cookie,readonly" \
+        "$image" --config /run/ledger.json status --json >/dev/null
+    docker volume rm "$volume" >/dev/null
+    volume=
+    echo "PASS $platform: version-3 ledger migrates in place, keeps its mapping and reopens"
+
+    volume="$name-$arch-future"
+    docker volume create "$volume" >/dev/null
+    docker run --rm --network none --platform "$platform" --volume "$volume:/data" \
+        --mount "type=bind,source=$scratch/future.sqlite,target=/run/future.sqlite,readonly" \
+        --entrypoint sh "$image" -ec 'cp /run/future.sqlite /data/sync.sqlite'
+    code=0
+    docker run --rm --network none --platform "$platform" --volume "$volume:/data" \
+        --mount "type=bind,source=$scratch/ledger.json,target=/run/ledger.json,readonly" \
+        --mount "type=bind,source=$scratch/key,target=/run/key,readonly" \
+        --mount "type=bind,source=$scratch/cookie,target=/run/cookie,readonly" \
+        "$image" --config /run/ledger.json status --json > "$scratch/future-status" 2>&1 || code=$?
+    test "$code" = 4
+    grep -q 'unsupported_schema' "$scratch/future-status"
+    docker volume rm "$volume" >/dev/null
+    volume=
+    echo "PASS $platform: unknown future schema fails closed with unsupported_schema"
     echo "PASS $platform: help, version, example config"
 done

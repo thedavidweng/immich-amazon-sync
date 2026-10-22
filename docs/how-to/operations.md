@@ -123,15 +123,24 @@ restore the matching backup/image together rather than editing SQLite by hand.
 
 The P1 upgrade migrates SQLite schema 1 to 2 in place, preserving confirmed media
 and account history while adding durable hints, incremental progress and album
-relationships. Later steps add album scope/origin columns, managed Workflow
-ownership, favorite state, explicit filter exclusions, a normalized
-categorized usage snapshot and the favorite drift-audit column (schema 9), also
-in place; historical mappings,
-cursors, confirmed/existing state and deletion state are preserved, and no
-migration widens scope or enables a new write. Take the stopped complete-volume
-backup before first startup with the new binary. To roll back, restore that
-pre-upgrade volume together with its matching binary/config; an older binary
-cannot read the newer schema.
+relationships. Later transactional steps add album scope/origin columns (4),
+managed Workflow ownership (5), favorite state (6), explicit filter exclusions
+(7), the normalized categorized usage snapshot (8), the favorite drift-audit
+column (9), and the Live Photo pair ledger with its applied per-account mode
+(10). Historical mappings, cursors, rules, album ownership,
+confirmed/existing state, deletion state, staging references and unconfirmed
+intents are preserved, and no migration widens scope or enables a new write. The
+upgrade path is exercised from the deployed version-3 schema and from every
+checked-in prior fixture under `internal/syncer/testdata`; the container smoke
+also migrates a checked-in version-3 ledger and proves its mapping survives.
+
+An unknown schema version fails closed. This binary refuses a ledger whose
+`user_version` is newer than schema 10, or otherwise out of range, with the
+finite `unsupported_schema` code and exit 4. It does not rewrite the version or
+attempt a partial migration, so a downgrade needs the matching backup and image.
+Take the stopped complete-volume backup before first startup with the new binary.
+To roll back, restore that pre-upgrade volume together with its matching
+binary/config; an older binary cannot read the newer schema.
 Do not delete migration state, queues or album intents to force a downgrade.
 
 When migrating hosts, move the stopped complete data archive, config and secrets.

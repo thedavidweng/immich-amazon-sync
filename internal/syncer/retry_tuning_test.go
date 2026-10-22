@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"testing"
 	"time"
@@ -57,34 +58,42 @@ func TestStatusReportsEffectiveRetryTuning(t *testing.T) {
 }
 
 func TestRetryTuningCapsDefiniteFailureRetries(t *testing.T) {
-	clock := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
-	var uploads int
-	s := &sourceFake{identity: "source", pages: map[string]bridge.Page{
-		"": {Assets: []bridge.Asset{photo("one")}},
-	}, data: map[string]string{"one": "hello"}}
-	d := &targetFake{identity: "target", upload: func(context.Context, bridge.Content, io.Reader) (bridge.Node, error) {
-		uploads++
-		return bridge.Node{}, &bridge.Error{Code: bridge.RateLimit}
-	}}
-	opts := options()
-	opts.MaxAttempts = 2
-	opts.Now = func() time.Time { return clock }
-	store, err := syncer.Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	e := engine(t, store, s, d, opts)
-	ctx := context.Background()
-	for range 4 {
-		_ = e.Once(ctx)
-		clock = clock.Add(2 * time.Second)
-	}
-	if uploads != 2 {
-		t.Fatalf("upload attempts = %d, want the configured cap 2", uploads)
-	}
-	if st := status(t, e); st.Failed+st.Blocked != 1 || st.Unconfirmed != 0 {
-		t.Fatalf("definite failures were misreported: %+v", st)
+	for _, deletions := range []bool{false, true} {
+		t.Run(fmt.Sprintf("deletions=%v", deletions), func(t *testing.T) {
+			clock := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+			var uploads int
+			s := &sourceFake{identity: "source", pages: map[string]bridge.Page{
+				"": {Assets: []bridge.Asset{photo("one")}},
+			}, data: map[string]string{"one": "hello"}}
+			d := &targetFake{identity: "target", upload: func(context.Context, bridge.Content, io.Reader) (bridge.Node, error) {
+				uploads++
+				return bridge.Node{}, &bridge.Error{Code: bridge.RateLimit}
+			}}
+			opts := options()
+			opts.MaxAttempts = 2
+			opts.Deletions = deletions
+			opts.Now = func() time.Time { return clock }
+			store, err := syncer.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			e := engine(t, store, s, d, opts)
+			ctx := context.Background()
+			for range 4 {
+				_ = e.Once(ctx)
+				clock = clock.Add(2 * time.Second)
+			}
+			if uploads != 2 {
+				t.Fatalf("upload attempts = %d, want the configured cap 2", uploads)
+			}
+			if st := status(t, e); st.Failed+st.Blocked != 1 || st.Unconfirmed != 0 {
+				t.Fatalf("definite failures were misreported: %+v", st)
+			}
+			if len(d.trashed) != 0 {
+				t.Fatalf("retry tuning authorized a trash: %v", d.trashed)
+			}
+		})
 	}
 }
 
