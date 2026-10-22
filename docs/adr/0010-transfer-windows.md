@@ -1,4 +1,4 @@
-# ADR 0008: Transfer windows gate only new uploads
+# 0010: Transfer windows gate only new uploads
 
 ## Status
 
