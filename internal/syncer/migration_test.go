@@ -460,6 +460,11 @@ func TestVersionSevenStoreAddsUsageWithoutTouchingFiltersOrFavorites(t *testing.
 	if err = db.QueryRow("SELECT count(*) FROM usage").Scan(&rows); err != nil || rows != 0 {
 		t.Fatalf("usage migration invented observations: rows=%d %v", rows, err)
 	}
+	var checked int
+	if err = db.QueryRow("SELECT count(*) FROM pragma_table_info('favorites') WHERE name='checked_at'").Scan(&checked); err != nil ||
+		checked != 1 {
+		t.Fatalf("drift-audit column missing after the version 7 path: %d %v", checked, err)
+	}
 }
 
 // A version 8 store already has the usage observation. The drift-audit step
@@ -527,5 +532,50 @@ func TestVersionEightStoreAddsFavoriteAuditWithoutTouchingUsage(t *testing.T) {
 	if observedAt != "2026-10-22T00:00:00Z" || lastCalculated != "2026-10-21T00:00:00Z" ||
 		categories != `[{"type":"photo"}]` || hold != 1 {
 		t.Fatalf("migration disturbed the usage row: %q %q %q %d", observedAt, lastCalculated, categories, hold)
+	}
+}
+
+// A newer schema fails closed instead of being treated as current, and a store
+// already at this version reopens without running any step.
+func TestFutureSchemaFailsClosedAndCurrentSchemaReopens(t *testing.T) {
+	dir := t.TempDir()
+	store, err := syncer.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = syncer.Open(dir)
+	if err != nil {
+		t.Fatalf("current schema did not reopen: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "sync.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var version int
+	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 9 {
+		t.Fatalf("schema version = %d, %v", version, err)
+	}
+	if _, err = db.Exec("PRAGMA user_version=10;"); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = syncer.Open(dir); err == nil {
+		t.Fatal("a future schema version was accepted")
+	}
+	db, err = sql.Open("sqlite", filepath.Join(dir, "sync.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 10 {
+		t.Fatalf("refused open rewrote the version: %d, %v", version, err)
 	}
 }
