@@ -13,6 +13,22 @@ type Album struct {
 	Count int    `json:"count"`
 }
 
+// AlbumSyncMode is the configured album mirroring scope. Off performs no
+// album writes. Selected mirrors exactly the explicitly configured albums.
+// AllAccessible mirrors every album the caller can read, discovered by its
+// stable source UUID; it never adopts a destination album by name.
+type AlbumSyncMode string
+
+const (
+	AlbumSyncOff           AlbumSyncMode = "off"
+	AlbumSyncSelected      AlbumSyncMode = "selected"
+	AlbumSyncAllAccessible AlbumSyncMode = "all_accessible"
+)
+
+func (m AlbumSyncMode) Valid() bool {
+	return m == AlbumSyncOff || m == AlbumSyncSelected || m == AlbumSyncAllAccessible
+}
+
 type Asset struct {
 	ID             string    `json:"id"`
 	Name           string    `json:"name"`

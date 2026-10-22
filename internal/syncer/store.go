@@ -200,20 +200,29 @@ func (s *Store) migrate() error {
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 3 {
+	if version > 4 {
 		return errors.New("unsupported_schema")
 	}
-	if version == 3 {
+	if version == 4 {
 		return nil
 	}
+	if version == 3 {
+		return s.migrateP3()
+	}
 	if version == 2 {
-		return s.migrateP2()
+		if err := s.migrateP2(); err != nil {
+			return err
+		}
+		return s.migrateP3()
 	}
 	if version == 1 {
 		if err := s.migrateP1(); err != nil {
 			return err
 		}
-		return s.migrateP2()
+		if err := s.migrateP2(); err != nil {
+			return err
+		}
+		return s.migrateP3()
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -283,7 +292,29 @@ func (s *Store) migrate() error {
 	if err := s.migrateP1(); err != nil {
 		return err
 	}
-	return s.migrateP2()
+	if err := s.migrateP2(); err != nil {
+		return err
+	}
+	return s.migrateP3()
+}
+
+// migrateP3 records how each album rule came into scope. Explicit rules are
+// configured; discovered rules follow the accessible album listing. Existing
+// mappings, cursors and memberships are preserved and no rule is widened.
+func (s *Store) migrateP3() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(`ALTER TABLE rules ADD COLUMN origin TEXT NOT NULL DEFAULT 'explicit';
+	ALTER TABLE rules ADD COLUMN discovered INTEGER NOT NULL DEFAULT 1;
+	ALTER TABLE rules ADD COLUMN discovered_at TEXT NOT NULL DEFAULT '';
+	PRAGMA user_version=4;`)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) migrateP1() error {

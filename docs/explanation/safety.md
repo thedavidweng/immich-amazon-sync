@@ -34,6 +34,11 @@ Node or another album's membership. Incomplete scans and uncertain target album
 ownership cannot authorize removals.
 Only returned IDs from this service's own album creation establish ownership.
 An unknown-ID create remains uncertain; a same-name album is insufficient.
+All-accessible mirroring discovers albums from the complete accessible listing
+and keys each one by its stable source UUID. A failed listing changes nothing;
+an album missing from a successful listing stops mirroring without clearing its
+owned destination album, node mappings or memberships, and is never treated as
+deletion evidence. Renames keep the owned identity.
 Safe additions can proceed during backfill, but removals require a completed
 baseline, nonempty desired set and the
 [fixed membership guard](../how-to/managed-albums.md#understand-removal-guards).

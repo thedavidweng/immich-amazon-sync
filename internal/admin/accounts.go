@@ -72,7 +72,7 @@ func formAccount(r *http.Request) config.Account {
 		AmazonRegion: r.PostForm.Get("region"),
 		AlbumIDs:     ids,
 		Library:      r.PostForm.Get("library") == "on", IncludeVideos: r.PostForm.Get("include_videos") == "on",
-		MirrorAlbums:         r.PostForm.Get("mirror_albums") == "on",
+		AlbumSyncMode:        r.PostForm.Get("album_sync_mode"),
 		Deletions:            r.PostForm.Get("deletions") == "on",
 		DeletionConfirmation: r.PostForm.Get("deletions_confirmation"),
 	}
@@ -115,10 +115,12 @@ func (d *dashboard) saveAccount(w http.ResponseWriter, r *http.Request) {
 	original := r.PostForm.Get("original_id")
 	// Direct roots are configuration-file only; an account edit must not drop
 	// an operator-approved read-only mapping.
-	for _, existing := range cfg.Accounts {
-		if existing.ID == original || (original == "" && existing.ID == account.ID) {
-			account.DirectRoots = existing.DirectRoots
-			break
+	if original != "" {
+		for _, existing := range cfg.Accounts {
+			if existing.ID == original {
+				account.DirectRoots = existing.DirectRoots
+				break
+			}
 		}
 	}
 	if original == "" {

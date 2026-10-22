@@ -202,10 +202,11 @@ func printReport(out io.Writer, report service.Report, asJSON bool) error {
 		return outputError(json.NewEncoder(out).Encode(report))
 	}
 	for _, account := range report.Accounts {
-		if _, err := fmt.Fprintf(out, "%s %s confirmed=%d existing=%d deleted=%d deletion_pending=%d pending=%d failed=%d unconfirmed=%d\n",
-			account.Account, account.Code, account.Status.Confirmed, account.Status.Existing,
+		if _, err := fmt.Fprintf(out, "%s %s album_sync_mode=%s confirmed=%d existing=%d deleted=%d deletion_pending=%d pending=%d failed=%d unconfirmed=%d albums_active=%d albums_inaccessible=%d\n",
+			account.Account, account.Code, account.Status.AlbumSyncMode, account.Status.Confirmed, account.Status.Existing,
 			account.Status.Deleted, account.Status.DeletePending, account.Status.Pending,
-			account.Status.Failed, account.Status.Unconfirmed); err != nil {
+			account.Status.Failed, account.Status.Unconfirmed, account.Status.AlbumsActive,
+			account.Status.AlbumsInaccessible); err != nil {
 			return outputError(err)
 		}
 	}
