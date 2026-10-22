@@ -27,13 +27,13 @@ const companionEligibleSQL = `(EXISTS(SELECT 1 FROM live_pairs p
 		JOIN assets s ON s.account_id=p.account_id AND s.id=p.still_id
 		JOIN scope_assets m ON m.account_id=s.account_id AND m.asset_id=s.id
 		JOIN rules r ON r.account_id=m.account_id AND r.scope=m.scope
-		WHERE p.account_id=a.account_id AND p.companion_id=a.id AND p.state!='incomplete'
+		WHERE p.account_id=a.account_id AND p.companion_id=a.id
 			AND r.active=1 AND m.generation=r.generation AND r.error_code='')
 	OR EXISTS(SELECT 1 FROM live_pairs p
 		JOIN assets s ON s.account_id=p.account_id AND s.id=p.still_id
 		JOIN signals m ON m.account_id=s.account_id AND m.asset_id=s.id
 		JOIN rules r ON r.account_id=m.account_id AND r.scope=m.scope
-		WHERE p.account_id=a.account_id AND p.companion_id=a.id AND p.state!='incomplete'
+		WHERE p.account_id=a.account_id AND p.companion_id=a.id
 			AND r.active=1 AND m.generation=r.generation AND r.error_code=''))`
 
 // eligibleSQL adds companion eligibility only where the mode asks for it.
@@ -53,7 +53,7 @@ func (e *Engine) companionAsset(ctx context.Context, assetID string) (bool, erro
 	}
 	var count int
 	err := e.store.db.QueryRowContext(ctx, `SELECT count(*) FROM live_pairs
-		WHERE account_id=? AND companion_id=? AND state!='incomplete'`,
+		WHERE account_id=? AND companion_id=?`,
 		e.opts.AccountID, assetID).Scan(&count)
 	if err != nil {
 		return false, errors.New("storage_unavailable")
@@ -213,8 +213,11 @@ func (e *Engine) sweepPairs(ctx context.Context) error {
 // still and its companion must be verified Nodes with their own identity. A
 // pair that can no longer complete is reported incomplete.
 func (e *Engine) settlePairs(ctx context.Context) error {
+	// An incomplete pair returns to complete as soon as both originals have
+	// their own verified Node again, so a recovered companion is never reported
+	// stale.
 	_, err := e.store.db.ExecContext(ctx, `UPDATE live_pairs SET state='complete',error_code=''
-		WHERE account_id=? AND state='pending'
+		WHERE account_id=? AND state IN ('pending','incomplete')
 		AND EXISTS(SELECT 1 FROM assets s, assets c
 			WHERE s.account_id=live_pairs.account_id AND s.id=live_pairs.still_id
 			AND s.state IN ('confirmed','existing') AND s.node_id!=''

@@ -379,7 +379,7 @@ func (e *Engine) companionIn(ctx context.Context, tx *sql.Tx, a bridge.Asset) (b
 	}
 	var count int
 	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM live_pairs
-		WHERE account_id=? AND companion_id=? AND state!='incomplete'`,
+		WHERE account_id=? AND companion_id=?`,
 		e.opts.AccountID, a.ID).Scan(&count); err != nil {
 		return false, err
 	}

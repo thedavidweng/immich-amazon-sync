@@ -330,3 +330,44 @@ func TestStandaloneOriginalIsUnaffectedByPairMode(t *testing.T) {
 		t.Fatalf("pair mode read %d companion assets for a standalone original", s.assetCalls)
 	}
 }
+
+// A companion excluded by a filter is not lost: once the policy admits it the
+// pair returns to pending, the companion uploads, and the still is not
+// downloaded or uploaded again.
+func TestPairRecoversWhenAPolicyChangeAdmitsTheCompanion(t *testing.T) {
+	dir := t.TempDir()
+	still, companion := liveStill("still", "mov"), liveCompanion("mov")
+	companion.Size, companion.Name = 6, "mov.mov"
+	s := &sourceFake{identity: "source", pages: map[string]bridge.Page{
+		"": {Assets: []bridge.Asset{still, companion}},
+	}, assets: map[string]bridge.Asset{"still": still, "mov": companion},
+		data: map[string]string{"still": "hello", "mov": "worlds"}}
+	d := &targetFake{identity: "target"}
+	run := func(policy filter.Policy) syncer.Status {
+		store, err := syncer.Open(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := store.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
+		opts := options()
+		opts.Filters = policy
+		opts.LivePhotoMode = bridge.LivePhotoOriginalPair
+		e := engine(t, store, s, d, opts)
+		if err := e.Once(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		return status(t, e)
+	}
+	st := run(filter.Policy{MaxOriginalBytes: 5})
+	if st.Confirmed != 1 || st.PairsIncomplete != 1 || st.Exclusions[filter.TooLarge] != 1 {
+		t.Fatalf("size rule did not report an incomplete pair: %+v", st)
+	}
+	st = run(filter.Policy{})
+	if st.Confirmed != 2 || st.PairsComplete != 1 || st.PairsIncomplete != 0 || len(d.bodies) != 2 {
+		t.Fatalf("admitted companion did not complete the pair: %+v uploads=%d", st, len(d.bodies))
+	}
+}
