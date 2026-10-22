@@ -243,14 +243,31 @@ func TestMutationDuringAMountedReadNeverRecordsADigest(t *testing.T) {
 	}
 	target := &targetFake{identity: "target"}
 	opts := directOptions(host)
-	opts.BytesPerSecond = size // exactly one second of reading
+	opts.BytesPerSecond = size / 4 // four seconds of throttled reading
 	e := engine(t, store, source, target, opts)
+	// Mutate only once the transfer has actually opened the original and begun
+	// staging it. A wall-clock sleep raced engine startup on a loaded CI
+	// machine: the rewrite could land before the open, leaving a file that was
+	// stable for the whole read.
+	started := make(chan struct{})
 	go func() {
-		// Rewrite the original after the transfer has certainly started.
-		time.Sleep(50 * time.Millisecond)
-		_ = os.WriteFile(path, bytesOf(size, 0xff), 0644)
+		defer close(started)
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			entries, readErr := os.ReadDir(filepath.Join(dataDir, "staging"))
+			if readErr == nil {
+				for _, entry := range entries {
+					if info, statErr := entry.Info(); statErr == nil && info.Size() > 0 {
+						_ = os.WriteFile(path, bytesOf(size, 0xff), 0644)
+						return
+					}
+				}
+			}
+			time.Sleep(time.Millisecond)
+		}
 	}()
 	err = e.Once(context.Background())
+	<-started
 	if err == nil || err.Error() != "source_changed" {
 		t.Fatalf("mutating original was accepted: %v", err)
 	}

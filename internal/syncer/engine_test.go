@@ -619,23 +619,32 @@ func TestExplicitRateLimitRespectsRetryAfterAndCanResume(t *testing.T) {
 	if err := e.Once(context.Background()); err == nil || err.Error() != bridge.RateLimit {
 		t.Fatalf("expected explicit rate limit, got %v", err)
 	}
-	if err := e.Once(context.Background()); err != nil {
-		t.Fatal(err)
+	st := status(t, e)
+	if st.Confirmed != 0 || st.Errors[bridge.RateLimit] == 0 {
+		t.Fatalf("rate limit was not recorded durably: %+v", st)
 	}
-	if st := status(t, e); st.Confirmed == 0 {
-		if st.NextAttempt == nil {
-			t.Fatal("rate limit omitted retry deadline")
+	// The retry is either scheduled (a future deadline) or already runnable.
+	// Asserting a deadline unconditionally raced the 150ms delay on a loaded
+	// machine: by the time status was read, the deadline had passed and the
+	// work was simply due again.
+	if st.NextAttempt == nil && !st.WorkRemaining {
+		t.Fatal("rate limit left neither a retry deadline nor runnable work")
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for st.Confirmed == 0 && time.Now().Before(deadline) {
+		if st.NextAttempt != nil {
+			time.Sleep(max(0, time.Until(*st.NextAttempt)) + time.Millisecond)
 		}
-		time.Sleep(max(0, time.Until(*st.NextAttempt)) + time.Millisecond)
 		if err := e.Once(context.Background()); err != nil {
 			t.Fatal(err)
 		}
+		st = status(t, e)
 	}
-	if len(attempts) == 2 && attempts[1].Sub(attempts[0]) < delay {
+	if st.Confirmed != 1 || len(attempts) != 2 {
+		t.Fatalf("explicitly rejected write could not resume: %d %+v", len(attempts), st)
+	}
+	if attempts[1].Sub(attempts[0]) < delay {
 		t.Fatal("Retry-After was ignored")
-	}
-	if len(attempts) != 2 || status(t, e).Confirmed != 1 {
-		t.Fatalf("explicitly rejected write could not resume: %d %+v", len(attempts), status(t, e))
 	}
 }
 
