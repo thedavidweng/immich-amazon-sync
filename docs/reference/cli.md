@@ -10,7 +10,7 @@ immich-amazon-sync [--config PATH] [--account ID] [--json] COMMAND
 | `serve --setup --config PATH` | Explicit first UI setup with a mounted admin secret and a new writable config path. |
 | `sync once` | Start/resume a bounded explicit full-scan pass; can write media, managed membership, add-only favorite stars and -- only when explicitly enabled -- Amazon trashing. |
 | `deletions plan` | Read-only manifest of assets pending deletion propagation: count, synced total, blocked reason and asset IDs. Changes nothing. |
-| `filters` | Print each account's effective eligibility policy (media types, maximum original size, RAW/archive rules and excluded tag IDs) from configuration only. Never contacts either remote or opens local state. |
+| `filters` | Print each account's effective eligibility policy (media types, maximum original size, RAW/archive rules, excluded tag IDs and Live Photo mode) from configuration only. Never contacts either remote or opens local state. |
 | `albums list` | Read accessible source album IDs, names and counts. |
 | `workflow status` | Read-only persisted managed-Workflow state, contract and finite code; no remote calls. |
 | `workflow register` | Read-only capability, ownership and action plan for the owned Workflow. |
@@ -39,7 +39,8 @@ The command's `--help` is authoritative for additional management operations.
 Every process accessing a state volume must respect the single-writer boundary.
 Stop `serve` before running a separate stateful CLI invocation.
 
-Human-readable account lines report `album_sync_mode`, `confirmed`, `existing`,
+Human-readable account lines report `album_sync_mode`, `live_photo_mode`,
+`pairs_complete`, `pairs_incomplete`, `confirmed`, `existing`,
 `deleted`, `deletion_pending`, `pending`, `failed`, `unconfirmed`, `deferred`,
 `albums_active`, `albums_inaccessible` and total `excluded` media counts, then the
 `favorites_mode` setting and `favorites_desired`, `favorites_applied`,
@@ -50,11 +51,13 @@ target parent. `deferred` means new upload dispatch waits for a transfer window;
 it is not a failure. When a window is configured the line also reports its
 timezone, bounds, open/closed state, `next_opening`, `deferral_reason` and the
 next scheduled wake. `--json` carries the full status object, including
-per-reason `exclusions`, the favorites counters and the finite `capture_date`
-capability. `doctor` reports the same capability per account as
+per-reason `exclusions`, the favorites counters, the Live Photo pair counters and
+the finite `capture_date` capability. `doctor` reports the same capability per account as
 `capture_date=metadata_not_supported` or
 `capture_date=supported`; it is a static property of the pinned SDK, not a write
-test.
+test. With `live_photo_mode: original_pair`, an incomplete pair is counted in
+`errors` as `pair_incomplete`, so `sync once` reports a non-zero result while the
+still itself may already be confirmed.
 
 For each selected account, one `sync once` invocation attempts at most 64 distinct
 media jobs and advances full discovery by at most eight page steps; an already

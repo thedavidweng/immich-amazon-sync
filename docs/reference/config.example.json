@@ -27,6 +27,7 @@
       "deletions": false,
       "deletions_confirmation": "",
       "favorites": "off",
+      "live_photo_mode": "still_only",
       "managed_workflow": false,
       "immich_workflow_api_key_file": "/run/secrets/immich_workflow_key",
       "workflow_callback_url": "https://sync.example.org/events/home",

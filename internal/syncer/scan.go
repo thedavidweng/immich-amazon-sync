@@ -258,15 +258,26 @@ func (e *Engine) discover(ctx context.Context, tx *sql.Tx, a bridge.Asset, metad
 	err := tx.QueryRowContext(ctx, "SELECT metadata,md5,sha1,size,state,node_id,prior_state,error_code,attempts,stage_name FROM assets WHERE account_id=? AND id=?",
 		e.opts.AccountID, a.ID).Scan(&oldMetadata, &digest, &checksum, &size, &state, &node, &prior, &code, &attempts, &stage)
 	if errors.Is(err, sql.ErrNoRows) {
-		exclusion := e.exclusion(a)
+		companion, err := e.companionIn(ctx, tx, a)
+		if err != nil {
+			return err
+		}
+		exclusion := e.exclusion(a, companion)
 		target := "pending"
 		if exclusion != "" {
 			target = "skipped"
 		}
 		_, err = tx.ExecContext(ctx, "INSERT INTO assets(account_id,id,metadata,state,exclusion,favorite) VALUES(?,?,?,?,?,?)",
 			e.opts.AccountID, a.ID, metadata, target, exclusion, favorite)
+		if err != nil {
+			return err
+		}
+		return e.discoverPair(ctx, tx, a, exclusion)
+	}
+	if err != nil {
 		return err
 	}
+	companion, err := e.companionIn(ctx, tx, a)
 	if err != nil {
 		return err
 	}
@@ -315,7 +326,7 @@ func (e *Engine) discover(ctx context.Context, tx *sql.Tx, a bridge.Asset, metad
 	exclusion, target := "", state
 	metadataChanged := false
 	if !protected {
-		exclusion = e.exclusion(a)
+		exclusion = e.exclusion(a, companion)
 		metadataChanged = metadata != oldMetadata && digest == ""
 		switch {
 		case exclusion != "":
@@ -338,16 +349,41 @@ func (e *Engine) discover(ctx context.Context, tx *sql.Tx, a bridge.Asset, metad
 	_, err = tx.ExecContext(ctx, `UPDATE assets SET metadata=?,favorite=?,state=?,exclusion=?,error_code=?,attempts=?,
 		next_at=CASE WHEN ? THEN 0 ELSE next_at END WHERE account_id=? AND id=?`,
 		metadata, favorite, target, exclusion, code, attempts, reset, e.opts.AccountID, a.ID)
-	return err
+	if err != nil {
+		return err
+	}
+	return e.discoverPair(ctx, tx, a, exclusion)
 }
 
 // exclusion classifies an Asset for durable, non-destructive exclusion. Source
-// conditions win over policy rules so counts name the actual reason.
-func (e *Engine) exclusion(a bridge.Asset) string {
+// conditions win over policy rules so counts name the actual reason. A resolved
+// Live Photo companion treats its hidden visibility as the pair mechanism and is
+// exempt from the standalone media-type rule only.
+func (e *Engine) exclusion(a bridge.Asset, companion bool) string {
+	if companion {
+		if a.ExcludedReason != "" && a.ExcludedReason != "hidden" {
+			return sourceExclusion(a.ExcludedReason)
+		}
+		return e.companionExclusion(a)
+	}
 	if a.ExcludedReason != "" {
 		return sourceExclusion(a.ExcludedReason)
 	}
 	return e.opts.Filters.Exclude(a)
+}
+
+// companionIn reports whether this asset is the resolved companion of a still.
+func (e *Engine) companionIn(ctx context.Context, tx *sql.Tx, a bridge.Asset) (bool, error) {
+	if !e.pairsOn() || !a.LivePhotoVideo {
+		return false, nil
+	}
+	var count int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM live_pairs
+		WHERE account_id=? AND companion_id=? AND state!='incomplete'`,
+		e.opts.AccountID, a.ID).Scan(&count); err != nil {
+		return false, err
+	}
+	return count != 0, nil
 }
 
 func sourceExclusion(reason string) string {
@@ -378,7 +414,7 @@ func (e *Engine) finishScan(ctx context.Context) error {
 		return err
 	}
 	err = e.store.db.QueryRowContext(ctx, `SELECT count(*) FROM assets a WHERE account_id=?
-		AND (state NOT IN ('confirmed','existing','skipped','deleted') OR error_code='source_changed') AND `+eligibleSQL,
+		AND (state NOT IN ('confirmed','existing','skipped','deleted') OR error_code='source_changed') AND `+e.eligibleSQL(),
 		e.opts.AccountID).Scan(&outstanding)
 	if err != nil || unfinished != 0 || outstanding != 0 {
 		return err

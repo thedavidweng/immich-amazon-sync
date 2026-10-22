@@ -33,6 +33,7 @@ See [config.example.json](config.example.json) for the minimal deployment shape.
 | `album_sync_mode` | `off` | Album mirroring scope: `off`, `selected` (requires `album_ids` and `library: false`) or `all_accessible` (discovers every album the API key can read, including with `library: true`). |
 | `mirror_albums` | unset | Deprecated boolean form of `album_sync_mode`. `true` maps to `selected` and never to `all_accessible`; combining it with a different mode returns `album_sync_mode_conflict`. |
 | `favorites` | `off` | `off` or `add_only`. Add-only stars a verified Amazon Node when the source explicitly reports `isFavorite`; it never unstars. An absent source field is unknown and performs no write. |
+| `live_photo_mode` | `still_only` | `still_only` preserves the historical behaviour: a hidden Live Photo MOV is excluded as `hidden`. `original_pair` follows Immich's `livePhotoVideoId` link and backs up the still and its hidden MOV as two independent originals, tracked as one pair. No mux, conversion or Apple pairing is performed. |
 | `deletions` | `false` | Propagate an Immich trash to the Amazon trash for mapped assets. Off by default; never permanently deletes. |
 | `deletions_confirmation` | unset | Must be exactly `ENABLE DELETIONS` while `deletions` is true; a missing or different phrase rejects the config with `deletion_confirmation_required`. |
 | `managed_workflow` | `false` | Opt-in to creating one owned native Immich Workflow. Requires all three workflow fields below. Polling stays enabled; nothing is created on Immich v2 or without the required grants. |
@@ -41,6 +42,36 @@ See [config.example.json](config.example.json) for the minimal deployment shape.
 | `workflow_secret_file` | unset | Path for the generated bearer secret. The service creates the file with mode `0600`; the value is never stored in JSON or the ledger. |
 | `transfer_window` | unset | Optional daily upload window: `{"timezone":"America/New_York","start":"23:00","end":"06:00"}`. `timezone` is an IANA name; `start`/`end` are local `HH:MM` wall-clock times. `start` is inclusive, `end` is exclusive, and `start` may be later than `end` to cross midnight. Equal bounds are invalid, as are unknown or `Local` zones. Unset (or `null`) preserves continuous transfers. |
 | `direct_roots` | empty | Optional read-only mappings from an Immich-reported path prefix to a local directory. Each entry has `immich_path` and `host_path`; both must be absolute and clean, and `immich_path` must be unique. Empty means every original is downloaded from Immich. |
+
+### Live Photo originals
+
+Immich links an Apple Live Photo still to its hidden MOV companion through
+`livePhotoVideoId`. `live_photo_mode: still_only` (the default) never follows
+that link, so the hidden MOV keeps its `hidden` exclusion. `original_pair`
+resolves the link and uploads both originals separately: each is staged from its
+own source bytes, gets its own MD5 and size, and becomes its own Amazon Node.
+
+Pair membership is durable and separate from media state. A pair is `complete`
+only when both the still and the companion have a verified Node
+(`confirmed`/`existing`); a missing, trashed, offline or filtered companion
+makes it `pair_incomplete`, which is reported in status and `errors` as
+`pair_incomplete`. The service never claims a complete Live Photo backup while
+the pair is incomplete.
+
+Only a companion referenced by an included still becomes eligible. Unrelated
+hidden media stays excluded, the standalone-video `filters.media_types` rule
+never excludes a resolved companion, and every other filter rule (size, tags,
+archive, RAW) still applies. Nothing is muxed or converted into a Google or
+Samsung Motion Photo, no derived hash replaces a source hash, and no Apple
+pairing or playback is written to Amazon. Amazon's published format support is
+separate from unproven SDK linking and playback, which stays untested until
+disposable-sample evidence exists.
+
+Switching modes never re-uploads, overwrites or trashes a Node. Enabling
+`original_pair` adopts stills already in the ledger from their stored metadata;
+already confirmed stills are not downloaded again. Disabling it withdraws pair
+bookkeeping and settles any unsettled companion as `live_photo_companion`,
+leaving every uploaded Node intact.
 
 ### Eligibility filters
 

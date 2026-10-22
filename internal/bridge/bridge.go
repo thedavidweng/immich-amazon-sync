@@ -35,6 +35,21 @@ func (m AlbumSyncMode) Valid() bool {
 	return m == AlbumSyncOff || m == AlbumSyncSelected || m == AlbumSyncAllAccessible
 }
 
+// LivePhotoMode is the per-account policy for Apple Live Photo originals.
+// StillOnly never follows the companion relationship, preserving the historical
+// behavior. OriginalPair backs up the still and the hidden MOV Immich reports as
+// its companion as two independent originals; it never muxes or converts them.
+type LivePhotoMode string
+
+const (
+	LivePhotoStillOnly    LivePhotoMode = "still_only"
+	LivePhotoOriginalPair LivePhotoMode = "original_pair"
+)
+
+func (m LivePhotoMode) Valid() bool {
+	return m == LivePhotoStillOnly || m == LivePhotoOriginalPair
+}
+
 type Asset struct {
 	ID             string    `json:"id"`
 	Name           string    `json:"name"`
@@ -45,7 +60,11 @@ type Asset struct {
 	TakenAt        time.Time `json:"taken_at"`
 	FileModifiedAt time.Time `json:"file_modified_at"`
 	LivePhotoVideo bool      `json:"live_photo_video"`
-	Archived       bool      `json:"archived"`
+	// LivePhotoID is the companion VIDEO asset a still references through
+	// Immich's livePhotoVideoId. It is set on the still only; the companion is
+	// a separate Asset with no companion of its own.
+	LivePhotoID string `json:"live_photo_id,omitempty"`
+	Archived    bool   `json:"archived"`
 	// Tags is nil when the source did not provide tag provenance. An empty,
 	// non-nil slice is authoritative "no tags".
 	Tags           []Tag  `json:"tags"`

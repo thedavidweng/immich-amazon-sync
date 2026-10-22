@@ -151,6 +151,18 @@ func (a assetResponse) asset() (bridge.Asset, error) {
 			sha1 = a.Checksum
 		}
 	}
+	livePhotoID := ""
+	if a.LivePhotoVideoID != "" {
+		// A malformed or self-referential link is a contract violation, never a
+		// guess. Only a still owns a companion; a link on any other media kind
+		// is ignored rather than acting on it.
+		if a.LivePhotoVideoID == a.ID || !uuid.MatchString(a.LivePhotoVideoID) {
+			return bridge.Asset{}, &bridge.Error{Code: bridge.Protocol}
+		}
+		if a.Kind == "IMAGE" {
+			livePhotoID = a.LivePhotoVideoID
+		}
+	}
 	size := int64(-1)
 	if a.Exif != nil && a.Exif.Size != nil {
 		size = *a.Exif.Size
@@ -181,8 +193,8 @@ func (a assetResponse) asset() (bridge.Asset, error) {
 	return bridge.Asset{
 		ID: a.ID, Name: a.Name, MIME: a.MIME, Kind: a.Kind, Size: size,
 		SHA1: sha1, TakenAt: a.TakenAt, FileModifiedAt: a.FileModifiedAt,
-		LivePhotoVideo: a.Kind == "VIDEO" && a.Visibility == "hidden",
-		Favorite:       a.Favorite, Archived: archived, Tags: tags,
+		LivePhotoVideo: a.Kind == "VIDEO" && a.Visibility == "hidden", LivePhotoID: livePhotoID,
+		Favorite: a.Favorite, Archived: archived, Tags: tags,
 		ExcludedReason: reason, OriginalPath: a.OriginalPath,
 	}, nil
 }

@@ -200,7 +200,7 @@ exercised.
 | Standalone video | Explicit `filters.media_types` including `video`; no transcoding | Quota, accepted codecs and playback require real-account testing. |
 | HEIC/HEIF, RAW | Preserve eligible original bytes without claiming preview support | Experimental/unverified format behavior. |
 | Android embedded Motion Photo | Original image retains embedded motion bytes | No Amazon motion-playback guarantee. |
-| Apple Live Photo | Still and hidden MOV can be separate originals | Still-only backup does not preserve the complete pair; no full Live Photo claim. |
+| Apple Live Photo | Still and hidden MOV can be separate originals | `live_photo_mode: original_pair` uploads both originals unchanged with independent hashes and Nodes. Amazon's published iOS Live Photo format support is separate from unproven SDK linking and playback: the service writes no pairing metadata and never claims playback. A missing or ineligible companion reports `pair_incomplete`. |
 | Hidden/locked/trashed/offline media | Excluded or explicitly reported as unsupported | Only an explicit `isTrashed` observation, with opt-in propagation and a re-verified node, can move a mapped node to the Amazon trash. Hidden, locked and offline states never do. |
 | Embedded EXIF | Preserved inside unchanged original bytes | No metadata rewriting. |
 | Source original bytes and filesystem mtimes | Read-only on every upload path | Staged and direct originals are never rewritten: no `utime`, no EXIF rewrite, no recompression. Tests assert unchanged bytes and mtimes. |

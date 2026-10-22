@@ -15,11 +15,14 @@ import (
 )
 
 type Options struct {
-	AccountID       string
-	AlbumIDs        []string
-	Library         bool
-	Filters         filter.Policy
-	AlbumSyncMode   bridge.AlbumSyncMode
+	AccountID     string
+	AlbumIDs      []string
+	Library       bool
+	Filters       filter.Policy
+	AlbumSyncMode bridge.AlbumSyncMode
+	// LivePhotoMode is still_only (default) or original_pair. OriginalPair
+	// resolves each still's companion and backs it up as a separate original.
+	LivePhotoMode   bridge.LivePhotoMode
 	Deletions       bool
 	Favorites       string
 	Workers         int
@@ -85,6 +88,9 @@ type Status struct {
 	IncrementalScanning     bool           `json:"incremental_scanning"`
 	LastIncremental         *time.Time     `json:"last_incremental"`
 	FavoritesMode           string         `json:"favorites_mode"`
+	LivePhotoMode           string         `json:"live_photo_mode"`
+	PairsComplete           int            `json:"pairs_complete"`
+	PairsIncomplete         int            `json:"pairs_incomplete"`
 	FavoritesDesired        int            `json:"favorites_desired"`
 	FavoritesPending        int            `json:"favorites_pending"`
 	FavoritesApplied        int            `json:"favorites_applied"`
@@ -157,6 +163,12 @@ func New(store *Store, source bridge.Source, target bridge.Target, opts Options)
 	if err := opts.Filters.Validate(); err != nil {
 		return nil, errors.New("invalid_options")
 	}
+	if opts.LivePhotoMode == "" {
+		opts.LivePhotoMode = bridge.LivePhotoStillOnly
+	}
+	if !opts.LivePhotoMode.Valid() {
+		return nil, errors.New("invalid_options")
+	}
 	directSet, err := direct.New(opts.DirectRoots)
 	if err != nil {
 		return nil, err
@@ -224,6 +236,12 @@ func (e *Engine) Retry(ctx context.Context) error {
 	if err == nil {
 		_, err = tx.ExecContext(ctx, `UPDATE accounts SET pause_reason=CASE WHEN pause_reason='auth' THEN '' ELSE pause_reason END,
 			error_code='' WHERE id=?`, e.opts.AccountID)
+	}
+	if err == nil {
+		// An incomplete pair is retried only when the operator asks; the
+		// companion relationship itself is never re-derived by a retry.
+		_, err = tx.ExecContext(ctx, `UPDATE live_pairs SET attempts=0,next_at=0
+			WHERE account_id=? AND state!='complete'`, e.opts.AccountID)
 	}
 	if err == nil {
 		err = tx.Commit()
@@ -350,6 +368,20 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 	}
 	st.CaptureDate = e.opts.CaptureDate
 	st.Direct = e.store.directCounters(e.opts.AccountID)
+	st.LivePhotoMode = string(e.opts.LivePhotoMode)
+	if e.pairsOn() {
+		err = e.store.db.QueryRowContext(ctx, `SELECT coalesce(sum(state='complete'),0),
+			coalesce(sum(state='incomplete'),0) FROM live_pairs WHERE account_id=?`,
+			e.opts.AccountID).Scan(&st.PairsComplete, &st.PairsIncomplete)
+		if err != nil {
+			return st, errors.New("storage_unavailable")
+		}
+		if st.PairsIncomplete > 0 {
+			// An incomplete pair is not a full Live Photo backup. It is a
+			// reported condition, not a media failure and not retryable work.
+			st.Errors[pairIncomplete] = st.PairsIncomplete
+		}
+	}
 	err = e.store.db.QueryRowContext(ctx, "SELECT count(*) FROM rules WHERE account_id=? AND active=1 AND complete=0",
 		e.opts.AccountID).Scan(&st.Scanning)
 	if err != nil {
@@ -442,7 +474,7 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 		coalesce(sum(state IN ('pending','staged','failed')),0),
 		coalesce(sum(state='unconfirmed'),0)
 		FROM assets a WHERE account_id=? AND attempts<5 AND next_at<=?
-		AND error_code!='source_changed' AND `+eligibleSQL,
+		AND error_code!='source_changed' AND `+e.eligibleSQL(),
 		e.opts.AccountID, nowMillis).Scan(&uploadDue, &reconcileDue)
 	if err != nil {
 		return st, errors.New("storage_unavailable")
@@ -476,7 +508,7 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 	var next *int64
 	err = e.store.db.QueryRowContext(ctx, `SELECT min(next_at) FROM (
 		SELECT next_at FROM assets a WHERE account_id=? AND state IN ('failed','unconfirmed')
-			AND attempts<5 AND error_code!='source_changed' AND `+eligibleSQL+`
+			AND attempts<5 AND error_code!='source_changed' AND `+e.eligibleSQL()+`
 		UNION ALL SELECT next_at FROM hints WHERE account_id=? AND attempts<5
 		UNION ALL SELECT next_at FROM assets WHERE account_id=? AND state='delete_pending'
 		UNION ALL SELECT next_at FROM rules WHERE account_id=? AND active=1 AND complete=0 AND attempts<5
@@ -611,6 +643,9 @@ func (e *Engine) run(ctx context.Context, full, incremental bool) error {
 	if err = e.reconcileFilterPolicy(ctx); err != nil {
 		return err
 	}
+	if err = e.reconcileLivePhotoMode(ctx); err != nil {
+		return err
+	}
 	if !e.opts.Deletions {
 		if err = e.withdrawDeletions(ctx); err != nil {
 			return err
@@ -675,6 +710,17 @@ func (e *Engine) run(ctx context.Context, full, incremental bool) error {
 		}
 	}
 	if err := e.sweepFavorites(ctx); err != nil {
+		workErr = err
+	}
+	// Pair resolution registers companions that the pages did not enumerate;
+	// the second drain uploads them, and the second settle reports the pair.
+	if err := e.sweepPairs(ctx); err != nil {
+		workErr = err
+	}
+	if err := e.drain(ctx, attempted); err != nil {
+		workErr = err
+	}
+	if err := e.sweepPairs(ctx); err != nil {
 		workErr = err
 	}
 	if err := e.sweepDeletions(ctx); err != nil {

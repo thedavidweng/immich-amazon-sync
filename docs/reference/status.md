@@ -31,6 +31,9 @@ overview. There is no public JSON status endpoint.
 | `favorites_failed` | Favorite operations with a definite finite error awaiting their own retry. |
 | `favorites_uncertain` | A favorite mutation or read whose committed state is unproven (`favorite_unconfirmed`). Retried only after a fresh read. |
 | `favorites_unknown` | Nodes whose source omitted the favorite field; no write is issued and the state is not treated as false. |
+| `live_photo_mode` | Effective Live Photo policy: `still_only` (default) or `original_pair`. `still_only` makes no pair claim and always reports zero pair counters. |
+| `pairs_complete` | Live Photo stills whose still and hidden MOV companion both have a verified Node (`confirmed`/`existing`). |
+| `pairs_incomplete` | Pairs whose companion is missing, trashed, offline or excluded by policy. Reported independently of media state and also counted in `errors` as `pair_incomplete`; it means the Live Photo pair is not fully backed up, not that media failed. |
 | `workflow` | Managed Immich Workflow state: `active`, `polling`, `creating`, `unconfirmed`, `failed`, `cleanup_failed`, `removed` or `disabled`; omitted when never requested. |
 | `workflow_code` | Optional finite notice or failure for the workflow state, such as `workflow_version_unsupported`, `workflow_permission_missing`, `workflow_unconfirmed` or `workflow_cleanup_failed`. Omitted when healthy. |
 | `incremental_scanning` | A library delta scan is active. |
@@ -42,6 +45,14 @@ overview. There is no public JSON status endpoint.
 | `bytes_per_second` | Configured combined per-account cap for source-download and destination-upload bytes; zero means disabled. Metadata traffic is not counted. |
 | `direct` | Process-local read-only mount diagnostics: `reads`, `bytes_avoided`, per-reason `fallbacks` and fail-closed `failures`. Counters reset on restart and never contain a path. Zero everywhere when no `direct_roots` mapping is configured. |
 | `capture_date` | Capture-date write capability of the pinned target SDK. `metadata_not_supported` means the service cannot set a capture date remotely and does not claim that Immich-only date edits are mirrored; `supported` is reserved for a released SDK operation verified by an authoritative read-back. The field is always present and is never an implied success. |
+
+A Live Photo pair is tracked separately from its two original media rows. In
+`original_pair` mode the still and the companion each upload their own bytes and
+own Node; a pair is complete only when both Nodes are verified. Enabling or
+disabling the mode never re-uploads, overwrites or trashes a Node, and pair
+bookkeeping (`live_pairs`) is derived state, not deletion evidence. Unrelated
+hidden media keeps its `hidden` exclusion, and no derived or muxed media is ever
+produced.
 
 A `polling` workflow state is a capability notice, not a media failure: periodic
 reconciliation is never disabled. Counts such as pending, failed and unconfirmed
