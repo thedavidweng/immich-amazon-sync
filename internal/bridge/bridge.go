@@ -24,6 +24,9 @@ type Asset struct {
 	FileModifiedAt time.Time `json:"file_modified_at"`
 	LivePhotoVideo bool      `json:"live_photo_video"`
 	ExcludedReason string    `json:"excluded_reason,omitempty"`
+	// Favorite is the source's explicit favorite setting. Nil means the source
+	// omitted or did not support the field: unknown, never false.
+	Favorite *bool `json:"favorite,omitempty"`
 }
 
 type Scope struct {
@@ -118,6 +121,14 @@ type Target interface {
 	// supply the durable node mapping and the content evidence it was verified
 	// with; a mismatch is an error, not a best-effort delete.
 	Trash(context.Context, Content, string) error
+	// ReadFavorite re-reads one verified, owned node and returns its favorite
+	// setting. The payload must contain an explicit settings.favorite boolean;
+	// otherwise the read fails with FavoriteUnconfirmed and is never false.
+	ReadFavorite(context.Context, Content, string) (bool, error)
+	// SetFavorite ensures one verified, owned node is starred. It reads the
+	// authoritative favorite field first, performs at most one SDK mutation,
+	// and re-reads the outcome; the mutation response is never proof.
+	SetFavorite(context.Context, Content, string) error
 	CreateAlbum(context.Context, string) (string, error)
 	RenameAlbum(context.Context, string, string) error
 	AlbumMembers(context.Context, string) ([]string, error)
@@ -147,6 +158,9 @@ const (
 	NotFound       = "not_found"
 	Conflict       = "content_conflict"
 	Unconfirmed    = "upload_unconfirmed"
-	Protocol       = "remote_protocol"
-	Unsupported    = "unsupported_media"
+	// FavoriteUnconfirmed covers an absent settings.favorite field and a
+	// favorite mutation whose committed state is not yet proven.
+	FavoriteUnconfirmed = "favorite_unconfirmed"
+	Protocol            = "remote_protocol"
+	Unsupported         = "unsupported_media"
 )
