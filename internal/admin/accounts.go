@@ -26,6 +26,7 @@ type overview struct {
 	CSRF     string
 	Writable bool
 	Accounts []accountView
+	Orphans  []WorkflowOrphan
 }
 
 type editor struct {
@@ -98,6 +99,15 @@ func formAccount(r *http.Request) (config.Account, error) {
 	if err := policy.Validate(); err != nil {
 		return config.Account{}, err
 	}
+	window := config.TransferWindow{
+		Timezone: strings.TrimSpace(r.PostForm.Get("transfer_timezone")),
+		Start:    strings.TrimSpace(r.PostForm.Get("transfer_window_start")),
+		End:      strings.TrimSpace(r.PostForm.Get("transfer_window_end")),
+	}
+	var transferWindow *config.TransferWindow
+	if window != (config.TransferWindow{}) {
+		transferWindow = &window
+	}
 	return config.Account{
 		ID: r.PostForm.Get("id"), ImmichURL: r.PostForm.Get("immich_url"),
 		APIKeyFile: r.PostForm.Get("key_file"), CookieFile: r.PostForm.Get("cookie_file"),
@@ -105,9 +115,14 @@ func formAccount(r *http.Request) (config.Account, error) {
 		AlbumIDs:             ids,
 		Library:              r.PostForm.Get("library") == "on",
 		Filters:              &policy,
-		MirrorAlbums:         r.PostForm.Get("mirror_albums") == "on",
+		AlbumSyncMode:        r.PostForm.Get("album_sync_mode"),
 		Deletions:            r.PostForm.Get("deletions") == "on",
 		DeletionConfirmation: r.PostForm.Get("deletions_confirmation"),
+		ManagedWorkflow:      r.PostForm.Get("managed_workflow") == "on",
+		WorkflowAPIKeyFile:   r.PostForm.Get("workflow_key_file"),
+		WorkflowCallbackURL:  r.PostForm.Get("workflow_callback_url"),
+		WorkflowSecretFile:   r.PostForm.Get("workflow_secret_file"),
+		TransferWindow:       transferWindow,
 	}, nil
 }
 
@@ -154,6 +169,16 @@ func (d *dashboard) saveAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := d.backend.Config()
 	original := r.PostForm.Get("original_id")
+	// Direct roots are configuration-file only; an account edit must not drop
+	// an operator-approved read-only mapping.
+	if original != "" {
+		for _, existing := range cfg.Accounts {
+			if existing.ID == original {
+				account.DirectRoots = existing.DirectRoots
+				break
+			}
+		}
+	}
 	if original == "" {
 		for _, existing := range cfg.Accounts {
 			if existing.ID == account.ID {

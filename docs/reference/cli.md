@@ -12,7 +12,12 @@ immich-amazon-sync [--config PATH] [--account ID] [--json] COMMAND
 | `deletions plan` | Read-only manifest of assets pending deletion propagation: count, synced total, blocked reason and asset IDs. Changes nothing. |
 | `filters` | Print each account's effective eligibility policy (media types, maximum original size, RAW/archive rules and excluded tag IDs) from configuration only. Never contacts either remote or opens local state. |
 | `albums list` | Read accessible source album IDs, names and counts. |
-| `doctor` | Read-only remote diagnostics and local storage checks; no upload or album creation. |
+| `workflow status` | Read-only persisted managed-Workflow state, contract and finite code; no remote calls. |
+| `workflow register` | Read-only capability, ownership and action plan for the owned Workflow. |
+| `workflow register --apply` | Create/adopt/verify/update only the persisted owned Workflow; `--force` re-probes after a polling notice. |
+| `workflow remove --apply` | Delete only the owned Workflow when `managed_workflow` is disabled. |
+| `workflow logs` | Read-only aggregate Workflow run counts and latest run time; no IDs, URLs or payloads. |
+| `doctor` | Read-only remote diagnostics and local storage checks; reports `direct_roots=<available>/<configured>` without printing a path; no upload or album creation. |
 | `version` | Print the build version without credentials or config. |
 | `--help`, `doctor --help`, `--version` | Work without configuration or network access. |
 
@@ -34,12 +39,19 @@ The command's `--help` is authoritative for additional management operations.
 Every process accessing a state volume must respect the single-writer boundary.
 Stop `serve` before running a separate stateful CLI invocation.
 
-Human-readable account lines report `confirmed`, `existing`, `deleted`,
-`deletion_pending`, `pending`, `failed`, `unconfirmed` and total `excluded`
-media counts. `existing` means a verified copy was reused from
-elsewhere in the same Amazon account; it is backed up but not at the configured
-target parent. `--json` carries the full status object including per-reason
-`exclusions`.
+Human-readable account lines report `album_sync_mode`, `confirmed`, `existing`,
+`deleted`, `deletion_pending`, `pending`, `failed`, `unconfirmed`, `deferred`,
+`albums_active`, `albums_inaccessible` and total `excluded` media counts.
+`existing` means a verified copy was reused from elsewhere in the same Amazon
+account; it is backed up but not at the configured target parent. `deferred`
+means new upload dispatch waits for a transfer window; it is not a failure.
+When a window is configured the line also reports its timezone, bounds,
+open/closed state, `next_opening`, `deferral_reason` and the next scheduled
+wake. `--json` carries the full status object, including per-reason `exclusions`
+and the finite `capture_date` capability. `doctor` reports the same capability
+per account as `capture_date=metadata_not_supported` or
+`capture_date=supported`; it is a static property of the pinned SDK, not a write
+test.
 
 For each selected account, one `sync once` invocation attempts at most 64 distinct
 media jobs and advances full discovery by at most eight page steps; an already
@@ -80,3 +92,10 @@ Optional HTML routes and form fields are documented in
 Event HTTP statuses are distinct from CLI exits: `invalid_event` maps to exit 2,
 `webhook_unauthorized` to 3, and `album_unconfirmed`, `membership_guard` and
 `webhook_unavailable` to 1 when reported through CLI diagnostics.
+
+Workflow commands never print the callback URL, bearer secret or workflow UUID.
+`workflow_not_configured`, `workflow_management_active` and
+`workflow_configuration_required` exit 2; `workflow_secret_unavailable` exits 3;
+`workflow_not_owned`, `workflow_ambiguous`, `workflow_unconfirmed`,
+`workflow_mismatch` and `workflow_cleanup_failed` exit 1. See
+[managed Workflow onboarding](../how-to/managed-workflows.md).

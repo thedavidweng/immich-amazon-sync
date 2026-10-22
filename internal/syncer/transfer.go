@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -35,6 +36,7 @@ type job struct {
 	node     string
 	attempts int
 	next     int64
+	read     string // "direct" or "api" once an original is opened
 }
 
 const eligibleSQL = `(EXISTS(SELECT 1 FROM scope_assets m JOIN rules r ON r.account_id=m.account_id AND r.scope=m.scope
@@ -42,14 +44,19 @@ const eligibleSQL = `(EXISTS(SELECT 1 FROM scope_assets m JOIN rules r ON r.acco
 	OR EXISTS(SELECT 1 FROM signals m JOIN rules r ON r.account_id=m.account_id AND r.scope=m.scope
 	WHERE m.account_id=a.account_id AND m.asset_id=a.id AND r.active=1 AND m.generation=r.generation AND r.error_code=''))`
 
+// errWindowClosed marks a job deferred by the transfer window. It is never
+// persisted as a failure and never consumes a retry.
+var errWindowClosed = errors.New("transfer_window_closed")
+
 func (e *Engine) drain(ctx context.Context, attempted map[string]bool) error {
 	var selectMu sync.Mutex
+	var windowClosed atomic.Bool
 	results := make(chan error, 64+e.opts.Workers)
 	var workers sync.WaitGroup
 	for range min(e.opts.Workers, e.opts.MaxStagingFiles) {
 		workers.Go(func() {
 			for {
-				if ctx.Err() != nil {
+				if ctx.Err() != nil || windowClosed.Load() {
 					return
 				}
 				paused, err := e.paused(ctx)
@@ -69,7 +76,14 @@ func (e *Engine) drain(ctx context.Context, attempted map[string]bool) error {
 				if j == nil {
 					return
 				}
-				results <- e.transfer(ctx, j)
+				err = e.transfer(ctx, j)
+				if errors.Is(err, errWindowClosed) {
+					// Stop selecting new uploads but let sibling workers finish
+					// any upload already streaming.
+					windowClosed.Store(true)
+					return
+				}
+				results <- err
 			}
 		})
 	}
@@ -84,10 +98,15 @@ func (e *Engine) drain(ctx context.Context, attempted map[string]bool) error {
 }
 
 func (e *Engine) nextJob(ctx context.Context, attempted map[string]bool) (*job, error) {
+	now := e.opts.Now()
+	deferAllowed := 0
+	if e.windowOpen(now) {
+		deferAllowed = 1
+	}
 	rows, err := e.store.db.QueryContext(ctx, `SELECT id,metadata,state,stage_name,md5,sha1,size,node_id,attempts FROM assets a
-		WHERE account_id=? AND state IN ('pending','staged','unconfirmed','failed') AND next_at<=unixepoch('subsec')*1000 AND attempts<5
-		AND error_code!='source_changed'
-		AND `+eligibleSQL+` ORDER BY priority DESC,id LIMIT 64`, e.opts.AccountID)
+		WHERE account_id=? AND state IN ('pending','staged','deferred','unconfirmed','failed') AND next_at<=? AND attempts<5
+		AND error_code!='source_changed' AND (state!='deferred' OR ?)
+		AND `+eligibleSQL+` ORDER BY priority DESC,id LIMIT 64`, e.opts.AccountID, now.UnixMilli(), deferAllowed)
 	if err != nil {
 		return nil, errors.New("storage_unavailable")
 	}
@@ -124,7 +143,7 @@ func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
 	var unlock func()
 	defer func() {
 		// Persist the outcome before allowing another worker to use this content.
-		if result != nil {
+		if result != nil && !errors.Is(result, errWindowClosed) {
 			result = e.fail(ctx, *j, result)
 		}
 		if unlock != nil {
@@ -163,6 +182,11 @@ func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
 			j.asset.MIME = mime.TypeByExtension(filepath.Ext(j.asset.Name))
 		}
 		if j.stage == "" {
+			// A closed window defers the upload before downloading source bytes so
+			// deferral cannot consume staging quota or retries.
+			if !e.windowOpen(e.opts.Now()) {
+				return e.deferUpload(ctx, j)
+			}
 			if err := e.stage(ctx, j); err != nil {
 				return err
 			}
@@ -247,6 +271,11 @@ func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
 		j.state = "unconfirmed"
 		return errors.New(bridge.Unconfirmed)
 	}
+	// Metadata reads above stay available outside the window; only the first
+	// remote write is gated. An upload already streaming never rechecks.
+	if !e.windowOpen(e.opts.Now()) {
+		return e.deferUpload(ctx, j)
+	}
 	if filepath.Base(j.stage) != j.stage || !strings.HasPrefix(j.stage, "original-") {
 		return errors.New("staging_corrupt")
 	}
@@ -325,20 +354,26 @@ func (e *Engine) logJob(ctx context.Context, j *job, started time.Time, result e
 		e.opts.AccountID, j.id, e.opts.AccountID, j.id).Scan(&scope)
 	st, _ := e.summary(ctx)
 	code := "ok"
-	if result != nil {
-		code = errorCode(result)
-	}
 	stage := j.state
-	if result != nil {
+	switch {
+	case errors.Is(result, errWindowClosed):
+		stage, code = "deferred", "transfer_window_closed"
+	case result != nil:
+		code = errorCode(result)
 		stage = "failed"
 		if j.state == "unconfirmed" || j.state == "running" {
 			stage = "unconfirmed"
 		}
 	}
-	e.opts.Logger.InfoContext(ctx, "job_progress", "account", anonymousID(e.opts.AccountID),
-		"rule", anonymousID(e.opts.AccountID+"\x00"+scope),
-		"job_id", anonymousID(e.opts.AccountID+"\x00"+j.id), "stage", stage,
-		"counts", st, "elapsed_ms", time.Since(started).Milliseconds(), "error_code", code, "last_success", st.LastSuccess)
+	args := []any{"account", anonymousID(e.opts.AccountID),
+		"rule", anonymousID(e.opts.AccountID + "\x00" + scope),
+		"job_id", anonymousID(e.opts.AccountID + "\x00" + j.id), "stage", stage,
+		"counts", st, "elapsed_ms", time.Since(started).Milliseconds(), "error_code", code,
+		"last_success", st.LastSuccess}
+	if j.read != "" {
+		args = append(args, "read_source", j.read)
+	}
+	e.opts.Logger.InfoContext(ctx, "job_progress", args...)
 }
 
 type contentLock struct {
@@ -381,6 +416,20 @@ func (e *Engine) setState(ctx context.Context, j *job, state, code, exclusion st
 	}
 	j.state = state
 	return nil
+}
+
+// deferUpload persists a job as deferred without consuming a retry. The window
+// state, not a stored timestamp, decides when it becomes dispatchable again, so
+// an edited window applies to the next dispatch.
+func (e *Engine) deferUpload(ctx context.Context, j *job) error {
+	if e.currentWindow() == nil {
+		return nil
+	}
+	j.next = 0
+	if err := e.setState(ctx, j, "deferred", "", ""); err != nil {
+		return err
+	}
+	return errWindowClosed
 }
 
 func (e *Engine) confirm(ctx context.Context, j *job) error {
@@ -463,7 +512,7 @@ func (e *Engine) fail(ctx context.Context, j job, err error) error {
 	ctx = context.WithoutCancel(ctx)
 	code := errorCode(err)
 	j.attempts++
-	j.next = time.Now().Add(retryDelay(j.attempts-1, err)).UnixMilli()
+	j.next = e.opts.Now().Add(retryDelay(j.attempts-1, err)).UnixMilli()
 	state := "blocked"
 	if j.state == "unconfirmed" || j.state == "running" {
 		state = "unconfirmed"
@@ -505,21 +554,29 @@ func (e *Engine) stage(ctx context.Context, j *job) (result error) {
 			result = errors.Join(result, e.store.removeStage(filepath.Base(path)))
 		}
 	}()
-	r, err := readRetry(ctx, func() (io.ReadCloser, error) { return e.source.Original(ctx, j.id) })
+	original, err := e.openOriginal(ctx, j)
 	if err != nil {
 		return err
 	}
-	defer r.Close()
+	defer original.Close()
 	m, s := md5.New(), sha1.New()
 	n, err := io.CopyBuffer(io.MultiWriter(&quotaWriter{e: e, file: f}, m, s),
-		&rateReader{e: e, ctx: ctx, reader: r}, make([]byte, 32<<10))
+		&rateReader{e: e, ctx: ctx, reader: original}, make([]byte, 32<<10))
 	if err != nil {
 		return err
 	}
-	if j.asset.Size >= 0 && n != j.asset.Size {
+	digest, checksum := hex.EncodeToString(m.Sum(nil)), base64.StdEncoding.EncodeToString(s.Sum(nil))
+	if original.direct {
+		// A mounted original must still be the bytes the source recorded. A
+		// mutation during the read, or a stale mapping, is a changed source:
+		// the digest is never recorded from an unstable or mismatched read.
+		if !original.stable() || (j.asset.Size >= 0 && n != j.asset.Size) ||
+			(j.asset.SHA1 != "" && checksum != j.asset.SHA1) {
+			return errors.New("source_changed")
+		}
+	} else if j.asset.Size >= 0 && n != j.asset.Size {
 		return errors.New("size_mismatch")
-	}
-	if j.asset.SHA1 != "" && base64.StdEncoding.EncodeToString(s.Sum(nil)) != j.asset.SHA1 {
+	} else if j.asset.SHA1 != "" && checksum != j.asset.SHA1 {
 		return errors.New("checksum_mismatch")
 	}
 	if err = f.Sync(); err != nil {
@@ -536,13 +593,65 @@ func (e *Engine) stage(ctx context.Context, j *job) (result error) {
 	if err != nil {
 		return errors.New("storage_unavailable")
 	}
-	j.stage, j.md5, j.size = filepath.Base(path), hex.EncodeToString(m.Sum(nil)), n
-	j.sha1 = base64.StdEncoding.EncodeToString(s.Sum(nil))
+	j.stage, j.md5, j.size = filepath.Base(path), digest, n
+	j.sha1 = checksum
 	if err := e.setState(ctx, j, "staged", "", ""); err != nil {
 		j.stage = ""
 		return err
 	}
+	if original.direct {
+		e.store.recordDirect(e.opts.AccountID, n)
+	}
 	return nil
+}
+
+// original is one readable original and whether it came from an approved
+// read-only mount. stable is nil for API streams, whose length and checksum are
+// already negotiated by the source contract.
+type original struct {
+	io.ReadCloser
+	direct bool
+	stable func() bool
+}
+
+// openOriginal returns the bytes for one asset. An approved, eligible mount is
+// read in place and the Immich original is never requested; an absent or
+// ineligible mount falls back to the API stream. A suspicious path or changed
+// source identity fails closed instead of downloading other bytes.
+func (e *Engine) openOriginal(ctx context.Context, j *job) (*original, error) {
+	fromAPI := func() (*original, error) {
+		r, err := readRetry(ctx, func() (io.ReadCloser, error) { return e.source.Original(ctx, j.id) })
+		if err != nil {
+			return nil, err
+		}
+		j.read = "api"
+		return &original{ReadCloser: r}, nil
+	}
+	if !e.direct.Configured() {
+		return fromAPI()
+	}
+	a, err := readRetry(ctx, func() (bridge.Asset, error) { return e.source.Asset(ctx, j.id) })
+	if err != nil {
+		return nil, err
+	}
+	if a.ID != j.id {
+		return nil, errors.New(bridge.Protocol)
+	}
+	if (j.asset.Size >= 0 && a.Size >= 0 && a.Size != j.asset.Size) ||
+		(j.asset.SHA1 != "" && a.SHA1 != "" && a.SHA1 != j.asset.SHA1) {
+		return nil, errors.New("source_changed")
+	}
+	file, outcome := e.direct.Open(a.OriginalPath)
+	if file == nil {
+		if outcome.FailClosed() {
+			e.store.recordDirectFailure(e.opts.AccountID, outcome)
+			return nil, errors.New(outcome.Code())
+		}
+		e.store.recordDirectFallback(e.opts.AccountID, outcome)
+		return fromAPI()
+	}
+	j.read = "direct"
+	return &original{ReadCloser: file, direct: true, stable: file.Stable}, nil
 }
 
 type rateReader struct {

@@ -197,7 +197,7 @@ func TestFiltersPreserveExistingMappings(t *testing.T) {
 	d := newAlbumTarget()
 	d.nodes = []bridge.Node{elsewhere("remote-node", "one.jpg", contentMD5("hello"), 5)}
 	opts := options()
-	opts.MirrorAlbums = true
+	opts.AlbumSyncMode = bridge.AlbumSyncSelected
 	store, err := syncer.Open(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -241,7 +241,7 @@ func TestFiltersNeverTrashOrRemoveMembership(t *testing.T) {
 				data:  map[string]string{"one": "hello"}}
 			d := newAlbumTarget()
 			opts := options()
-			opts.MirrorAlbums, opts.Deletions = true, deletions
+			opts.AlbumSyncMode, opts.Deletions = bridge.AlbumSyncSelected, deletions
 			store, err := syncer.Open(dir)
 			if err != nil {
 				t.Fatal(err)

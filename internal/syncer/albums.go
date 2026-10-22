@@ -16,11 +16,11 @@ type albumJob struct {
 }
 
 func (e *Engine) mirror(ctx context.Context) error {
-	if !e.opts.MirrorAlbums {
+	if !e.mirrorsAlbums() {
 		return nil
 	}
 	_, err := e.store.db.ExecContext(ctx, `INSERT INTO albums(account_id,scope,name)
-		SELECT account_id,scope,name FROM rules r WHERE account_id=? AND active=1 AND expected>=0 AND album_id!='' AND error_code=''
+		SELECT account_id,scope,name FROM rules r WHERE account_id=? AND active=1 AND album_id!='' AND error_code=''
 		ON CONFLICT(account_id,scope) DO UPDATE SET name=excluded.name`, e.opts.AccountID)
 	if err != nil {
 		return errors.New("storage_unavailable")
@@ -28,7 +28,7 @@ func (e *Engine) mirror(ctx context.Context) error {
 	rows, err := e.store.db.QueryContext(ctx, `SELECT a.scope,target_id,a.name,applied_name,state,r.generation,baseline,a.attempts,r.complete
 		FROM albums a JOIN rules r ON r.account_id=a.account_id AND r.scope=a.scope
 		WHERE a.account_id=? AND r.active=1 AND r.error_code=''
-		AND a.attempts<5 AND a.next_at<=unixepoch('subsec')*1000`, e.opts.AccountID)
+		AND a.attempts<5 AND a.next_at<=?`, e.opts.AccountID, e.opts.Now().UnixMilli())
 	if err != nil {
 		return errors.New("storage_unavailable")
 	}
@@ -50,7 +50,7 @@ func (e *Engine) mirror(ctx context.Context) error {
 			j.attempts++
 			_, dbErr := e.store.db.ExecContext(context.WithoutCancel(ctx), `UPDATE albums SET state=?,error_code=?,attempts=?,next_at=?
 				WHERE account_id=? AND scope=?`, j.state, code, j.attempts,
-				time.Now().Add(retryDelay(j.attempts-1, err)).UnixMilli(), e.opts.AccountID, j.scope)
+				e.opts.Now().Add(retryDelay(j.attempts-1, err)).UnixMilli(), e.opts.AccountID, j.scope)
 			if dbErr != nil {
 				return errors.New("storage_unavailable")
 			}
@@ -109,7 +109,7 @@ func (e *Engine) mirrorAlbum(ctx context.Context, j *albumJob) error {
 	}
 	var outstanding int
 	err := e.store.db.QueryRowContext(ctx, `SELECT count(*) FROM scope_assets m JOIN assets a ON a.account_id=m.account_id AND a.id=m.asset_id
-		WHERE m.account_id=? AND m.scope=? AND m.generation=? AND (a.state NOT IN ('confirmed','existing','skipped') OR a.error_code='source_changed')`,
+		WHERE m.account_id=? AND m.scope=? AND m.generation=? AND (a.state NOT IN ('confirmed','existing','skipped','deleted') OR a.error_code='source_changed')`,
 		e.opts.AccountID, j.scope, j.generation).Scan(&outstanding)
 	if err != nil {
 		return errors.New("storage_unavailable")

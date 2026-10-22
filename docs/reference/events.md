@@ -6,9 +6,13 @@ its own bearer secret, independently of admin sessions and remote credentials.
 See [event setup](../how-to/event-hints.md) for mounting and network access.
 
 Send JSON with `Authorization: Bearer SECRET`, where `SECRET` is the trimmed
-content of the configured `webhook_secret_file` or `WEBHOOK_SECRET_FILE`.
-The file is read for each request. Its raw size must not exceed 4 KiB and its
-trimmed secret must contain at least 32 bytes.
+content of the configured `webhook_secret_file` or `WEBHOOK_SECRET_FILE`, or the
+generated per-account secret of an active
+[managed Workflow](../how-to/managed-workflows.md). Files are read for each
+request. A secret's raw size must not exceed 4 KiB and its trimmed value must
+contain at least 32 bytes. A generated secret authenticates only its own account
+and only while the ledger records an active, creating or unconfirmed owned
+Workflow; after cleanup it grants nothing.
 
 ## Payloads
 
@@ -63,5 +67,6 @@ restart. A paused account can accept hints while its worker remains paused.
 
 The worker re-reads Immich using the configured URL and key. Album mode checks
 the hinted ID against each selected album; library mode reads the asset directly.
-An event cannot widen the configured scope or establish absence/deletion.
-Polling remains authoritative for missed events and membership changes.
+An event cannot widen the configured scope or establish absence/deletion. A
+managed Workflow delivery is likewise only a hint: periodic reconciliation stays
+enabled and recovers missed events and membership changes.

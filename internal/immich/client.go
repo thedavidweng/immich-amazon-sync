@@ -6,10 +6,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -75,6 +77,12 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 }
 
 func (c *Client) request(ctx context.Context, method, path string, payload any) (*http.Response, error) {
+	return c.requestStatus(ctx, method, path, payload, http.StatusOK)
+}
+
+// requestStatus accepts only the listed success statuses. Every other response
+// becomes a finite error; response bodies never reach callers or logs.
+func (c *Client) requestStatus(ctx context.Context, method, path string, payload any, allowed ...int) (*http.Response, error) {
 	var body io.Reader
 	if payload != nil {
 		data, err := json.Marshal(payload)
@@ -96,7 +104,7 @@ func (c *Client) request(ctx context.Context, method, path string, payload any) 
 	if err != nil {
 		return nil, readError(ctx)
 	}
-	if resp.StatusCode != http.StatusOK {
+	if !slices.Contains(allowed, resp.StatusCode) {
 		_ = resp.Body.Close()
 		code := bridge.Protocol
 		switch resp.StatusCode {
@@ -126,10 +134,16 @@ func (c *Client) request(ctx context.Context, method, path string, payload any) 
 	return resp, nil
 }
 
+var errDecode = errors.New("response_decode")
+
 func (c *Client) json(ctx context.Context, method, path string, payload, out any) error {
+	return c.jsonStatus(ctx, method, path, payload, out, http.StatusOK)
+}
+
+func (c *Client) jsonStatus(ctx context.Context, method, path string, payload, out any, allowed ...int) error {
 	metadataCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	resp, err := c.request(metadataCtx, method, path, payload)
+	resp, err := c.requestStatus(metadataCtx, method, path, payload, allowed...)
 	if err != nil {
 		if ctx.Err() == nil && metadataCtx.Err() != nil {
 			return &bridge.Error{Code: bridge.Unavailable}
@@ -144,7 +158,7 @@ func (c *Client) json(ctx context.Context, method, path string, payload, out any
 		if metadataCtx.Err() != nil {
 			return &bridge.Error{Code: bridge.Unavailable}
 		}
-		return &bridge.Error{Code: bridge.Protocol}
+		return fmt.Errorf("%w: %w", &bridge.Error{Code: bridge.Protocol}, errDecode)
 	}
 	return nil
 }

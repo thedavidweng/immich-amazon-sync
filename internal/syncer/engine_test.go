@@ -24,6 +24,8 @@ type sourceFake struct {
 	bridge.Source
 	identity   string
 	pages      map[string]bridge.Page
+	scoped     map[string]bridge.Page
+	albums     []bridge.Album
 	assets     map[string]bridge.Asset
 	data       map[string]string
 	original   func(context.Context, string) (io.ReadCloser, error)
@@ -35,9 +37,17 @@ type sourceFake struct {
 }
 
 func (s *sourceFake) Identity(context.Context) (string, error) { return s.identity, s.authErr }
+func (s *sourceFake) Albums(context.Context) ([]bridge.Album, error) {
+	return s.albums, s.authErr
+}
 func (s *sourceFake) Album(ctx context.Context, id string) (bridge.Album, error) {
 	if s.album != nil {
 		return s.album(ctx, id)
+	}
+	for _, album := range s.albums {
+		if album.ID == id {
+			return album, nil
+		}
 	}
 	count := 0
 	for _, p := range s.pages {
@@ -49,6 +59,9 @@ func (s *sourceFake) Assets(ctx context.Context, scope bridge.Scope, cursor stri
 	s.pageCalls++
 	if s.page != nil {
 		return s.page(ctx, scope, cursor)
+	}
+	if s.scoped != nil {
+		return s.scoped[scope.AlbumID+"\x00"+cursor], nil
 	}
 	return s.pages[cursor], nil
 }

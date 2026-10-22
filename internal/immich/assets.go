@@ -96,6 +96,7 @@ type assetResponse struct {
 	TakenAt          time.Time       `json:"fileCreatedAt"`
 	FileModifiedAt   time.Time       `json:"fileModifiedAt"`
 	LivePhotoVideoID string          `json:"livePhotoVideoId"`
+	OriginalPath     string          `json:"originalPath"`
 	LibraryID        json.RawMessage `json:"libraryId"`
 	Visibility       string          `json:"visibility"`
 	Archived         *bool           `json:"isArchived"`
@@ -180,7 +181,7 @@ func (a assetResponse) asset() (bridge.Asset, error) {
 		ID: a.ID, Name: a.Name, MIME: a.MIME, Kind: a.Kind, Size: size,
 		SHA1: sha1, TakenAt: a.TakenAt, FileModifiedAt: a.FileModifiedAt,
 		LivePhotoVideo: a.Kind == "VIDEO" && a.Visibility == "hidden",
-		Archived:       archived, Tags: tags, ExcludedReason: reason,
+		Archived:       archived, Tags: tags, ExcludedReason: reason, OriginalPath: a.OriginalPath,
 	}, nil
 }
 

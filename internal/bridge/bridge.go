@@ -19,6 +19,22 @@ type Tag struct {
 	Value string `json:"value,omitempty"`
 }
 
+// AlbumSyncMode is the configured album mirroring scope. Off performs no
+// album writes. Selected mirrors exactly the explicitly configured albums.
+// AllAccessible mirrors every album the caller can read, discovered by its
+// stable source UUID; it never adopts a destination album by name.
+type AlbumSyncMode string
+
+const (
+	AlbumSyncOff           AlbumSyncMode = "off"
+	AlbumSyncSelected      AlbumSyncMode = "selected"
+	AlbumSyncAllAccessible AlbumSyncMode = "all_accessible"
+)
+
+func (m AlbumSyncMode) Valid() bool {
+	return m == AlbumSyncOff || m == AlbumSyncSelected || m == AlbumSyncAllAccessible
+}
+
 type Asset struct {
 	ID             string    `json:"id"`
 	Name           string    `json:"name"`
@@ -34,6 +50,11 @@ type Asset struct {
 	// non-nil slice is authoritative "no tags".
 	Tags           []Tag  `json:"tags"`
 	ExcludedReason string `json:"excluded_reason,omitempty"`
+	// OriginalPath is the absolute path the source reports for this original.
+	// It is transient by design: it is never marshalled into the durable asset
+	// metadata, never logged and only used to resolve one approved read-only
+	// mount. Callers must re-read it instead of trusting a stored copy.
+	OriginalPath string `json:"-"`
 }
 
 type Scope struct {
@@ -139,6 +160,9 @@ type Capabilities struct {
 	Region   string `json:"region"`
 	Evidence string `json:"evidence"`
 	Identity string `json:"identity"`
+	// CaptureDate is the finite capture-date write capability of the target.
+	// It is a static property of the released SDK, not a remote discovery.
+	CaptureDate string `json:"capture_date"`
 }
 
 type Error struct {
@@ -159,4 +183,12 @@ const (
 	Unconfirmed    = "upload_unconfirmed"
 	Protocol       = "remote_protocol"
 	Unsupported    = "unsupported_media"
+)
+
+// Capture-date capability codes. Supported is only legal for an operation
+// proven by the released SDK and verified by an authoritative read-back; an
+// absent operation is MetadataNotSupported, never an implied success.
+const (
+	MetadataSupported    = "supported"
+	MetadataNotSupported = "metadata_not_supported"
 )

@@ -126,7 +126,7 @@ func TestVersionThreeStoreReevaluatesLegacyVideoSkip(t *testing.T) {
 	}
 	defer db.Close()
 	var version int
-	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 4 {
+	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 6 {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
 	var state, exclusion string

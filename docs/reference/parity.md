@@ -50,7 +50,7 @@ Checked with `gh api repos/ImAleeexx/immich-gphotos/pulls/<n>`; `merged` was
 | Automatic Workflow create/update/remove | Yes | No (manual only) | Not yet tested | #25 |
 | Read-only Workflow log diagnostics | Yes | Doctor only | Not yet tested | #25 |
 | Strict dedup and verified remote identity (MD5, size, owned Node) | SHA-1 via `gpmc` | MD5/size/owned Node; `confirmed`/`existing` | Live evidence | #17 preserves |
-| Byte-identical originals; no recompression | Yes | Yes | Offline contract + live evidence | #17 preserves; #31 |
+| Byte-identical originals; no recompression | Yes | Yes | Offline contract + live evidence | #17 preserves; #31 asserts unchanged bytes and mtimes on both upload paths |
 | Opt-in trash propagation, 500-item/10% guard, trash only | Yes | Yes (PR #15) | Live evidence (CA, 2026-10-22) | #17 regression coverage; #15 shipped |
 | Favorite reads with field-presence semantics | PR #6 tree | Not exposed; fixtures pinned | Offline contract | #18 |
 | Star new uploads and Existing Nodes | Yes | No | Not yet tested | #18 |
@@ -70,7 +70,7 @@ Checked with `gh api repos/ImAleeexx/immich-gphotos/pulls/<n>`; `merged` was
 | Categorized storage usage (`photo`, `video`, `other`, `lastCalculated`) | Quota mode proxy | SDK supports; not surfaced | Offline contract | #22 |
 | Honest unknown capacity; no quality selector | No | Original bytes only | Unsupported (quality modes not ported) | #22 |
 | Video advisory threshold and opt-in hold; quota error classification | No | No | Not yet tested | #22 |
-| Capture date for missing EXIF | PR #5 re-dates direct reads | Preserves EXIF; no source writes | Unsupported (no verified SDK setter) | #31 |
+| Capture date for missing EXIF | PR #5 re-dates direct reads | Preserves EXIF and mtimes; no source writes; doctor/status report finite `metadata_not_supported` | Unsupported (no released SDK setter) | #31 delivered the honest capability; a setter would require read-back verification |
 | Apple Live Photo still + MOV original-pair preservation | PR #7 muxes a derived Google Motion Photo | Still-only; hidden MOV excluded | Offline contract (planned) | #26 |
 | Native Apple Live Photo pairing and playback | No | No | Unsupported until disposable samples prove it | #30 |
 | Google/Samsung Motion Photo mux | Yes (PR #7) | No conversion path | Unsupported (deliberately not ported) | #26 keeps original pairs; #30 is the only native-pairing experiment |

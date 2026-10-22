@@ -85,8 +85,8 @@ func (e *Engine) sweepDeletions(ctx context.Context) error {
 		// The guard is deterministic until the source changes; do not hot-loop
 		// on it. Pending rows keep their state and are visible in the plan.
 		_, dbErr := e.store.db.ExecContext(ctx, `UPDATE assets SET next_at=?
-			WHERE account_id=? AND state='delete_pending' AND next_at<=unixepoch('subsec')*1000`,
-			time.Now().Add(15*time.Minute).UnixMilli(), e.opts.AccountID)
+			WHERE account_id=? AND state='delete_pending' AND next_at<=?`,
+			e.opts.Now().Add(15*time.Minute).UnixMilli(), e.opts.AccountID, e.opts.Now().UnixMilli())
 		if dbErr != nil {
 			return errors.New("storage_unavailable")
 		}
@@ -121,8 +121,8 @@ func (e *Engine) trashAsset(ctx context.Context, id string) error {
 	var size int64
 	var attempts int
 	err := e.store.db.QueryRowContext(ctx, `SELECT metadata,md5,size,node_id,attempts FROM assets
-		WHERE account_id=? AND id=? AND state='delete_pending' AND next_at<=unixepoch('subsec')*1000`,
-		e.opts.AccountID, id).Scan(&metadata, &md5, &size, &node, &attempts)
+		WHERE account_id=? AND id=? AND state='delete_pending' AND next_at<=?`,
+		e.opts.AccountID, id, e.opts.Now().UnixMilli()).Scan(&metadata, &md5, &size, &node, &attempts)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -147,7 +147,7 @@ func (e *Engine) trashAsset(ctx context.Context, id string) error {
 	}
 	code := errorCode(err)
 	attempts++
-	next := time.Now().Add(retryDelay(attempts, err)).UnixMilli()
+	next := e.opts.Now().Add(retryDelay(attempts, err)).UnixMilli()
 	if _, dbErr := e.store.db.ExecContext(ctx, `UPDATE assets SET error_code=?,attempts=?,next_at=?
 		WHERE account_id=? AND id=?`, code, attempts, next, e.opts.AccountID, id); dbErr != nil {
 		return errors.New("storage_unavailable")

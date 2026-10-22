@@ -9,6 +9,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/thedavidweng/immich-amazon-sync/internal/config"
@@ -183,6 +184,7 @@ func Execute(ctx context.Context, args []string, out, errOut io.Writer, version 
 			return printFilters(cmd.OutOrStdout(), cfg, asJSON)
 		},
 	})
+	addWorkflowCommands(root, load, out, func() string { return accountID }, func() bool { return asJSON })
 	if err := root.ExecuteContext(ctx); err != nil {
 		if errors.Is(err, versionPrinted) {
 			return 0
@@ -218,11 +220,44 @@ func printReport(out io.Writer, report service.Report, asJSON bool) error {
 		for _, count := range account.Status.Exclusions {
 			excluded += count
 		}
-		if _, err := fmt.Fprintf(out, "%s %s confirmed=%d existing=%d deleted=%d deletion_pending=%d pending=%d failed=%d unconfirmed=%d excluded=%d\n",
-			account.Account, account.Code, account.Status.Confirmed, account.Status.Existing,
+		if _, err := fmt.Fprintf(out, "%s %s album_sync_mode=%s confirmed=%d existing=%d deleted=%d deletion_pending=%d pending=%d failed=%d unconfirmed=%d deferred=%d albums_active=%d albums_inaccessible=%d excluded=%d",
+			account.Account, account.Code, account.Status.AlbumSyncMode, account.Status.Confirmed, account.Status.Existing,
 			account.Status.Deleted, account.Status.DeletePending, account.Status.Pending,
-			account.Status.Failed, account.Status.Unconfirmed, excluded); err != nil {
+			account.Status.Failed, account.Status.Unconfirmed, account.Status.Deferred,
+			account.Status.AlbumsActive, account.Status.AlbumsInaccessible, excluded); err != nil {
 			return outputError(err)
+		}
+		if window := account.Status.TransferWindow; window != nil {
+			state := "open"
+			if !window.Open {
+				state = "closed"
+			}
+			if _, err := fmt.Fprintf(out, " window=%s %s-%s %s", window.Timezone, window.Start, window.End, state); err != nil {
+				return outputError(err)
+			}
+			if window.NextOpening != nil {
+				if _, err := fmt.Fprintf(out, " next_opening=%s", window.NextOpening.UTC().Format(time.RFC3339)); err != nil {
+					return outputError(err)
+				}
+			}
+		}
+		if account.Status.DeferralReason != "" {
+			if _, err := fmt.Fprintf(out, " deferral_reason=%s", account.Status.DeferralReason); err != nil {
+				return outputError(err)
+			}
+		}
+		if account.Status.NextAttempt != nil {
+			if _, err := fmt.Fprintf(out, " next_attempt=%s", account.Status.NextAttempt.UTC().Format(time.RFC3339)); err != nil {
+				return outputError(err)
+			}
+		}
+		if _, err := fmt.Fprintln(out); err != nil {
+			return outputError(err)
+		}
+		if account.Status.Workflow != "" {
+			if _, err := fmt.Fprintf(out, "  workflow=%s code=%s\n", account.Status.Workflow, orNone(account.Status.WorkflowCode)); err != nil {
+				return outputError(err)
+			}
 		}
 	}
 	return nil
@@ -281,8 +316,11 @@ func printDiagnosis(out io.Writer, report service.DoctorReport, asJSON bool) err
 		return outputError(err)
 	}
 	for _, account := range report.Accounts {
-		if _, err := fmt.Fprintf(out, "%s version=%s region=%s evidence=%s target_writes=%s original_read=%s\n",
-			account.Account, account.Version, account.Region, account.Evidence, account.TargetWrites, account.OriginalRead); err != nil {
+		if _, err := fmt.Fprintf(out, "%s version=%s region=%s evidence=%s target_writes=%s original_read=%s workflow=%s direct_roots=%d/%d capture_date=%s\n",
+			account.Account, account.Version, account.Region, account.Evidence, account.TargetWrites,
+			account.OriginalRead, orNone(account.Workflow),
+			account.DirectRoots.Available, account.DirectRoots.Configured,
+			account.CaptureDate); err != nil {
 			return outputError(err)
 		}
 		for _, check := range account.Checks {

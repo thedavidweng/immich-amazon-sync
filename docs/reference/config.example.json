@@ -23,9 +23,13 @@
         "include_archived": true,
         "excluded_tags": []
       },
-      "mirror_albums": false,
+      "album_sync_mode": "off",
       "deletions": false,
-      "deletions_confirmation": ""
+      "deletions_confirmation": "",
+      "managed_workflow": false,
+      "immich_workflow_api_key_file": "/run/secrets/immich_workflow_key",
+      "workflow_callback_url": "https://sync.example.org/events/home",
+      "workflow_secret_file": "/run/secrets/workflow_secret"
     }
   ]
 }
