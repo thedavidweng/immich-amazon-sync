@@ -23,10 +23,24 @@ type Options struct {
 	MaxStagingBytes int64
 	MaxStagingFiles int
 	BytesPerSecond  int64
+	// Window is the live optional transfer window shared with the service. A
+	// nil holder or nil current window allows continuous transfers.
+	Window *WindowState
+	// Now is the clock used for transfer-window decisions. The default is time.Now.
+	Now func() time.Time
 	// DirectRoots are operator-approved read-only mappings. Empty keeps every
 	// original on the Immich API.
 	DirectRoots []direct.Root
 	Logger      *slog.Logger
+}
+
+// WindowStatus is the optional transfer-window view in account status.
+type WindowStatus struct {
+	Timezone    string     `json:"timezone"`
+	Start       string     `json:"start"`
+	End         string     `json:"end"`
+	Open        bool       `json:"open"`
+	NextOpening *time.Time `json:"next_opening,omitempty"`
 }
 
 type Status struct {
@@ -38,6 +52,7 @@ type Status struct {
 	Failed                  int            `json:"failed"`
 	Blocked                 int            `json:"blocked"`
 	Skipped                 int            `json:"skipped"`
+	Deferred                int            `json:"deferred"`
 	Existing                int            `json:"existing"`
 	DeletePending           int            `json:"deletion_pending"`
 	Deleted                 int            `json:"deleted"`
@@ -61,6 +76,9 @@ type Status struct {
 	LastIncremental         *time.Time     `json:"last_incremental"`
 	WorkRemaining           bool           `json:"work_remaining"`
 	NextAttempt             *time.Time     `json:"next_attempt,omitempty"`
+	DeferralReason          string         `json:"deferral_reason,omitempty"`
+	TransferWindow          *WindowStatus  `json:"transfer_window,omitempty"`
+	BytesPerSecond          int64          `json:"bytes_per_second"`
 	Direct                  DirectCounters `json:"direct"`
 }
 
@@ -102,6 +120,9 @@ func New(store *Store, source bridge.Source, target bridge.Target, opts Options)
 	}
 	if opts.MaxStagingFiles == 0 {
 		opts.MaxStagingFiles = 2
+	}
+	if opts.Now == nil {
+		opts.Now = time.Now
 	}
 	opts.AlbumIDs = append([]string(nil), opts.AlbumIDs...)
 	directSet, err := direct.New(opts.DirectRoots)
@@ -176,7 +197,7 @@ func (e *Engine) Retry(ctx context.Context) error {
 }
 
 func (e *Engine) summary(ctx context.Context) (Status, error) {
-	st := Status{Errors: map[string]int{}}
+	st := Status{Errors: map[string]int{}, BytesPerSecond: e.opts.BytesPerSecond}
 	var reason, code string
 	var last *string
 	err := e.store.db.QueryRowContext(ctx, "SELECT pause_reason,last_success,error_code FROM accounts WHERE id=?",
@@ -223,6 +244,8 @@ func (e *Engine) summary(ctx context.Context) (Status, error) {
 			st.Blocked += count
 		case "skipped":
 			st.Skipped += count
+		case "deferred":
+			st.Deferred += count
 		case "existing":
 			st.Existing += count
 		case "delete_pending":
@@ -335,22 +358,41 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 	if err = errors.Join(err, rows.Err(), rows.Close()); err != nil {
 		return st, errors.New("storage_unavailable")
 	}
-	var due int
+	now := e.opts.Now()
+	nowMillis := now.UnixMilli()
+	window := e.currentWindow()
+	windowOpen := window == nil || window.Open(now)
+	var uploadDue, reconcileDue int
 	err = e.store.db.QueryRowContext(ctx, `SELECT
-		(SELECT count(*) FROM rules WHERE account_id=? AND active=1 AND complete=0 AND (error_code='' OR (attempts<5 AND next_at<=unixepoch('subsec')*1000)))+
-		(SELECT count(*) FROM hints WHERE account_id=? AND attempts<5 AND next_at<=unixepoch('subsec')*1000)+
-		(SELECT count(*) FROM incremental WHERE account_id=? AND active=1 AND error_code='')+
-		(SELECT count(*) FROM assets a WHERE account_id=? AND state IN ('pending','staged','failed','unconfirmed')
-		 AND attempts<5 AND next_at<=unixepoch('subsec')*1000 AND error_code!='source_changed' AND `+eligibleSQL+`)+
-		(SELECT count(*) FROM assets WHERE account_id=? AND state='delete_pending'
-		 AND next_at<=unixepoch('subsec')*1000)+
-		(SELECT count(*) FROM albums a JOIN rules r ON r.account_id=a.account_id AND r.scope=a.scope
-		 WHERE a.account_id=? AND ? AND r.active=1 AND r.complete=1 AND a.state NOT IN ('creating','unconfirmed')
-		 AND a.error_code!='' AND a.attempts<5 AND a.next_at<=unixepoch('subsec')*1000)`,
-		e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID,
-		e.opts.AccountID, e.mirrorsAlbums()).Scan(&due)
+		coalesce(sum(state IN ('pending','staged','failed')),0),
+		coalesce(sum(state='unconfirmed'),0)
+		FROM assets a WHERE account_id=? AND attempts<5 AND next_at<=?
+		AND error_code!='source_changed' AND `+eligibleSQL,
+		e.opts.AccountID, nowMillis).Scan(&uploadDue, &reconcileDue)
 	if err != nil {
 		return st, errors.New("storage_unavailable")
+	}
+	var otherDue int
+	err = e.store.db.QueryRowContext(ctx, `SELECT
+		(SELECT count(*) FROM rules WHERE account_id=? AND active=1 AND complete=0 AND (error_code='' OR (attempts<5 AND next_at<=?)))+
+		(SELECT count(*) FROM hints WHERE account_id=? AND attempts<5 AND next_at<=?)+
+		(SELECT count(*) FROM incremental WHERE account_id=? AND active=1 AND error_code='')+
+		(SELECT count(*) FROM assets WHERE account_id=? AND state='delete_pending' AND next_at<=?)+
+		(SELECT count(*) FROM albums a JOIN rules r ON r.account_id=a.account_id AND r.scope=a.scope
+		 WHERE a.account_id=? AND ? AND r.active=1 AND r.complete=1 AND a.state NOT IN ('creating','unconfirmed')
+		 AND a.error_code!='' AND a.attempts<5 AND a.next_at<=?)`,
+		e.opts.AccountID, nowMillis, e.opts.AccountID, nowMillis, e.opts.AccountID,
+		e.opts.AccountID, nowMillis,
+		e.opts.AccountID, e.mirrorsAlbums(), nowMillis).Scan(&otherDue)
+	if err != nil {
+		return st, errors.New("storage_unavailable")
+	}
+	due := otherDue + reconcileDue
+	if windowOpen {
+		due += uploadDue
+	} else {
+		// Upload work blocked only by the window is deferral, not runnable work.
+		st.Deferred += uploadDue
 	}
 	st.WorkRemaining = due > 0 && !st.Paused
 	var next *int64
@@ -362,9 +404,9 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 		UNION ALL SELECT next_at FROM rules WHERE account_id=? AND active=1 AND complete=0 AND attempts<5
 		UNION ALL SELECT a.next_at FROM albums a JOIN rules r ON r.account_id=a.account_id AND r.scope=a.scope
 			WHERE a.account_id=? AND ? AND r.active=1 AND a.attempts<5 AND a.error_code!=''
-			AND a.state NOT IN ('creating','unconfirmed')) WHERE next_at>unixepoch('subsec')*1000`,
-		e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID,
-		e.mirrorsAlbums()).Scan(&next)
+			AND a.state NOT IN ('creating','unconfirmed')) WHERE next_at>?`,
+		e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID,
+		e.opts.AccountID, e.mirrorsAlbums(), nowMillis).Scan(&next)
 	if err != nil {
 		return st, errors.New("storage_unavailable")
 	}
@@ -372,7 +414,38 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 		t := time.UnixMilli(*next)
 		st.NextAttempt = &t
 	}
+	if window != nil {
+		view := &WindowStatus{Timezone: window.Timezone, Start: window.Start, End: window.End, Open: windowOpen}
+		if !windowOpen {
+			opening := window.NextOpening(now)
+			view.NextOpening = &opening
+		}
+		st.TransferWindow = view
+	}
+	if st.Deferred > 0 && !windowOpen {
+		st.DeferralReason = "transfer_window"
+		if !st.Paused {
+			opening := *st.TransferWindow.NextOpening
+			if st.NextAttempt == nil || opening.Before(*st.NextAttempt) {
+				st.NextAttempt = &opening
+			}
+		}
+	}
 	return st, nil
+}
+
+// currentWindow returns the live window snapshot for this account.
+func (e *Engine) currentWindow() *Window {
+	if e.opts.Window == nil {
+		return nil
+	}
+	return e.opts.Window.Current()
+}
+
+// windowOpen reports whether new upload dispatch is allowed at now.
+func (e *Engine) windowOpen(now time.Time) bool {
+	window := e.currentWindow()
+	return window == nil || window.Open(now)
 }
 
 func (e *Engine) Once(ctx context.Context) error {
@@ -425,7 +498,7 @@ func (e *Engine) run(ctx context.Context, full, incremental bool) error {
 	// An inaccessible album stays visibly failed until discovery returns it.
 	if _, err = e.store.db.ExecContext(ctx, `UPDATE rules SET error_code='' WHERE account_id=?
 		AND active=1 AND error_code!='album_inaccessible'
-		AND (? OR (attempts<5 AND next_at<=unixepoch('subsec')*1000))`, e.opts.AccountID, full); err != nil {
+		AND (? OR (attempts<5 AND next_at<=?))`, e.opts.AccountID, full, e.opts.Now().UnixMilli()); err != nil {
 		return errors.New("storage_unavailable")
 	}
 	if incremental {

@@ -657,6 +657,45 @@ func TestDashboardShowsAccountIsolatedBacklogsAndReadyWork(t *testing.T) {
 	check(body, "second", "0", "none ready to run")
 }
 
+func TestTransferWindowIsEditableAndShownWithoutSecrets(t *testing.T) {
+	d := openDashboard(t)
+	csrf := d.login(t)
+	form := d.accountForm(t, csrf, "windowed")
+	form.Set("transfer_timezone", "America/New_York")
+	form.Set("transfer_window_start", "23:00")
+	form.Set("transfer_window_end", "06:00")
+	status, body := d.post(t, "/accounts/save", form)
+	if status != 200 {
+		t.Fatalf("save window: %d %s", status, body)
+	}
+	cfg, err := config.Load(d.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	window := cfg.Accounts[0].TransferWindow
+	if window == nil || window.Timezone != "America/New_York" || window.Start != "23:00" || window.End != "06:00" {
+		t.Fatalf("window not persisted: %+v", window)
+	}
+	_, overview := d.get(t, "/")
+	for _, want := range []string{"Transfer window: America/New_York 23:00–06:00", "Deferred", "Transfer rate cap"} {
+		if !strings.Contains(overview, want) {
+			t.Fatalf("overview missing %q", want)
+		}
+	}
+	_, edit := d.get(t, "/accounts/windowed/edit")
+	for _, want := range []string{`value="America/New_York"`, `value="23:00"`, `value="06:00"`} {
+		if !strings.Contains(edit, want) {
+			t.Fatalf("editor missing %q", want)
+		}
+	}
+	form.Set("original_id", "windowed")
+	form.Set("transfer_window_end", "23:00")
+	status, body = d.post(t, "/accounts/save", form)
+	if status != http.StatusBadRequest || !strings.Contains(body, "transfer_window_bounds_invalid") {
+		t.Fatalf("equal window bounds accepted: %d %s", status, body)
+	}
+}
+
 func TestEditingAnAccountPreservesItsApprovedReadOnlyRoots(t *testing.T) {
 	d := openDashboard(t)
 	csrf := d.login(t)

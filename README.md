@@ -37,6 +37,13 @@ as `existing`; a fresh asset still uploads only when the complete lookup proves
 no copy, while an uncertain write stays `unconfirmed` unless one verified match
 is found.
 
+Each account can optionally limit new uploads to one daily window in an IANA
+timezone, including windows that cross midnight. Outside it, scans and metadata
+checks continue, an upload already running finishes, and waiting work is
+reported as `deferred` rather than failed. The scheduler wakes at the next
+DST-correct opening, and editing the window applies without restart. See
+[transfer hour limits](docs/how-to/operations.md#limit-transfer-hours).
+
 Optional read-only originals: an account can approve a mapping from Immich's
 reported original paths to a local directory mounted read-only, so eligible
 originals are staged from disk with zero Immich downloads. It is off by default,

@@ -7,7 +7,7 @@ overview. There is no public JSON status endpoint.
 
 | Status field | Meaning |
 | --- | --- |
-| `pending`, `staged`, `running`, `unconfirmed`, `confirmed`, `existing`, `deletion_pending`, `deleted`, `failed`, `blocked`, `skipped` | Media counts by durable state. `confirmed` means a verified node at the configured target parent; `existing` means a verified copy already exists elsewhere in the same Amazon account (another folder or only inside an album) and was reused instead of uploading; `deletion_pending` means Immich reports the asset trashed and the mapped node awaits the sweep; `deleted` means the mapped node was moved to the Amazon trash; `skipped` is not a cloud backup. |
+| `pending`, `staged`, `running`, `unconfirmed`, `confirmed`, `existing`, `deletion_pending`, `deleted`, `failed`, `blocked`, `skipped`, `deferred` | Media counts by durable state. `confirmed` means a verified node at the configured target parent; `existing` means a verified copy already exists elsewhere in the same Amazon account (another folder or only inside an album) and was reused instead of uploading; `deletion_pending` means Immich reports the asset trashed and the mapped node awaits the sweep; `deleted` means the mapped node was moved to the Amazon trash; `skipped` is not a cloud backup; `deferred` means media whose new upload waits for the transfer window, including unattempted work while the window is closed. Deferred is not a failure, error or uncertain write. |
 | `scanning` | Active full-scan rules without a completed generation. |
 | `paused`, `pause_reason` | Account pause; `pause_reason` is omitted when empty. Manual pause remains until resumed. |
 | `errors` | Counts by finite code, including media, active rules, hints and requested album work. |
@@ -25,8 +25,11 @@ overview. There is no public JSON status endpoint.
 | `events_failed` | Hints with a recorded processing error. |
 | `incremental_scanning` | A library delta scan is active. |
 | `last_incremental` | Completed library discovery watermark, or `null`; this is the scan-start boundary, not proof of transfer completion. |
-| `work_remaining` | Unpaused work is eligible for continuation now. False does not mean every job succeeded. |
-| `next_attempt` | Optional earliest scheduled retry timestamp; omitted when none is scheduled or the account is paused. |
+| `work_remaining` | Unpaused work other than window-blocked uploads is eligible for continuation now. False does not mean every job succeeded. |
+| `next_attempt` | Optional earliest scheduled wake timestamp: the earliest retry or, when uploads are deferred, the next transfer-window opening. Omitted when none is scheduled or the account is paused. |
+| `deferral_reason` | `transfer_window` while deferred uploads wait for a closed window; omitted otherwise. |
+| `transfer_window` | Present only when the account configures a window: `timezone`, `start`, `end`, `open`, and `next_opening` when closed. `next_opening` is DST-correct local wall-clock time in that zone. |
+| `bytes_per_second` | Configured combined per-account cap for source-download and destination-upload bytes; zero means disabled. Metadata traffic is not counted. |
 | `direct` | Process-local read-only mount diagnostics: `reads`, `bytes_avoided`, per-reason `fallbacks` and fail-closed `failures`. Counters reset on restart and never contain a path. Zero everywhere when no `direct_roots` mapping is configured. |
 
 Counts such as pending, failed and unconfirmed album work overlap; do not add
@@ -58,3 +61,13 @@ backfill. A new hint can take the next available worker slot; an in-flight media
 transfer is not interrupted, and there is no fixed latency guarantee. Accounts
 have independent cycles, so one busy or paused account does not serialize all
 other accounts.
+
+A configured transfer window defers only new upload dispatch. Outside the
+window, scans, metadata and existing-content reads, album reconciliation and
+deletion passes still run; staged originals and `unconfirmed` writes keep their
+normal semantics. An upload that started before closing finishes and is judged
+only by its remote evidence. Deferred uploads are not errors, so `work_remaining`
+is false when a closed window is the only reason work cannot run, while
+`next_attempt` carries the next opening and the scheduler wakes for it. A window
+edit applies to the next dispatch without a restart and without cancelling
+running streams; `unconfirmed` reconciliation still never performs a new POST.

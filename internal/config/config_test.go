@@ -152,6 +152,118 @@ func TestDeletionPropagationRequiresTypedConfirmation(t *testing.T) {
 	}
 }
 
+func windowConfig(window *config.TransferWindow) config.Config {
+	cfg := deletionConfig("")
+	cfg.Accounts[0].Deletions = false
+	cfg.Accounts[0].TransferWindow = window
+	return cfg
+}
+
+func TestTransferWindowValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		window *config.TransferWindow
+		code   string
+	}{
+		{"absent", nil, ""},
+		{"daytime", &config.TransferWindow{Timezone: "UTC", Start: "09:00", End: "17:00"}, ""},
+		{"cross midnight", &config.TransferWindow{Timezone: "America/New_York", Start: "23:00", End: "06:00"}, ""},
+		{"equal bounds", &config.TransferWindow{Timezone: "UTC", Start: "09:00", End: "09:00"}, "transfer_window_bounds_invalid"},
+		{"unknown zone", &config.TransferWindow{Timezone: "Mars/Olympus", Start: "09:00", End: "17:00"}, "transfer_window_timezone_invalid"},
+		{"local zone", &config.TransferWindow{Timezone: "Local", Start: "09:00", End: "17:00"}, "transfer_window_timezone_invalid"},
+		{"missing zone", &config.TransferWindow{Start: "09:00", End: "17:00"}, "transfer_window_timezone_invalid"},
+		{"malformed time", &config.TransferWindow{Timezone: "UTC", Start: "9:00", End: "17:00"}, "transfer_window_time_invalid"},
+		{"missing bound", &config.TransferWindow{Timezone: "UTC", Start: "09:00"}, "transfer_window_time_invalid"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := windowConfig(tc.window).Validate()
+			if tc.code == "" {
+				if err != nil {
+					t.Fatalf("valid window rejected: %v", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tc.code {
+				t.Fatalf("window %+v: got %v want %s", tc.window, err, tc.code)
+			}
+		})
+	}
+}
+
+func TestTransferWindowJSONRoundTripAndUnknownFields(t *testing.T) {
+	dir := t.TempDir()
+	key, cookie := filepath.Join(dir, "key"), filepath.Join(dir, "cookie")
+	if err := os.WriteFile(key, []byte("source-key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cookie, []byte("session-id=1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "config.json")
+	handle := func(window string) string {
+		return `{"accounts":[{"id":"home","immich_url":"http://immich:2283","immich_api_key_file":"` +
+			key + `","amazon_region":"ca","amazon_cookie_file":"` + cookie + `","album_ids":["album-one"]` +
+			window + `}]}`
+	}
+	if err := os.WriteFile(path, []byte(handle(`,"transfer_window":{"timezone":"America/New_York","start":"23:00","end":"06:00"}`)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Accounts[0].TransferWindow == nil ||
+		cfg.Accounts[0].TransferWindow.Timezone != "America/New_York" ||
+		cfg.Accounts[0].TransferWindow.Start != "23:00" ||
+		cfg.Accounts[0].TransferWindow.End != "06:00" {
+		t.Fatalf("window not loaded: %+v", cfg.Accounts[0].TransferWindow)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	saved := filepath.Join(dir, "saved.json")
+	if err := cfg.Save(saved); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(saved)
+	if err != nil || !strings.Contains(string(body), `"transfer_window"`) {
+		t.Fatalf("window was not persisted: %s %v", body, err)
+	}
+	roundTrip, err := config.Load(saved)
+	if err != nil || roundTrip.Accounts[0].TransferWindow == nil ||
+		*roundTrip.Accounts[0].TransferWindow != *cfg.Accounts[0].TransferWindow {
+		t.Fatalf("window round trip: %+v %v", roundTrip.Accounts[0].TransferWindow, err)
+	}
+	if err := os.WriteFile(path, []byte(handle(`,"transfer_window":{"timezone":"UTC","start":"09:00","end":"17:00","extra":1}`)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.Load(path); err == nil || err.Error() != "config_invalid_json" {
+		t.Fatalf("unknown window field accepted: %v", err)
+	}
+}
+
+func TestTransferWindowEnvironmentMode(t *testing.T) {
+	t.Setenv("IMMICH_URL", "http://immich:2283")
+	t.Setenv("IMMICH_API_KEY", "source-secret")
+	t.Setenv("AMAZON_REGION", "ca")
+	t.Setenv("AMAZON_COOKIE", "destination-secret")
+	t.Setenv("ALBUM_IDS", "album-one")
+	t.Setenv("TRANSFER_TIMEZONE", "Europe/Berlin")
+	t.Setenv("TRANSFER_WINDOW_START", "22:30")
+	t.Setenv("TRANSFER_WINDOW_END", "05:15")
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	window := cfg.Accounts[0].TransferWindow
+	if window == nil || window.Timezone != "Europe/Berlin" || window.Start != "22:30" || window.End != "05:15" {
+		t.Fatalf("environment window not loaded: %+v", window)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("environment window rejected: %v", err)
+	}
+}
+
 func TestDirectRootsAreOptInAndValidated(t *testing.T) {
 	dir := t.TempDir()
 	key, cookie := filepath.Join(dir, "key"), filepath.Join(dir, "cookie")
