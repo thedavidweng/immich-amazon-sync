@@ -1,4 +1,4 @@
-# ADR 0008: Managed Immich Workflow ownership
+# ADR 0011: Managed Immich Workflow ownership
 
 ## Status
 

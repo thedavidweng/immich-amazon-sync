@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/thedavidweng/immich-amazon-sync/internal/bridge"
+	"github.com/thedavidweng/immich-amazon-sync/internal/direct"
 )
 
 type Options struct {
@@ -16,13 +17,30 @@ type Options struct {
 	AlbumIDs        []string
 	Library         bool
 	IncludeVideos   bool
-	MirrorAlbums    bool
+	AlbumSyncMode   bridge.AlbumSyncMode
 	Deletions       bool
 	Workers         int
 	MaxStagingBytes int64
 	MaxStagingFiles int
 	BytesPerSecond  int64
-	Logger          *slog.Logger
+	// Window is the live optional transfer window shared with the service. A
+	// nil holder or nil current window allows continuous transfers.
+	Window *WindowState
+	// Now is the clock used for transfer-window decisions. The default is time.Now.
+	Now func() time.Time
+	// DirectRoots are operator-approved read-only mappings. Empty keeps every
+	// original on the Immich API.
+	DirectRoots []direct.Root
+	Logger      *slog.Logger
+}
+
+// WindowStatus is the optional transfer-window view in account status.
+type WindowStatus struct {
+	Timezone    string     `json:"timezone"`
+	Start       string     `json:"start"`
+	End         string     `json:"end"`
+	Open        bool       `json:"open"`
+	NextOpening *time.Time `json:"next_opening,omitempty"`
 }
 
 type Status struct {
@@ -34,6 +52,7 @@ type Status struct {
 	Failed                  int            `json:"failed"`
 	Blocked                 int            `json:"blocked"`
 	Skipped                 int            `json:"skipped"`
+	Deferred                int            `json:"deferred"`
 	Existing                int            `json:"existing"`
 	DeletePending           int            `json:"deletion_pending"`
 	Deleted                 int            `json:"deleted"`
@@ -45,6 +64,9 @@ type Status struct {
 	AlbumsPending           int            `json:"albums_pending"`
 	AlbumsUnconfirmed       int            `json:"albums_unconfirmed"`
 	AlbumsFailed            int            `json:"albums_failed"`
+	AlbumSyncMode           string         `json:"album_sync_mode"`
+	AlbumsActive            int            `json:"albums_active"`
+	AlbumsInaccessible      int            `json:"albums_inaccessible"`
 	AssociationsPending     int            `json:"associations_pending"`
 	AssociationsFailed      int            `json:"associations_failed"`
 	AssociationsUnconfirmed int            `json:"associations_unconfirmed"`
@@ -56,6 +78,10 @@ type Status struct {
 	LastIncremental         *time.Time     `json:"last_incremental"`
 	WorkRemaining           bool           `json:"work_remaining"`
 	NextAttempt             *time.Time     `json:"next_attempt,omitempty"`
+	DeferralReason          string         `json:"deferral_reason,omitempty"`
+	TransferWindow          *WindowStatus  `json:"transfer_window,omitempty"`
+	BytesPerSecond          int64          `json:"bytes_per_second"`
+	Direct                  DirectCounters `json:"direct"`
 }
 
 type Engine struct {
@@ -67,16 +93,22 @@ type Engine struct {
 	rateAt    time.Time
 	contentMu sync.Mutex
 	contents  map[string]*contentLock
+	direct    *direct.Set
 }
 
 func New(store *Store, source bridge.Source, target bridge.Target, opts Options) (*Engine, error) {
+	mode := opts.AlbumSyncMode
+	if mode == "" {
+		mode = bridge.AlbumSyncOff
+	}
 	if store == nil || source == nil || target == nil || opts.AccountID == "" ||
 		(!opts.Library && len(opts.AlbumIDs) == 0) || (opts.Library && len(opts.AlbumIDs) != 0) ||
-		(opts.Library && opts.MirrorAlbums) ||
+		!mode.Valid() || (mode == bridge.AlbumSyncSelected && (opts.Library || len(opts.AlbumIDs) == 0)) ||
 		opts.Workers < 0 || opts.Workers > 32 || opts.MaxStagingBytes < 0 ||
 		opts.MaxStagingFiles < 0 || opts.BytesPerSecond < 0 {
 		return nil, errors.New("invalid_options")
 	}
+	opts.AlbumSyncMode = mode
 	for _, id := range opts.AlbumIDs {
 		if id == "" {
 			return nil, errors.New("invalid_options")
@@ -91,12 +123,19 @@ func New(store *Store, source bridge.Source, target bridge.Target, opts Options)
 	if opts.MaxStagingFiles == 0 {
 		opts.MaxStagingFiles = 2
 	}
+	if opts.Now == nil {
+		opts.Now = time.Now
+	}
 	opts.AlbumIDs = append([]string(nil), opts.AlbumIDs...)
+	directSet, err := direct.New(opts.DirectRoots)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := store.db.Exec("INSERT INTO accounts(id) VALUES(?) ON CONFLICT DO NOTHING", opts.AccountID); err != nil {
 		return nil, errors.New("storage_unavailable")
 	}
 	return &Engine{store: store, source: source, target: target, opts: opts,
-		contents: make(map[string]*contentLock)}, nil
+		contents: make(map[string]*contentLock), direct: directSet}, nil
 }
 
 func (e *Engine) Pause(ctx context.Context, paused bool) error {
@@ -160,7 +199,7 @@ func (e *Engine) Retry(ctx context.Context) error {
 }
 
 func (e *Engine) summary(ctx context.Context) (Status, error) {
-	st := Status{Errors: map[string]int{}}
+	st := Status{Errors: map[string]int{}, BytesPerSecond: e.opts.BytesPerSecond}
 	var reason, code string
 	var last *string
 	err := e.store.db.QueryRowContext(ctx, "SELECT pause_reason,last_success,error_code FROM accounts WHERE id=?",
@@ -207,6 +246,8 @@ func (e *Engine) summary(ctx context.Context) (Status, error) {
 			st.Blocked += count
 		case "skipped":
 			st.Skipped += count
+		case "deferred":
+			st.Deferred += count
 		case "existing":
 			st.Existing += count
 		case "delete_pending":
@@ -224,6 +265,10 @@ func (e *Engine) summary(ctx context.Context) (Status, error) {
 	return st, nil
 }
 
+func (e *Engine) mirrorsAlbums() bool {
+	return e.opts.AlbumSyncMode != bridge.AlbumSyncOff
+}
+
 func (e *Engine) paused(ctx context.Context) (bool, error) {
 	var reason string
 	if err := e.store.db.QueryRowContext(ctx, "SELECT pause_reason FROM accounts WHERE id=?", e.opts.AccountID).Scan(&reason); err != nil {
@@ -237,12 +282,14 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		return st, err
 	}
+	st.Direct = e.store.directCounters(e.opts.AccountID)
 	err = e.store.db.QueryRowContext(ctx, "SELECT count(*) FROM rules WHERE account_id=? AND active=1 AND complete=0",
 		e.opts.AccountID).Scan(&st.Scanning)
 	if err != nil {
 		return st, errors.New("storage_unavailable")
 	}
-	if e.opts.MirrorAlbums {
+	st.AlbumSyncMode = string(e.opts.AlbumSyncMode)
+	if e.mirrorsAlbums() {
 		err = e.store.db.QueryRowContext(ctx, `SELECT
 			coalesce(sum(a.target_id IS NULL OR a.target_id='' OR a.complete_generation!=r.generation OR a.applied_name!=r.name),0),
 			coalesce(sum(a.state IN ('creating','unconfirmed')),0),
@@ -259,6 +306,13 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 			FROM memberships m JOIN rules r ON r.account_id=m.account_id AND r.scope=m.scope
 			WHERE m.account_id=? AND r.active=1`, e.opts.AccountID).
 			Scan(&st.AssociationsPending, &st.AssociationsUnconfirmed, &st.AssociationsFailed)
+		if err != nil {
+			return st, errors.New("storage_unavailable")
+		}
+		err = e.store.db.QueryRowContext(ctx, `SELECT
+			(SELECT count(*) FROM rules WHERE account_id=? AND active=1 AND album_id!=''),
+			(SELECT count(*) FROM rules WHERE account_id=? AND album_id!='' AND discovered=0)`,
+			e.opts.AccountID, e.opts.AccountID).Scan(&st.AlbumsActive, &st.AlbumsInaccessible)
 		if err != nil {
 			return st, errors.New("storage_unavailable")
 		}
@@ -292,9 +346,11 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 		UNION ALL SELECT a.error_code FROM albums a JOIN rules r ON r.account_id=a.account_id AND r.scope=a.scope
 			WHERE a.account_id=? AND r.active=1 AND ?
 		UNION ALL SELECT m.error_code FROM memberships m JOIN rules r ON r.account_id=m.account_id AND r.scope=m.scope
-			WHERE m.account_id=? AND r.active=1 AND ?) WHERE error_code!='' GROUP BY error_code`,
+			WHERE m.account_id=? AND r.active=1 AND ?
+		UNION ALL SELECT error_code FROM rules WHERE account_id=? AND album_id!='' AND discovered=0
+		) WHERE error_code!='' GROUP BY error_code`,
 		e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.Library,
-		e.opts.AccountID, e.opts.MirrorAlbums, e.opts.AccountID, e.opts.MirrorAlbums)
+		e.opts.AccountID, e.mirrorsAlbums(), e.opts.AccountID, e.mirrorsAlbums(), e.opts.AccountID)
 	if err != nil {
 		return st, errors.New("storage_unavailable")
 	}
@@ -309,22 +365,41 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 	if err = errors.Join(err, rows.Err(), rows.Close()); err != nil {
 		return st, errors.New("storage_unavailable")
 	}
-	var due int
+	now := e.opts.Now()
+	nowMillis := now.UnixMilli()
+	window := e.currentWindow()
+	windowOpen := window == nil || window.Open(now)
+	var uploadDue, reconcileDue int
 	err = e.store.db.QueryRowContext(ctx, `SELECT
-		(SELECT count(*) FROM rules WHERE account_id=? AND active=1 AND complete=0 AND (error_code='' OR (attempts<5 AND next_at<=unixepoch('subsec')*1000)))+
-		(SELECT count(*) FROM hints WHERE account_id=? AND attempts<5 AND next_at<=unixepoch('subsec')*1000)+
-		(SELECT count(*) FROM incremental WHERE account_id=? AND active=1 AND error_code='')+
-		(SELECT count(*) FROM assets a WHERE account_id=? AND state IN ('pending','staged','failed','unconfirmed')
-		 AND attempts<5 AND next_at<=unixepoch('subsec')*1000 AND error_code!='source_changed' AND `+eligibleSQL+`)+
-		(SELECT count(*) FROM assets WHERE account_id=? AND state='delete_pending'
-		 AND next_at<=unixepoch('subsec')*1000)+
-		(SELECT count(*) FROM albums a JOIN rules r ON r.account_id=a.account_id AND r.scope=a.scope
-		 WHERE a.account_id=? AND ? AND r.active=1 AND r.complete=1 AND a.state NOT IN ('creating','unconfirmed')
-		 AND a.error_code!='' AND a.attempts<5 AND a.next_at<=unixepoch('subsec')*1000)`,
-		e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID,
-		e.opts.AccountID, e.opts.MirrorAlbums).Scan(&due)
+		coalesce(sum(state IN ('pending','staged','failed')),0),
+		coalesce(sum(state='unconfirmed'),0)
+		FROM assets a WHERE account_id=? AND attempts<5 AND next_at<=?
+		AND error_code!='source_changed' AND `+eligibleSQL,
+		e.opts.AccountID, nowMillis).Scan(&uploadDue, &reconcileDue)
 	if err != nil {
 		return st, errors.New("storage_unavailable")
+	}
+	var otherDue int
+	err = e.store.db.QueryRowContext(ctx, `SELECT
+		(SELECT count(*) FROM rules WHERE account_id=? AND active=1 AND complete=0 AND (error_code='' OR (attempts<5 AND next_at<=?)))+
+		(SELECT count(*) FROM hints WHERE account_id=? AND attempts<5 AND next_at<=?)+
+		(SELECT count(*) FROM incremental WHERE account_id=? AND active=1 AND error_code='')+
+		(SELECT count(*) FROM assets WHERE account_id=? AND state='delete_pending' AND next_at<=?)+
+		(SELECT count(*) FROM albums a JOIN rules r ON r.account_id=a.account_id AND r.scope=a.scope
+		 WHERE a.account_id=? AND ? AND r.active=1 AND r.complete=1 AND a.state NOT IN ('creating','unconfirmed')
+		 AND a.error_code!='' AND a.attempts<5 AND a.next_at<=?)`,
+		e.opts.AccountID, nowMillis, e.opts.AccountID, nowMillis, e.opts.AccountID,
+		e.opts.AccountID, nowMillis,
+		e.opts.AccountID, e.mirrorsAlbums(), nowMillis).Scan(&otherDue)
+	if err != nil {
+		return st, errors.New("storage_unavailable")
+	}
+	due := otherDue + reconcileDue
+	if windowOpen {
+		due += uploadDue
+	} else {
+		// Upload work blocked only by the window is deferral, not runnable work.
+		st.Deferred += uploadDue
 	}
 	st.WorkRemaining = due > 0 && !st.Paused
 	var next *int64
@@ -336,9 +411,9 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 		UNION ALL SELECT next_at FROM rules WHERE account_id=? AND active=1 AND complete=0 AND attempts<5
 		UNION ALL SELECT a.next_at FROM albums a JOIN rules r ON r.account_id=a.account_id AND r.scope=a.scope
 			WHERE a.account_id=? AND ? AND r.active=1 AND a.attempts<5 AND a.error_code!=''
-			AND a.state NOT IN ('creating','unconfirmed')) WHERE next_at>unixepoch('subsec')*1000`,
-		e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID,
-		e.opts.MirrorAlbums).Scan(&next)
+			AND a.state NOT IN ('creating','unconfirmed')) WHERE next_at>?`,
+		e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID,
+		e.opts.AccountID, e.mirrorsAlbums(), nowMillis).Scan(&next)
 	if err != nil {
 		return st, errors.New("storage_unavailable")
 	}
@@ -346,7 +421,38 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 		t := time.UnixMilli(*next)
 		st.NextAttempt = &t
 	}
+	if window != nil {
+		view := &WindowStatus{Timezone: window.Timezone, Start: window.Start, End: window.End, Open: windowOpen}
+		if !windowOpen {
+			opening := window.NextOpening(now)
+			view.NextOpening = &opening
+		}
+		st.TransferWindow = view
+	}
+	if st.Deferred > 0 && !windowOpen {
+		st.DeferralReason = "transfer_window"
+		if !st.Paused {
+			opening := *st.TransferWindow.NextOpening
+			if st.NextAttempt == nil || opening.Before(*st.NextAttempt) {
+				st.NextAttempt = &opening
+			}
+		}
+	}
 	return st, nil
+}
+
+// currentWindow returns the live window snapshot for this account.
+func (e *Engine) currentWindow() *Window {
+	if e.opts.Window == nil {
+		return nil
+	}
+	return e.opts.Window.Current()
+}
+
+// windowOpen reports whether new upload dispatch is allowed at now.
+func (e *Engine) windowOpen(now time.Time) bool {
+	window := e.currentWindow()
+	return window == nil || window.Open(now)
 }
 
 func (e *Engine) Once(ctx context.Context) error {
@@ -379,6 +485,14 @@ func (e *Engine) run(ctx context.Context, full, incremental bool) error {
 	if err = e.identify(ctx); err != nil {
 		return e.accountError(ctx, err)
 	}
+	// A full pass or a periodic reconcile reads the authoritative accessible
+	// album listing; bounded continuations keep the discovered set stable so an
+	// in-flight album scan is not interrupted. A failed listing changes nothing.
+	if e.opts.AlbumSyncMode == bridge.AlbumSyncAllAccessible && (full || incremental) {
+		if _, err = e.discoverAlbums(ctx); err != nil {
+			return e.accountError(ctx, err)
+		}
+	}
 	if err = e.configureRules(ctx, full); err != nil {
 		return errors.New("storage_unavailable")
 	}
@@ -388,8 +502,10 @@ func (e *Engine) run(ctx context.Context, full, incremental bool) error {
 		}
 	}
 	// Explicit runs retry immediately; continuations honor persisted scan backoff.
+	// An inaccessible album stays visibly failed until discovery returns it.
 	if _, err = e.store.db.ExecContext(ctx, `UPDATE rules SET error_code='' WHERE account_id=?
-		AND (? OR (attempts<5 AND next_at<=unixepoch('subsec')*1000))`, e.opts.AccountID, full); err != nil {
+		AND active=1 AND error_code!='album_inaccessible'
+		AND (? OR (attempts<5 AND next_at<=?))`, e.opts.AccountID, full, e.opts.Now().UnixMilli()); err != nil {
 		return errors.New("storage_unavailable")
 	}
 	if incremental {
@@ -514,7 +630,8 @@ func errorCode(err error) string {
 		bridge.NotFound, bridge.Conflict, bridge.Unconfirmed, bridge.Protocol, bridge.Unsupported,
 		"identity_unavailable", "identity_mismatch", "storage_unavailable", "staging_quota",
 		"checksum_mismatch", "size_mismatch", "staging_corrupt", "unsafe_filename", "source_changed", "canceled",
-		"invalid_event", "album_unconfirmed", "membership_guard", "deletion_guard":
+		"direct_path_invalid", "direct_path_escape", "direct_path_not_regular",
+		"invalid_event", "album_unconfirmed", "membership_guard", "deletion_guard", "album_inaccessible":
 		return code
 	}
 	return "remote_error"

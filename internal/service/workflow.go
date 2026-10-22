@@ -270,12 +270,12 @@ func (s *Service) removeOwnedWorkflow(ctx context.Context, account config.Accoun
 
 // cleanupDisabledWorkflows removes only owned workflows for accounts removed
 // from configuration or whose managed workflow was turned off.
-func (s *Service) cleanupDisabledWorkflows(previous, next config.Config) {
+func (s *Service) cleanupDisabledWorkflows(previous []config.Account, next config.Config) {
 	nextAccounts := make(map[string]config.Account, len(next.Accounts))
 	for _, account := range next.Accounts {
 		nextAccounts[account.ID] = account
 	}
-	for _, account := range previous.Accounts {
+	for _, account := range previous {
 		if !account.ManagedWorkflow || account.WorkflowAPIKeyFile == "" {
 			continue
 		}

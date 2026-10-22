@@ -11,15 +11,15 @@ import (
 	"github.com/thedavidweng/immich-amazon-sync/internal/workflow"
 )
 
-// A v3 ledger gains only the workflow table; every mapping, cursor, deletion
+// A v4 ledger gains only the workflow table; every mapping, cursor, deletion
 // state and staging reference must survive unchanged.
-func TestVersionThreeStoreMigratesWithoutTouchingExistingState(t *testing.T) {
+func TestVersionFourStoreMigratesWithoutTouchingExistingState(t *testing.T) {
 	dir := t.TempDir()
 	db, err := sql.Open("sqlite", filepath.Join(dir, "sync.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	schema, err := os.ReadFile("testdata/v3.sql")
+	schema, err := os.ReadFile("testdata/v4.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestVersionThreeStoreMigratesWithoutTouchingExistingState(t *testing.T) {
 	}
 	defer raw.Close()
 	var version int
-	if err := raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 4 {
+	if err := raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 5 {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
 	var state, prior string

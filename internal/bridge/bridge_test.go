@@ -1,6 +1,8 @@
 package bridge_test
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/thedavidweng/immich-amazon-sync/internal/bridge"
@@ -25,5 +27,18 @@ func TestNodePlacementNeverConfusesTargetWithElsewhere(t *testing.T) {
 				t.Fatalf("placement = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestTransientOriginalPathIsNeverPersisted(t *testing.T) {
+	asset := bridge.Asset{ID: "asset", Name: "photo.jpg", Size: 1,
+		OriginalPath: "/immich/upload/library/private.jpg"}
+	encoded, err := json.Marshal(asset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.ToLower(string(encoded)), "originalpath") ||
+		strings.Contains(string(encoded), "private.jpg") {
+		t.Fatalf("durable asset metadata retained a source path: %s", encoded)
 	}
 }
