@@ -13,6 +13,12 @@ type Album struct {
 	Count int    `json:"count"`
 }
 
+type Tag struct {
+	ID    string `json:"id"`
+	Name  string `json:"name,omitempty"`
+	Value string `json:"value,omitempty"`
+}
+
 // AlbumSyncMode is the configured album mirroring scope. Off performs no
 // album writes. Selected mirrors exactly the explicitly configured albums.
 // AllAccessible mirrors every album the caller can read, discovered by its
@@ -39,7 +45,11 @@ type Asset struct {
 	TakenAt        time.Time `json:"taken_at"`
 	FileModifiedAt time.Time `json:"file_modified_at"`
 	LivePhotoVideo bool      `json:"live_photo_video"`
-	ExcludedReason string    `json:"excluded_reason,omitempty"`
+	Archived       bool      `json:"archived"`
+	// Tags is nil when the source did not provide tag provenance. An empty,
+	// non-nil slice is authoritative "no tags".
+	Tags           []Tag  `json:"tags"`
+	ExcludedReason string `json:"excluded_reason,omitempty"`
 	// Favorite is the source's explicit favorite setting. Nil means the source
 	// omitted or did not support the field: unknown, never false.
 	Favorite *bool `json:"favorite,omitempty"`

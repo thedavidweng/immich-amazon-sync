@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/thedavidweng/immich-amazon-sync/internal/config"
+	"github.com/thedavidweng/immich-amazon-sync/internal/filter"
 	"github.com/thedavidweng/immich-amazon-sync/internal/service"
 )
 
@@ -172,6 +174,16 @@ func Execute(ctx context.Context, args []string, out, errOut io.Writer, version 
 		},
 	})
 	root.AddCommand(deletions)
+	root.AddCommand(&cobra.Command{
+		Use: "filters", Short: "Show the effective eligibility policy for configured accounts", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := load()
+			if err != nil {
+				return operational(err)
+			}
+			return printFilters(cmd.OutOrStdout(), cfg, asJSON)
+		},
+	})
 	addWorkflowCommands(root, load, out, func() string { return accountID }, func() bool { return asJSON })
 	if err := root.ExecuteContext(ctx); err != nil {
 		if errors.Is(err, versionPrinted) {
@@ -204,11 +216,15 @@ func printReport(out io.Writer, report service.Report, asJSON bool) error {
 		return outputError(json.NewEncoder(out).Encode(report))
 	}
 	for _, account := range report.Accounts {
-		if _, err := fmt.Fprintf(out, "%s %s album_sync_mode=%s confirmed=%d existing=%d deleted=%d deletion_pending=%d pending=%d failed=%d unconfirmed=%d deferred=%d albums_active=%d albums_inaccessible=%d favorites_mode=%s favorites_desired=%d favorites_applied=%d favorites_pending=%d favorites_failed=%d favorites_uncertain=%d favorites_unknown=%d",
+		excluded := 0
+		for _, count := range account.Status.Exclusions {
+			excluded += count
+		}
+		if _, err := fmt.Fprintf(out, "%s %s album_sync_mode=%s confirmed=%d existing=%d deleted=%d deletion_pending=%d pending=%d failed=%d unconfirmed=%d deferred=%d albums_active=%d albums_inaccessible=%d excluded=%d favorites_mode=%s favorites_desired=%d favorites_applied=%d favorites_pending=%d favorites_failed=%d favorites_uncertain=%d favorites_unknown=%d",
 			account.Account, account.Code, account.Status.AlbumSyncMode, account.Status.Confirmed, account.Status.Existing,
 			account.Status.Deleted, account.Status.DeletePending, account.Status.Pending,
 			account.Status.Failed, account.Status.Unconfirmed, account.Status.Deferred,
-			account.Status.AlbumsActive, account.Status.AlbumsInaccessible,
+			account.Status.AlbumsActive, account.Status.AlbumsInaccessible, excluded,
 			account.Status.FavoritesMode, account.Status.FavoritesDesired, account.Status.FavoritesApplied,
 			account.Status.FavoritesPending, account.Status.FavoritesFailed, account.Status.FavoritesUncertain,
 			account.Status.FavoritesUnknown); err != nil {
@@ -245,6 +261,33 @@ func printReport(out io.Writer, report service.Report, asJSON bool) error {
 			if _, err := fmt.Fprintf(out, "  workflow=%s code=%s\n", account.Status.Workflow, orNone(account.Status.WorkflowCode)); err != nil {
 				return outputError(err)
 			}
+		}
+	}
+	return nil
+}
+
+// printFilters exposes the effective rules without contacting either remote.
+func printFilters(out io.Writer, cfg config.Config, asJSON bool) error {
+	type entry struct {
+		Account string        `json:"account"`
+		Filters filter.Policy `json:"filters"`
+	}
+	entries := make([]entry, 0, len(cfg.Accounts))
+	for _, account := range cfg.Accounts {
+		entries = append(entries, entry{Account: account.ID, Filters: account.Policy()})
+	}
+	if asJSON {
+		return outputError(json.NewEncoder(out).Encode(map[string]any{"accounts": entries}))
+	}
+	for _, item := range entries {
+		tags := "-"
+		if len(item.Filters.ExcludedTags) > 0 {
+			tags = strings.Join(item.Filters.ExcludedTags, ",")
+		}
+		if _, err := fmt.Fprintf(out, "%s media_types=%s max_original_bytes=%d skip_raw=%t include_archived=%t excluded_tags=%s\n",
+			item.Account, strings.Join(item.Filters.MediaTypes, ","), item.Filters.MaxOriginalBytes,
+			item.Filters.SkipRAW, item.Filters.ArchivedIncluded(), tags); err != nil {
+			return outputError(err)
 		}
 	}
 	return nil

@@ -331,3 +331,46 @@ func TestSyncOnceStatusExposesFavorites(t *testing.T) {
 		t.Fatalf("human status lacks favorites: exit=%d out=%q stderr=%q", exit, out.String(), errOut.String())
 	}
 }
+
+func TestFiltersCommandShowsEffectivePolicyWithoutRemoteCalls(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	tag := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	body := `{"data_dir":"` + filepath.Join(dir, "state") + `","accounts":[{"id":"home","immich_url":"http://127.0.0.1:1","immich_api_key_file":"/missing","amazon_region":"us","amazon_cookie_file":"/missing","album_ids":["album-one"],"filters":{"media_types":["image","video"],"max_original_bytes":100,"skip_raw":true,"include_archived":false,"excluded_tags":["` + tag + `"]}}]}`
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	exit := cli.Execute(t.Context(), []string{"filters", "--config", path, "--json"}, &out, &errOut, "dev")
+	var report struct {
+		Accounts []struct {
+			Account string `json:"account"`
+			Filters struct {
+				MediaTypes       []string `json:"media_types"`
+				MaxOriginalBytes int64    `json:"max_original_bytes"`
+				SkipRAW          bool     `json:"skip_raw"`
+				IncludeArchived  bool     `json:"include_archived"`
+				ExcludedTags     []string `json:"excluded_tags"`
+			} `json:"filters"`
+		} `json:"accounts"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", exit, out.String(), errOut.String())
+	}
+	if exit != 0 || len(report.Accounts) != 1 || report.Accounts[0].Account != "home" ||
+		len(report.Accounts[0].Filters.MediaTypes) != 2 || report.Accounts[0].Filters.MaxOriginalBytes != 100 ||
+		!report.Accounts[0].Filters.SkipRAW || report.Accounts[0].Filters.IncludeArchived ||
+		len(report.Accounts[0].Filters.ExcludedTags) != 1 {
+		t.Fatalf("effective policy: %+v exit=%d stderr=%q", report, exit, errOut.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "state")); !os.IsNotExist(err) {
+		t.Fatal("filters command opened local sync state")
+	}
+
+	out.Reset()
+	exit = cli.Execute(t.Context(), []string{"filters", "--config", path}, &out, &errOut, "dev")
+	if exit != 0 || !strings.Contains(out.String(), "media_types=image,video") ||
+		!strings.Contains(out.String(), "skip_raw=true") {
+		t.Fatalf("text policy: exit=%d stdout=%q stderr=%q", exit, out.String(), errOut.String())
+	}
+}

@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -326,6 +327,141 @@ func TestDirectRootsAreOptInAndValidated(t *testing.T) {
 			}
 			if err := cfg.Validate(); err == nil || err.Error() != "direct_root_invalid" {
 				t.Fatalf("unsafe mapping accepted: %v", err)
+			}
+		})
+	}
+}
+
+func legacyConfig(t *testing.T, extra string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.json")
+	body := `{"accounts":[{"id":"home","immich_url":"http://immich:2283","immich_api_key_file":"/run/secrets/key","amazon_region":"us","amazon_cookie_file":"/run/secrets/cookie","album_ids":["album-one"]` + extra + `}]}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestLegacyVideoToggleMigratesWithIdenticalScope(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		extra  string
+		expect []string
+	}{
+		{"absent", "", []string{"image"}},
+		{"images only", `,"include_videos":false`, []string{"image"}},
+		{"videos included", `,"include_videos":true`, []string{"image", "video"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			path := legacyConfig(t, tt.extra)
+			cfg, err := config.Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			policy := cfg.Accounts[0].Policy()
+			if !slices.Equal(policy.MediaTypes, tt.expect) || !policy.ArchivedIncluded() {
+				t.Fatalf("migrated policy changed scope: %+v", policy)
+			}
+			if err := cfg.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			saved := filepath.Join(t.TempDir(), "saved.json")
+			if err := cfg.Save(saved); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(saved)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(data), "include_videos") {
+				t.Fatal("legacy toggle was persisted instead of migrated")
+			}
+			reloaded, err := config.Load(saved)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(reloaded.Accounts[0].Policy().MediaTypes, tt.expect) {
+				t.Fatalf("saved policy lost scope: %+v", reloaded.Accounts[0].Policy())
+			}
+		})
+	}
+}
+
+func TestExplicitFiltersAreValidatedAndConflictWithLegacyToggle(t *testing.T) {
+	const tag = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	for name, tt := range map[string]struct {
+		extra string
+		code  string
+	}{
+		"conflict":       {`,"include_videos":true,"filters":{"media_types":["image"]}`, "filter_conflict"},
+		"media type":     {`,"filters":{"media_types":["audio"]}`, "filter_media_type_invalid"},
+		"empty media":    {`,"filters":{"skip_raw":true}`, "filter_media_type_invalid"},
+		"negative size":  {`,"filters":{"media_types":["image"],"max_original_bytes":-1}`, "filter_max_original_bytes_invalid"},
+		"invalid tag":    {`,"filters":{"media_types":["image"],"excluded_tags":["private"]}`, "filter_excluded_tags_invalid"},
+		"duplicate tag":  {`,"filters":{"media_types":["image"],"excluded_tags":["` + tag + `","` + tag + `"]}`, "filter_excluded_tags_invalid"},
+		"unknown filter": {`,"filters":{"media_types":["image"],"unexpected":true}`, "config_invalid_json"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := config.Load(legacyConfig(t, tt.extra))
+			if err == nil || err.Error() != tt.code {
+				t.Fatalf("got %v, want %s", err, tt.code)
+			}
+		})
+	}
+	cfg, err := config.Load(legacyConfig(t, `,"filters":{"media_types":["image","video"],"max_original_bytes":100,"skip_raw":true,"include_archived":false,"excluded_tags":["`+tag+`"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := cfg.Accounts[0].Policy()
+	if !slices.Equal(policy.MediaTypes, []string{"image", "video"}) || policy.MaxOriginalBytes != 100 ||
+		!policy.SkipRAW || policy.ArchivedIncluded() || !slices.Equal(policy.ExcludedTags, []string{tag}) {
+		t.Fatalf("explicit filters were not retained: %+v", policy)
+	}
+}
+
+func TestFilterEnvironmentMigratesAndRejectsInvalidValues(t *testing.T) {
+	t.Setenv("IMMICH_URL", "http://immich:2283")
+	t.Setenv("IMMICH_API_KEY", "source-secret")
+	t.Setenv("AMAZON_REGION", "ca")
+	t.Setenv("AMAZON_COOKIE", "destination-secret")
+	t.Setenv("ALBUM_IDS", "album-one")
+	t.Setenv("INCLUDE_VIDEOS", "true")
+	t.Setenv("MAX_ORIGINAL_BYTES", "100")
+	t.Setenv("SKIP_RAW", "true")
+	t.Setenv("INCLUDE_ARCHIVED", "false")
+	t.Setenv("EXCLUDED_TAGS", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := cfg.Accounts[0].Policy()
+	if !slices.Equal(policy.MediaTypes, []string{"image", "video"}) || policy.MaxOriginalBytes != 100 ||
+		!policy.SkipRAW || policy.ArchivedIncluded() || len(policy.ExcludedTags) != 1 {
+		t.Fatalf("environment filters were not parsed: %+v", policy)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, tt := range map[string]struct {
+		key, value, videos, code string
+	}{
+		"video":    {"INCLUDE_VIDEOS", "sometimes", "", "include_videos_invalid"},
+		"media":    {"MEDIA_TYPES", "audio", "", "filter_media_type_invalid"},
+		"size":     {"MAX_ORIGINAL_BYTES", "-1", "true", "filter_max_original_bytes_invalid"},
+		"raw":      {"SKIP_RAW", "sometimes", "true", "filter_skip_raw_invalid"},
+		"archived": {"INCLUDE_ARCHIVED", "sometimes", "true", "filter_include_archived_invalid"},
+		"excluded": {"EXCLUDED_TAGS", "private", "true", "filter_excluded_tags_invalid"},
+		"conflict": {"MEDIA_TYPES", "image", "true", "filter_conflict"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(tt.key, tt.value)
+			if tt.key != "INCLUDE_VIDEOS" {
+				t.Setenv("INCLUDE_VIDEOS", tt.videos)
+			}
+			_, err := config.Load("")
+			if err == nil || err.Error() != tt.code {
+				t.Fatalf("got %v, want %s", err, tt.code)
 			}
 		})
 	}

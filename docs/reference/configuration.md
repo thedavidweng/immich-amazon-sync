@@ -28,7 +28,8 @@ See [config.example.json](config.example.json) for the minimal deployment shape.
 | `amazon_cookie_file` | required | File holding a Cookie header value. |
 | `album_ids` | empty | Explicit source album UUID allowlist. |
 | `library` | `false` | Deliberate whole-accessible-library choice, mutually exclusive with `album_ids`. |
-| `include_videos` | `false` | Include eligible standalone originals classified as video. |
+| `include_videos` | unset | Legacy video toggle accepted only for migration into `filters.media_types`; supplying both returns `filter_conflict`. |
+| `filters` | images only, archive included | Validated eligibility policy; see [eligibility filters](#eligibility-filters). |
 | `album_sync_mode` | `off` | Album mirroring scope: `off`, `selected` (requires `album_ids` and `library: false`) or `all_accessible` (discovers every album the API key can read, including with `library: true`). |
 | `mirror_albums` | unset | Deprecated boolean form of `album_sync_mode`. `true` maps to `selected` and never to `all_accessible`; combining it with a different mode returns `album_sync_mode_conflict`. |
 | `favorites` | `off` | `off` or `add_only`. Add-only stars a verified Amazon Node when the source explicitly reports `isFavorite`; it never unstars. An absent source field is unknown and performs no write. |
@@ -40,6 +41,47 @@ See [config.example.json](config.example.json) for the minimal deployment shape.
 | `workflow_secret_file` | unset | Path for the generated bearer secret. The service creates the file with mode `0600`; the value is never stored in JSON or the ledger. |
 | `transfer_window` | unset | Optional daily upload window: `{"timezone":"America/New_York","start":"23:00","end":"06:00"}`. `timezone` is an IANA name; `start`/`end` are local `HH:MM` wall-clock times. `start` is inclusive, `end` is exclusive, and `start` may be later than `end` to cross midnight. Equal bounds are invalid, as are unknown or `Local` zones. Unset (or `null`) preserves continuous transfers. |
 | `direct_roots` | empty | Optional read-only mappings from an Immich-reported path prefix to a local directory. Each entry has `immich_path` and `host_path`; both must be absolute and clean, and `immich_path` must be unique. Empty means every original is downloaded from Immich. |
+
+### Eligibility filters
+
+Each account has one validated policy. A newly discovered Asset that the policy
+rejects is recorded as `skipped` with a finite exclusion reason and never
+downloaded or uploaded. Exclusions are reevaluated when a hint or reconciliation
+refreshes metadata or tags, and previously filtered Assets are requeued when the
+policy fingerprint changes. No full rescan is required.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `filters.media_types` | `["image"]` | Included media types; one or both of `image`, `video`, no duplicates. |
+| `filters.max_original_bytes` | `0` | Maximum original byte size; `0` means unlimited. When set, an unknown source size (`-1`) is excluded as `size_unknown`, never treated as zero. |
+| `filters.skip_raw` | `false` | Skip camera RAW images by lowercased original filename extension. |
+| `filters.include_archived` | `true` | Archived originals stay eligible by default, preserving pre-filter behavior. An explicit `false` excludes them. |
+| `filters.excluded_tags` | `[]` | Stable Immich tag UUIDs. An Asset carrying any listed tag is excluded. If the source omits tag provenance, affected Assets are excluded as `tag_provenance_unavailable` rather than assumed untagged. |
+
+Finite exclusion reasons are `media_type_excluded`, `raw_excluded`,
+`size_excluded`, `size_unknown`, `archived_excluded`, `tag_excluded` and
+`tag_provenance_unavailable`. They appear in `status.exclusions` and the
+dashboard. Source conditions (`hidden`, `locked`, `offline`, `trashed`,
+`unsupported_type`, checksum provenance) remain separate reasons and take
+precedence over policy rules.
+
+Filters never delete media, never remove Membership and never authorize trash or
+an Amazon `MoveToTrash` call. A confirmed or Existing mapping survives a policy
+change; filtering only decides whether unsettled media may be uploaded. Absence
+from an eligible or filtered view is not deletion evidence.
+
+When `filters.skip_raw` is true, the documented extension list is:
+`.3fr`, `.ari`, `.arw`, `.bay`, `.cr2`, `.cr3`, `.crw`, `.dcr`, `.dng`, `.erf`,
+`.fff`, `.gpr`, `.iiq`, `.k25`, `.kdc`, `.mef`, `.mos`, `.mrw`, `.nef`, `.nrw`,
+`.orf`, `.pef`, `.raf`, `.raw`, `.rw2`, `.rwl`, `.sr2`, `.srf`, `.srw`, `.x3f`.
+
+The legacy `include_videos` toggle migrates with identical scope: absent or
+`false` becomes `["image"]`, `true` becomes `["image","video"]`, and archive
+remains included. Supplying both `include_videos` and `filters` is rejected with
+`filter_conflict`; saving rewrites the legacy field into `filters`. Invalid
+media types, a negative size limit, non-UUID or duplicate excluded tags return
+`filter_media_type_invalid`, `filter_max_original_bytes_invalid` or
+`filter_excluded_tags_invalid`.
 
 At least one album or explicit library mode is required for each account.
 Account IDs must be unique. Zero accounts is only valid when local management
@@ -117,11 +159,13 @@ admin-secret path or webhook-secret path require restart. See
 Without `--config`, the single-account environment mode uses `IMMICH_URL`,
 `IMMICH_API_KEY_FILE`, `AMAZON_REGION`, `AMAZON_COOKIE_FILE`, comma-separated
 `ALBUM_IDS`, `LIBRARY` (`true`/`false`), `ALBUM_SYNC_MODE` (`off`, `selected`,
-`all_accessible`), `INCLUDE_VIDEOS` (`true`/`false`) and `FAVORITES`
-(`off`/`add_only`). Its account ID is `default`. Optional environment-mode window
-values are `TRANSFER_TIMEZONE`, `TRANSFER_WINDOW_START` and
-`TRANSFER_WINDOW_END`; set all three together or none.
-Use JSON for multiple accounts.
+`all_accessible`) and `FAVORITES` (`off`/`add_only`). Filter variables are
+`MEDIA_TYPES`, `MAX_ORIGINAL_BYTES`, `SKIP_RAW`, `INCLUDE_ARCHIVED` and
+comma-separated `EXCLUDED_TAGS`. The legacy `INCLUDE_VIDEOS` (`true`/`false`) is
+accepted instead of `MEDIA_TYPES`; supplying both returns `filter_conflict`.
+Optional environment-mode window values are `TRANSFER_TIMEZONE`,
+`TRANSFER_WINDOW_START` and `TRANSFER_WINDOW_END`; set all three together or
+none. Its account ID is `default`. Use JSON for multiple accounts.
 `DATA_DIR`, `LISTEN`, `ADMIN_PASSWORD_FILE` and `WEBHOOK_SECRET_FILE` override
 their corresponding values even with a JSON file. Environment-only accounts also
 accept `MANAGED_WORKFLOW`, `IMMICH_WORKFLOW_API_KEY_FILE`,

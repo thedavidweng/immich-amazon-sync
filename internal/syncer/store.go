@@ -200,20 +200,29 @@ func (s *Store) migrate() error {
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 6 {
+	if version > 7 {
 		return errors.New("unsupported_schema")
 	}
-	if version == 6 {
+	if version == 7 {
 		return nil
 	}
+	if version == 6 {
+		return s.migrateP6()
+	}
 	if version == 5 {
-		return s.migrateP5()
+		if err := s.migrateP5(); err != nil {
+			return err
+		}
+		return s.migrateP6()
 	}
 	if version == 4 {
 		if err := s.migrateP4(); err != nil {
 			return err
 		}
-		return s.migrateP5()
+		if err := s.migrateP5(); err != nil {
+			return err
+		}
+		return s.migrateP6()
 	}
 	if version == 3 {
 		if err := s.migrateP3(); err != nil {
@@ -222,7 +231,10 @@ func (s *Store) migrate() error {
 		if err := s.migrateP4(); err != nil {
 			return err
 		}
-		return s.migrateP5()
+		if err := s.migrateP5(); err != nil {
+			return err
+		}
+		return s.migrateP6()
 	}
 	if version == 2 {
 		if err := s.migrateP2(); err != nil {
@@ -234,7 +246,10 @@ func (s *Store) migrate() error {
 		if err := s.migrateP4(); err != nil {
 			return err
 		}
-		return s.migrateP5()
+		if err := s.migrateP5(); err != nil {
+			return err
+		}
+		return s.migrateP6()
 	}
 	if version == 1 {
 		if err := s.migrateP1(); err != nil {
@@ -249,7 +264,10 @@ func (s *Store) migrate() error {
 		if err := s.migrateP4(); err != nil {
 			return err
 		}
-		return s.migrateP5()
+		if err := s.migrateP5(); err != nil {
+			return err
+		}
+		return s.migrateP6()
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -328,7 +346,10 @@ func (s *Store) migrate() error {
 	if err := s.migrateP4(); err != nil {
 		return err
 	}
-	return s.migrateP5()
+	if err := s.migrateP5(); err != nil {
+		return err
+	}
+	return s.migrateP6()
 }
 
 // migrateP3 records how each album rule came into scope. Explicit rules are
@@ -466,6 +487,26 @@ func (s *Store) migrateP5() error {
 	);
 	CREATE INDEX favorite_queue ON favorites(account_id,state,next_at);
 	PRAGMA user_version=6;`)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// migrateP6 makes filter exclusions explicit and reevaluable instead of
+// overloading transient error codes. Legacy video-toggle skips adopt the new
+// media-type reason so a later policy can requeue them.
+func (s *Store) migrateP6() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(`ALTER TABLE assets ADD COLUMN exclusion TEXT NOT NULL DEFAULT '';
+	ALTER TABLE accounts ADD COLUMN filter_fingerprint TEXT NOT NULL DEFAULT '';
+	UPDATE assets SET exclusion=error_code,error_code='' WHERE state='skipped' AND error_code!='';
+	UPDATE assets SET exclusion='media_type_excluded' WHERE exclusion='video_disabled';
+	PRAGMA user_version=7;`)
 	if err != nil {
 		return err
 	}

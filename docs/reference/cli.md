@@ -10,6 +10,7 @@ immich-amazon-sync [--config PATH] [--account ID] [--json] COMMAND
 | `serve --setup --config PATH` | Explicit first UI setup with a mounted admin secret and a new writable config path. |
 | `sync once` | Start/resume a bounded explicit full-scan pass; can write media, managed membership, add-only favorite stars and -- only when explicitly enabled -- Amazon trashing. |
 | `deletions plan` | Read-only manifest of assets pending deletion propagation: count, synced total, blocked reason and asset IDs. Changes nothing. |
+| `filters` | Print each account's effective eligibility policy (media types, maximum original size, RAW/archive rules and excluded tag IDs) from configuration only. Never contacts either remote or opens local state. |
 | `albums list` | Read accessible source album IDs, names and counts. |
 | `workflow status` | Read-only persisted managed-Workflow state, contract and finite code; no remote calls. |
 | `workflow register` | Read-only capability, ownership and action plan for the owned Workflow. |
@@ -40,16 +41,18 @@ Stop `serve` before running a separate stateful CLI invocation.
 
 Human-readable account lines report `album_sync_mode`, `confirmed`, `existing`,
 `deleted`, `deletion_pending`, `pending`, `failed`, `unconfirmed`, `deferred`,
-`albums_active` and `albums_inaccessible`, then the `favorites_mode` setting and
-`favorites_desired`, `favorites_applied`, `favorites_pending`, `favorites_failed`,
-`favorites_uncertain` and `favorites_unknown` counters. `existing` means a
-verified copy was reused from elsewhere in the same Amazon account; it is backed
-up but not at the configured target parent. `deferred` means new upload dispatch
-waits for a transfer window; it is not a failure. When a window is configured the
-line also reports its timezone, bounds, open/closed state, `next_opening`,
-`deferral_reason` and the next scheduled wake. `--json` carries the full status
-object, including the finite `capture_date` capability. `doctor` reports the same
-capability per account as `capture_date=metadata_not_supported` or
+`albums_active`, `albums_inaccessible` and total `excluded` media counts, then the
+`favorites_mode` setting and `favorites_desired`, `favorites_applied`,
+`favorites_pending`, `favorites_failed`, `favorites_uncertain` and
+`favorites_unknown` counters. `existing` means a verified copy was reused from
+elsewhere in the same Amazon account; it is backed up but not at the configured
+target parent. `deferred` means new upload dispatch waits for a transfer window;
+it is not a failure. When a window is configured the line also reports its
+timezone, bounds, open/closed state, `next_opening`, `deferral_reason` and the
+next scheduled wake. `--json` carries the full status object, including
+per-reason `exclusions`, the favorites counters and the finite `capture_date`
+capability. `doctor` reports the same capability per account as
+`capture_date=metadata_not_supported` or
 `capture_date=supported`; it is a static property of the pinned SDK, not a write
 test.
 

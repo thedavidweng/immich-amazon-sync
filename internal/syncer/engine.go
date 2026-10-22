@@ -5,18 +5,20 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/thedavidweng/immich-amazon-sync/internal/bridge"
 	"github.com/thedavidweng/immich-amazon-sync/internal/direct"
+	"github.com/thedavidweng/immich-amazon-sync/internal/filter"
 )
 
 type Options struct {
 	AccountID       string
 	AlbumIDs        []string
 	Library         bool
-	IncludeVideos   bool
+	Filters         filter.Policy
 	AlbumSyncMode   bridge.AlbumSyncMode
 	Deletions       bool
 	Favorites       string
@@ -57,6 +59,7 @@ type Status struct {
 	Failed                  int            `json:"failed"`
 	Blocked                 int            `json:"blocked"`
 	Skipped                 int            `json:"skipped"`
+	Exclusions              map[string]int `json:"exclusions"`
 	Deferred                int            `json:"deferred"`
 	Existing                int            `json:"existing"`
 	DeletePending           int            `json:"deletion_pending"`
@@ -150,6 +153,10 @@ func New(store *Store, source bridge.Source, target bridge.Target, opts Options)
 		opts.Now = time.Now
 	}
 	opts.AlbumIDs = append([]string(nil), opts.AlbumIDs...)
+	opts.Filters = opts.Filters.Normalize()
+	if err := opts.Filters.Validate(); err != nil {
+		return nil, errors.New("invalid_options")
+	}
 	directSet, err := direct.New(opts.DirectRoots)
 	if err != nil {
 		return nil, err
@@ -228,7 +235,7 @@ func (e *Engine) Retry(ctx context.Context) error {
 }
 
 func (e *Engine) summary(ctx context.Context) (Status, error) {
-	st := Status{Errors: map[string]int{}, BytesPerSecond: e.opts.BytesPerSecond}
+	st := Status{Errors: map[string]int{}, Exclusions: map[string]int{}, BytesPerSecond: e.opts.BytesPerSecond}
 	var reason, code string
 	var last *string
 	err := e.store.db.QueryRowContext(ctx, "SELECT pause_reason,last_success,error_code FROM accounts WHERE id=?",
@@ -303,6 +310,22 @@ func (e *Engine) summary(ctx context.Context) (Status, error) {
 		Scan(&st.FavoritesDesired, &st.FavoritesPending, &st.FavoritesApplied,
 			&st.FavoritesFailed, &st.FavoritesUncertain, &st.FavoritesUnknown)
 	if err != nil {
+		return st, errors.New("storage_unavailable")
+	}
+	rows, err = e.store.db.QueryContext(ctx, `SELECT exclusion,count(*) FROM assets
+		WHERE account_id=? AND state='skipped' AND exclusion!='' GROUP BY exclusion`, e.opts.AccountID)
+	if err != nil {
+		return st, errors.New("storage_unavailable")
+	}
+	for rows.Next() {
+		var reason string
+		var count int
+		if err = rows.Scan(&reason, &count); err != nil {
+			break
+		}
+		st.Exclusions[reason] += count
+	}
+	if err = errors.Join(err, rows.Err(), rows.Close()); err != nil {
 		return st, errors.New("storage_unavailable")
 	}
 	return st, nil
@@ -519,6 +542,45 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 	return e.run(ctx, false, true)
 }
 
+// reconcileFilterPolicy requeues Assets excluded by a previous policy when the
+// effective rules change. It reads only the durable ledger; no source rescan is
+// required, and confirmed or Existing mappings are never touched.
+func (e *Engine) reconcileFilterPolicy(ctx context.Context) error {
+	fingerprint := e.opts.Filters.Fingerprint()
+	var stored string
+	if err := e.store.db.QueryRowContext(ctx, "SELECT filter_fingerprint FROM accounts WHERE id=?",
+		e.opts.AccountID).Scan(&stored); err != nil {
+		return errors.New("storage_unavailable")
+	}
+	if stored == fingerprint {
+		return nil
+	}
+	tx, err := e.store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return errors.New("storage_unavailable")
+	}
+	defer func() { _ = tx.Rollback() }()
+	reasons := filter.AllReasons()
+	args := []any{e.opts.AccountID}
+	for _, reason := range reasons {
+		args = append(args, reason)
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE assets SET state='pending',exclusion='',error_code='',
+		attempts=0,next_at=0 WHERE account_id=? AND state='skipped' AND exclusion IN (?`+
+		strings.Repeat(",?", len(reasons)-1)+`)`, args...)
+	if err != nil {
+		return errors.New("storage_unavailable")
+	}
+	if _, err = tx.ExecContext(ctx, "UPDATE accounts SET filter_fingerprint=? WHERE id=?",
+		fingerprint, e.opts.AccountID); err != nil {
+		return errors.New("storage_unavailable")
+	}
+	if err = tx.Commit(); err != nil {
+		return errors.New("storage_unavailable")
+	}
+	return nil
+}
+
 func (e *Engine) run(ctx context.Context, full, incremental bool) error {
 	run, _ := e.store.runs.LoadOrStore(e.opts.AccountID, &sync.Mutex{})
 	if !run.(*sync.Mutex).TryLock() {
@@ -545,6 +607,9 @@ func (e *Engine) run(ctx context.Context, full, incremental bool) error {
 	}
 	if err = e.configureRules(ctx, full); err != nil {
 		return errors.New("storage_unavailable")
+	}
+	if err = e.reconcileFilterPolicy(ctx); err != nil {
+		return err
 	}
 	if !e.opts.Deletions {
 		if err = e.withdrawDeletions(ctx); err != nil {
