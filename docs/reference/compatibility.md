@@ -91,6 +91,29 @@ an offline contract.
 Original bytes are the backup contract. There is no quality selector, Storage
 Saver simulation or recompression path.
 
+## Schema and upgrade
+
+The ledger schema is versioned with SQLite `user_version`. This head understands
+versions 1 through 10 and refuses every other value — a newer volume opened by an
+older binary, or an out-of-range header value — with the finite
+`unsupported_schema` code and storage exit 4. A refused open does not rewrite the
+version or migrate partially; restore the matching image and backup instead of
+editing SQLite by hand. Each step is one transaction and only adds state:
+1→2 durable hints, incremental progress and album relationships; 3→4 album
+origin/discovery columns; 4→5 managed Workflow ownership; 5→6 favorite state;
+6→7 explicit filter exclusions; 7→8 the usage observation; 8→9 the favorite
+drift audit; 9→10 the Live Photo pair ledger and applied per-account mode.
+
+Offline tests upgrade the deployed version-3 schema and every checked-in fixture
+(`v1`, `v3`–`v9`). They assert that confirmed and Existing mappings, account
+identity, rules and scan cursors, album ownership and memberships, deletion
+states, staging references and unconfirmed intents survive, while favorite,
+Live Photo pair, album-mirroring, transfer-window, usage-hold, managed Workflow
+and direct-read scope stay off. The container smoke repeats the version-3
+migration and the future-schema refusal on amd64 and arm64. Evidence grade:
+offline contract plus dual-architecture container smoke; no live account was
+upgraded outside disposable data.
+
 ## Immich contract
 
 Polling uses `/api/server/version`, `/api/users/me`, `/api/albums`,

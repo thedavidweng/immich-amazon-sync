@@ -83,6 +83,25 @@ and checksum, and falls back to the Immich API when the mount is absent. Path
 escapes and non-regular files fail closed. See
 [direct originals](docs/how-to/direct-originals.md).
 
+Eligibility filters are validated per account and default to today's behaviour:
+images only, archive included. Optional rules skip camera RAW, originals above a
+byte limit, excluded tags and archived media. Every rejection is a durable,
+reevaluable exclusion rather than a permanent state, so a policy, tag or album
+change requeues the asset without a full rescan. Filters never delete media,
+remove an album relation or authorize trash. See
+[eligibility filters](docs/reference/configuration.md#eligibility-filters).
+
+Managed Workflow onboarding is a separate per-account opt-in with its own Immich
+credential. Without it, native Workflow hints stay manual and polling continues.
+When enabled, the service creates, verifies, updates and removes only the single
+Workflow it owns, and falls back to polling with a finite notice on Immich v2 or
+missing grants. See [managed Workflows](docs/how-to/managed-workflows.md).
+
+Optional Prometheus `/metrics` and `/status` share the private listener, are off
+by default and are loopback-only or bearer-token gated. Per-account retry tuning
+is bounded and never authorizes replaying an unconfirmed write. See
+[status and metrics](docs/reference/status.md).
+
 ## Compose quickstart
 
 Requires Docker Engine with Compose v2+ and buildx, on Linux amd64 or arm64.
@@ -142,6 +161,9 @@ Do not expose the dashboard publicly; publish only on host loopback.
 | Look up JSON fields and environment variables | [Configuration](docs/reference/configuration.md) |
 | Look up CLI, exits and health behavior | [CLI](docs/reference/cli.md) |
 | Set up trusted event hints and incremental polling | [Event hints](docs/how-to/event-hints.md) |
+| Onboard native Workflow hints | [Managed Workflows](docs/how-to/managed-workflows.md) |
+| Choose what is eligible for backup | [Eligibility filters](docs/reference/configuration.md#eligibility-filters) |
+| Expose optional metrics or tune retries | [Status and metrics](docs/reference/status.md) |
 | Understand managed album membership and uncertainty | [Managed albums](docs/how-to/managed-albums.md) |
 | Interpret progress counters and scheduling | [Status](docs/reference/status.md) |
 | Assess versions, regions and media limitations | [Compatibility evidence](docs/reference/compatibility.md) |
