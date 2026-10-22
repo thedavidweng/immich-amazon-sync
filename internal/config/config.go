@@ -52,6 +52,13 @@ type Account struct {
 	// requires DeletionConfirmation to equal DeletionConfirmationPhrase.
 	Deletions            bool   `json:"deletions"`
 	DeletionConfirmation string `json:"deletions_confirmation,omitempty"`
+	// ManagedWorkflow opts in to creating one owned native Immich Workflow with
+	// a separate write credential and a generated bearer secret. It never
+	// replaces periodic polling.
+	ManagedWorkflow     bool   `json:"managed_workflow"`
+	WorkflowAPIKeyFile  string `json:"immich_workflow_api_key_file,omitempty"`
+	WorkflowCallbackURL string `json:"workflow_callback_url,omitempty"`
+	WorkflowSecretFile  string `json:"workflow_secret_file,omitempty"`
 	// TransferWindow restricts new outbound uploads to a daily local-time
 	// window. Absent means transfers are always allowed.
 	TransferWindow *TransferWindow `json:"transfer_window,omitempty"`
@@ -132,15 +139,27 @@ func Load(path string) (Config, error) {
 		if err != nil {
 			return cfg, errors.New("library_invalid")
 		}
+		managedWorkflow := false
+		if value := os.Getenv("MANAGED_WORKFLOW"); value != "" {
+			var err error
+			managedWorkflow, err = strconv.ParseBool(value)
+			if err != nil {
+				return cfg, errors.New("managed_workflow_invalid")
+			}
+		}
 		cfg.Accounts = []Account{{
 			ID: "default", ImmichURL: os.Getenv("IMMICH_URL"),
 			APIKeyFile: os.Getenv("IMMICH_API_KEY_FILE"), apiKey: os.Getenv("IMMICH_API_KEY"),
 			AmazonRegion: os.Getenv("AMAZON_REGION"),
 			CookieFile:   os.Getenv("AMAZON_COOKIE_FILE"), cookie: os.Getenv("AMAZON_COOKIE"),
-			AlbumIDs:      splitIDs(os.Getenv("ALBUM_IDS")),
-			Library:       library,
-			AlbumSyncMode: os.Getenv("ALBUM_SYNC_MODE"),
-			IncludeVideos: includeVideos,
+			AlbumIDs:            splitIDs(os.Getenv("ALBUM_IDS")),
+			Library:             library,
+			AlbumSyncMode:       os.Getenv("ALBUM_SYNC_MODE"),
+			IncludeVideos:       includeVideos,
+			ManagedWorkflow:     managedWorkflow,
+			WorkflowAPIKeyFile:  os.Getenv("IMMICH_WORKFLOW_API_KEY_FILE"),
+			WorkflowCallbackURL: os.Getenv("WORKFLOW_CALLBACK_URL"),
+			WorkflowSecretFile:  os.Getenv("WORKFLOW_SECRET_FILE"),
 			TransferWindow: environmentWindow(os.Getenv("TRANSFER_TIMEZONE"),
 				os.Getenv("TRANSFER_WINDOW_START"), os.Getenv("TRANSFER_WINDOW_END")),
 		}}
@@ -281,6 +300,19 @@ func (c Config) Validate() error {
 		if account.Deletions && account.DeletionConfirmation != DeletionConfirmationPhrase {
 			return errors.New("deletion_confirmation_required")
 		}
+		if account.WorkflowAPIKeyFile != "" && account.WorkflowAPIKeyFile == account.APIKeyFile {
+			return errors.New("workflow_credentials_conflict")
+		}
+		if account.WorkflowCallbackURL != "" {
+			if err := validateCallback(account.WorkflowCallbackURL, account.ID); err != nil {
+				return err
+			}
+		}
+		if account.ManagedWorkflow {
+			if account.WorkflowAPIKeyFile == "" || account.WorkflowSecretFile == "" || account.WorkflowCallbackURL == "" {
+				return errors.New("workflow_configuration_required")
+			}
+		}
 		if err := account.TransferWindow.validate(); err != nil {
 			return err
 		}
@@ -307,6 +339,31 @@ func ReadSecret(path string) (string, error) {
 		return "", errors.New("secret_invalid")
 	}
 	return strings.TrimSpace(string(b)), nil
+}
+
+// WorkflowKey reads the separately authorized Workflow credential.
+func (a Account) WorkflowKey() (string, error) {
+	if a.WorkflowAPIKeyFile == "" {
+		return "", errors.New("workflow_configuration_required")
+	}
+	return ReadSecret(a.WorkflowAPIKeyFile)
+}
+
+// validateCallback accepts only a plain HTTP(S) URL that ends in this account's
+// event endpoint, so a generated workflow can never post events elsewhere.
+func validateCallback(value, accountID string) error {
+	u, err := url.Parse(value)
+	if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") ||
+		u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" ||
+		u.RawFragment != "" || u.RawPath != "" || !strings.HasSuffix(u.Path, "/events/"+accountID) {
+		return errors.New("workflow_callback_url_invalid")
+	}
+	for _, segment := range strings.Split(u.Path, "/") {
+		if segment == "." || segment == ".." {
+			return errors.New("workflow_callback_url_invalid")
+		}
+	}
+	return nil
 }
 
 func (a Account) Secrets() (Secrets, error) {

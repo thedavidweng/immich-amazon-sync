@@ -13,3 +13,5 @@
 | Reconcile | Read source or destination state to recover missed or uncertain work. |
 | Backfill | Low-priority discovery of historical source assets. |
 | Membership | A relationship between an album and a media node, separate from media. |
+| Managed Workflow | The single native Immich Workflow this service creates, verifies, rotates and removes for an opted-in account, using a separate credential file and its own generated bearer secret. |
+| Polling notice | A finite capability code (`workflow_version_unsupported`, `workflow_permission_missing`, `workflow_trigger_unsupported`) recorded while periodic reconciliation continues. |

@@ -96,10 +96,14 @@ against the configured source scope. See [event HTTP reference](events.md).
 Acceptance is covered by offline contracts, not a real Immich Workflow run.
 
 Events provide acceleration hints. There is no established upstream durable
-acknowledgment/replay guarantee or album-membership event. Registration is manual;
-the service does not create Workflows through its read-only Source seam. Keep
-the polling key read-only and [configure the native step](../how-to/event-hints.md)
-separately. Polling remains necessary. Owned album mapping and bounded relation
+acknowledgment/replay guarantee or album-membership event. Registration can stay
+manual; the read-only Source seam never writes. The optional
+[managed onboarding](../how-to/managed-workflows.md) uses a separate credential
+and only the pinned v3.3.4 endpoints, `/api-keys/me` and `/workflows/triggers`
+for capability detection; `PUT /workflows/{id}` is the documented update
+operation even though upstream marks it deprecated in favour of an undocumented
+`PATCH`. Immich v2 and missing grants fall back to polling with a notice. Keep
+the polling key read-only. Polling remains necessary. Owned album mapping and bounded relation
 reconciliation are implemented with offline tests; real Amazon album behavior
 and regional writes remain unverified.
 

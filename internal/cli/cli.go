@@ -172,6 +172,7 @@ func Execute(ctx context.Context, args []string, out, errOut io.Writer, version 
 		},
 	})
 	root.AddCommand(deletions)
+	addWorkflowCommands(root, load, out, func() string { return accountID }, func() bool { return asJSON })
 	if err := root.ExecuteContext(ctx); err != nil {
 		if errors.Is(err, versionPrinted) {
 			return 0
@@ -237,6 +238,11 @@ func printReport(out io.Writer, report service.Report, asJSON bool) error {
 		if _, err := fmt.Fprintln(out); err != nil {
 			return outputError(err)
 		}
+		if account.Status.Workflow != "" {
+			if _, err := fmt.Fprintf(out, "  workflow=%s code=%s\n", account.Status.Workflow, orNone(account.Status.WorkflowCode)); err != nil {
+				return outputError(err)
+			}
+		}
 	}
 	return nil
 }
@@ -267,9 +273,10 @@ func printDiagnosis(out io.Writer, report service.DoctorReport, asJSON bool) err
 		return outputError(err)
 	}
 	for _, account := range report.Accounts {
-		if _, err := fmt.Fprintf(out, "%s version=%s region=%s evidence=%s target_writes=%s original_read=%s direct_roots=%d/%d capture_date=%s\n",
+		if _, err := fmt.Fprintf(out, "%s version=%s region=%s evidence=%s target_writes=%s original_read=%s workflow=%s direct_roots=%d/%d capture_date=%s\n",
 			account.Account, account.Version, account.Region, account.Evidence, account.TargetWrites,
-			account.OriginalRead, account.DirectRoots.Available, account.DirectRoots.Configured,
+			account.OriginalRead, orNone(account.Workflow),
+			account.DirectRoots.Available, account.DirectRoots.Configured,
 			account.CaptureDate); err != nil {
 			return outputError(err)
 		}

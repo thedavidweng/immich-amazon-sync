@@ -13,9 +13,13 @@ Permissions do not bypass sharing or ownership restrictions. A key with
 
 Workflow setup is optional and version-dependent. Polling requires no write or
 workflow scopes. Manual workflow creation in Immich can keep this service's
-API key read-only. See [compatibility](../reference/compatibility.md).
-Native Workflow setup uses a separate bearer-secret file; follow
-[event hints](event-hints.md) for mounting, rotation and private reachability.
+API key read-only. Managed onboarding needs a second mounted key holding only
+`workflow.read`, `workflow.create`, `workflow.update` and `workflow.delete`
+(plus `workflow.logs` for read-only run diagnostics); never reuse the polling
+key file. The service generates its own bearer secret into a separate `0600`
+file. See [managed Workflow onboarding](managed-workflows.md), the manual
+[event hints](event-hints.md) path and
+[compatibility](../reference/compatibility.md).
 
 ## Amazon
 

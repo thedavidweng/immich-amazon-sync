@@ -11,6 +11,11 @@ immich-amazon-sync [--config PATH] [--account ID] [--json] COMMAND
 | `sync once` | Start/resume a bounded explicit full-scan pass; can write media, managed membership and -- only when explicitly enabled -- Amazon trashing. |
 | `deletions plan` | Read-only manifest of assets pending deletion propagation: count, synced total, blocked reason and asset IDs. Changes nothing. |
 | `albums list` | Read accessible source album IDs, names and counts. |
+| `workflow status` | Read-only persisted managed-Workflow state, contract and finite code; no remote calls. |
+| `workflow register` | Read-only capability, ownership and action plan for the owned Workflow. |
+| `workflow register --apply` | Create/adopt/verify/update only the persisted owned Workflow; `--force` re-probes after a polling notice. |
+| `workflow remove --apply` | Delete only the owned Workflow when `managed_workflow` is disabled. |
+| `workflow logs` | Read-only aggregate Workflow run counts and latest run time; no IDs, URLs or payloads. |
 | `doctor` | Read-only remote diagnostics and local storage checks; reports `direct_roots=<available>/<configured>` without printing a path; no upload or album creation. |
 | `version` | Print the build version without credentials or config. |
 | `--help`, `doctor --help`, `--version` | Work without configuration or network access. |
@@ -85,3 +90,10 @@ Optional HTML routes and form fields are documented in
 Event HTTP statuses are distinct from CLI exits: `invalid_event` maps to exit 2,
 `webhook_unauthorized` to 3, and `album_unconfirmed`, `membership_guard` and
 `webhook_unavailable` to 1 when reported through CLI diagnostics.
+
+Workflow commands never print the callback URL, bearer secret or workflow UUID.
+`workflow_not_configured`, `workflow_management_active` and
+`workflow_configuration_required` exit 2; `workflow_secret_unavailable` exits 3;
+`workflow_not_owned`, `workflow_ambiguous`, `workflow_unconfirmed`,
+`workflow_mismatch` and `workflow_cleanup_failed` exit 1. See
+[managed Workflow onboarding](../how-to/managed-workflows.md).

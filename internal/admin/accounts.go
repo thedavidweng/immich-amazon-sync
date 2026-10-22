@@ -22,6 +22,7 @@ type overview struct {
 	CSRF     string
 	Writable bool
 	Accounts []accountView
+	Orphans  []WorkflowOrphan
 }
 
 type editor struct {
@@ -84,6 +85,10 @@ func formAccount(r *http.Request) config.Account {
 		AlbumSyncMode:        r.PostForm.Get("album_sync_mode"),
 		Deletions:            r.PostForm.Get("deletions") == "on",
 		DeletionConfirmation: r.PostForm.Get("deletions_confirmation"),
+		ManagedWorkflow:      r.PostForm.Get("managed_workflow") == "on",
+		WorkflowAPIKeyFile:   r.PostForm.Get("workflow_key_file"),
+		WorkflowCallbackURL:  r.PostForm.Get("workflow_callback_url"),
+		WorkflowSecretFile:   r.PostForm.Get("workflow_secret_file"),
 		TransferWindow:       transferWindow,
 	}
 }

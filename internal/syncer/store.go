@@ -200,20 +200,29 @@ func (s *Store) migrate() error {
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 4 {
+	if version > 5 {
 		return errors.New("unsupported_schema")
 	}
-	if version == 4 {
+	if version == 5 {
 		return nil
 	}
+	if version == 4 {
+		return s.migrateP4()
+	}
 	if version == 3 {
-		return s.migrateP3()
+		if err := s.migrateP3(); err != nil {
+			return err
+		}
+		return s.migrateP4()
 	}
 	if version == 2 {
 		if err := s.migrateP2(); err != nil {
 			return err
 		}
-		return s.migrateP3()
+		if err := s.migrateP3(); err != nil {
+			return err
+		}
+		return s.migrateP4()
 	}
 	if version == 1 {
 		if err := s.migrateP1(); err != nil {
@@ -222,7 +231,10 @@ func (s *Store) migrate() error {
 		if err := s.migrateP2(); err != nil {
 			return err
 		}
-		return s.migrateP3()
+		if err := s.migrateP3(); err != nil {
+			return err
+		}
+		return s.migrateP4()
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -295,7 +307,10 @@ func (s *Store) migrate() error {
 	if err := s.migrateP2(); err != nil {
 		return err
 	}
-	return s.migrateP3()
+	if err := s.migrateP3(); err != nil {
+		return err
+	}
+	return s.migrateP4()
 }
 
 // migrateP3 records how each album rule came into scope. Explicit rules are
@@ -377,6 +392,31 @@ func (s *Store) migrateP2() error {
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.Exec(`ALTER TABLE assets ADD COLUMN prior_state TEXT NOT NULL DEFAULT '';
 	PRAGMA user_version=3;`)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// migrateP4 adds the single durable row that records the owned Immich Workflow.
+// Purely additive: existing mappings, cursors, deletion states and staging
+// references are untouched, and no account gains workflow scope by migration.
+func (s *Store) migrateP4() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(`CREATE TABLE workflows (
+		account_id TEXT PRIMARY KEY REFERENCES accounts(id),
+		workflow_id TEXT NOT NULL DEFAULT '',
+		contract TEXT NOT NULL DEFAULT '',
+		state TEXT NOT NULL DEFAULT '',
+		error_code TEXT NOT NULL DEFAULT '',
+		desired_hash TEXT NOT NULL DEFAULT '',
+		attempts INTEGER NOT NULL DEFAULT 0,
+		updated_at TEXT NOT NULL DEFAULT '');
+	PRAGMA user_version=5;`)
 	if err != nil {
 		return err
 	}

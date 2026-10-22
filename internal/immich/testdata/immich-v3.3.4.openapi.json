@@ -16,7 +16,7 @@
     "commit": "69e0cb8606137c4f8dc0e7207a672ff8be39f358",
     "url": "https://raw.githubusercontent.com/immich-app/immich/69e0cb8606137c4f8dc0e7207a672ff8be39f358/open-api/immich-openapi-specs.json",
     "sha256": "4fcfea46d57553d0c1bff3093fbc7257f81f250267f0c2368933497daaabcf3a",
-    "extraction": "Seven consumed operations with unchanged transitive schema definitions."
+    "extraction": "Seven polling operations plus the api-keys/me and Workflow operations consumed by the optional managed-workflow capability, with unchanged transitive schema definitions."
   },
   "paths": {
     "/server/version": {
@@ -526,6 +526,500 @@
         ],
         "x-immich-permission": "asset.read",
         "x-immich-state": "Stable"
+      }
+    },
+    "/api-keys/me": {
+      "get": {
+        "description": "Retrieve the API key that is used to access this endpoint.",
+        "operationId": "getMyApiKey",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Retrieve the current API key",
+        "tags": [
+          "API keys"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v1",
+            "state": "Added"
+          },
+          {
+            "version": "v1",
+            "state": "Beta"
+          },
+          {
+            "version": "v2",
+            "state": "Stable"
+          }
+        ],
+        "x-immich-state": "Stable"
+      }
+    },
+    "/workflows": {
+      "get": {
+        "description": "Retrieve a list of workflows available to the authenticated user.",
+        "operationId": "searchWorkflows",
+        "parameters": [
+          {
+            "name": "description",
+            "required": false,
+            "in": "query",
+            "description": "Workflow description",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "enabled",
+            "required": false,
+            "in": "query",
+            "description": "Workflow enabled",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "id",
+            "required": false,
+            "in": "query",
+            "description": "Workflow ID",
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          },
+          {
+            "name": "logging",
+            "required": false,
+            "in": "query",
+            "description": "Workflow logs run results",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "name",
+            "required": false,
+            "in": "query",
+            "description": "Workflow name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "trigger",
+            "required": false,
+            "in": "query",
+            "description": "Workflow trigger type",
+            "schema": {
+              "$ref": "#/components/schemas/WorkflowTrigger"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WorkflowResponseDto"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "List all workflows",
+        "tags": [
+          "Workflows"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          }
+        ],
+        "x-immich-permission": "workflow.read"
+      },
+      "post": {
+        "description": "Create a new workflow, the workflow can also be created with empty filters and actions.",
+        "operationId": "createWorkflow",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowCreateDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Create a workflow",
+        "tags": [
+          "Workflows"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          }
+        ],
+        "x-immich-permission": "workflow.create"
+      }
+    },
+    "/workflows/triggers": {
+      "get": {
+        "description": "Retrieve a list of all available workflow triggers.",
+        "operationId": "getWorkflowTriggers",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WorkflowTriggerResponseDto"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "List all workflow triggers",
+        "tags": [
+          "Workflows"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          }
+        ]
+      }
+    },
+    "/workflows/{id}": {
+      "delete": {
+        "description": "Delete a workflow by its ID.",
+        "operationId": "deleteWorkflow",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Delete a workflow",
+        "tags": [
+          "Workflows"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          }
+        ],
+        "x-immich-permission": "workflow.delete"
+      },
+      "get": {
+        "description": "Retrieve information about a specific workflow by its ID.",
+        "operationId": "getWorkflow",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Retrieve a workflow",
+        "tags": [
+          "Workflows"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          }
+        ],
+        "x-immich-permission": "workflow.read"
+      },
+      "put": {
+        "deprecated": true,
+        "description": "Update the information of a specific workflow by its ID. This endpoint can be used to update the workflow name, description, trigger type, filters and actions order, etc.",
+        "operationId": "updateWorkflow",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowUpdateDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Update a workflow",
+        "tags": [
+          "Workflows",
+          "Deprecated"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          },
+          {
+            "version": "v3",
+            "state": "Deprecated",
+            "replacementId": "updateWorkflow"
+          }
+        ],
+        "x-immich-permission": "workflow.update",
+        "x-immich-state": "Deprecated"
+      }
+    },
+    "/workflows/{id}/logs": {
+      "get": {
+        "description": "Retrieve logs of a workflows runs by ID",
+        "operationId": "getWorkflowLogs",
+        "parameters": [
+          {
+            "name": "before",
+            "required": false,
+            "in": "query",
+            "description": "Filter by runs before a date/time",
+            "schema": {
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+              "example": "2024-01-01T00:00:00.000Z",
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "description": "Maximum number of logs",
+            "schema": {
+              "maximum": 9007199254740991,
+              "exclusiveMinimum": true,
+              "default": 50,
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "result",
+            "required": false,
+            "in": "query",
+            "description": "Filter by run result",
+            "schema": {
+              "$ref": "#/components/schemas/WorkflowResult"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WorkflowLogEntryDto"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Retrieve workflow logs",
+        "tags": [
+          "Workflows"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          }
+        ],
+        "x-immich-permission": "workflow.logs"
       }
     }
   },
@@ -3307,6 +3801,472 @@
           "nextPage",
           "total"
         ],
+        "type": "object"
+      },
+      "ApiKeyResponseDto": {
+        "properties": {
+          "createdAt": {
+            "description": "Creation date",
+            "example": "2024-01-01T00:00:00.000Z",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          },
+          "id": {
+            "description": "API key ID",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+            "type": "string"
+          },
+          "name": {
+            "description": "API key name",
+            "type": "string"
+          },
+          "permissions": {
+            "description": "List of permissions",
+            "items": {
+              "$ref": "#/components/schemas/Permission"
+            },
+            "type": "array"
+          },
+          "updatedAt": {
+            "description": "Last update date",
+            "example": "2024-01-01T00:00:00.000Z",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "createdAt",
+          "id",
+          "name",
+          "permissions",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "Permission": {
+        "description": "List of permissions",
+        "enum": [
+          "all",
+          "activity.create",
+          "activity.read",
+          "activity.update",
+          "activity.delete",
+          "activity.statistics",
+          "apiKey.create",
+          "apiKey.read",
+          "apiKey.update",
+          "apiKey.delete",
+          "apiKey.rotate",
+          "asset.read",
+          "asset.update",
+          "asset.delete",
+          "asset.statistics",
+          "asset.share",
+          "asset.view",
+          "asset.download",
+          "asset.upload",
+          "asset.copy",
+          "asset.derive",
+          "assetFile.read",
+          "assetFile.delete",
+          "assetFile.download",
+          "asset.edit.get",
+          "asset.edit.create",
+          "asset.edit.delete",
+          "album.create",
+          "album.read",
+          "album.update",
+          "album.delete",
+          "album.statistics",
+          "album.share",
+          "album.download",
+          "albumAsset.create",
+          "albumAsset.delete",
+          "albumUser.create",
+          "albumUser.update",
+          "albumUser.delete",
+          "auth.changePassword",
+          "authDevice.delete",
+          "archive.read",
+          "backup.list",
+          "backup.download",
+          "backup.upload",
+          "backup.delete",
+          "clusterGroup.read",
+          "clusterGroup.leave",
+          "clusterGroupRequest.create",
+          "clusterGroupRequest.read",
+          "clusterGroupRequest.delete",
+          "adminConfig.read",
+          "adminConfig.update",
+          "userConfig.read",
+          "duplicate.read",
+          "duplicate.delete",
+          "face.create",
+          "face.read",
+          "face.update",
+          "face.delete",
+          "folder.read",
+          "job.create",
+          "job.read",
+          "library.create",
+          "library.read",
+          "library.update",
+          "library.delete",
+          "library.statistics",
+          "timeline.read",
+          "timeline.download",
+          "maintenance",
+          "map.read",
+          "map.search",
+          "memory.create",
+          "memory.read",
+          "memory.update",
+          "memory.delete",
+          "memory.statistics",
+          "memoryAsset.create",
+          "memoryAsset.delete",
+          "notification.create",
+          "notification.read",
+          "notification.update",
+          "notification.delete",
+          "partner.create",
+          "partner.read",
+          "partner.update",
+          "partner.delete",
+          "person.create",
+          "person.read",
+          "person.update",
+          "person.delete",
+          "person.statistics",
+          "person.merge",
+          "person.reassign",
+          "pinCode.create",
+          "pinCode.update",
+          "pinCode.delete",
+          "plugin.create",
+          "plugin.read",
+          "plugin.update",
+          "plugin.delete",
+          "server.about",
+          "server.apkLinks",
+          "server.storage",
+          "server.statistics",
+          "server.versionCheck",
+          "serverLicense.read",
+          "serverLicense.update",
+          "serverLicense.delete",
+          "session.create",
+          "session.read",
+          "session.update",
+          "session.delete",
+          "session.lock",
+          "sharedLink.create",
+          "sharedLink.read",
+          "sharedLink.update",
+          "sharedLink.delete",
+          "stack.create",
+          "stack.read",
+          "stack.update",
+          "stack.delete",
+          "sync.stream",
+          "syncCheckpoint.read",
+          "syncCheckpoint.update",
+          "syncCheckpoint.delete",
+          "systemConfig.read",
+          "systemConfig.update",
+          "systemMetadata.read",
+          "systemMetadata.update",
+          "tag.create",
+          "tag.read",
+          "tag.update",
+          "tag.delete",
+          "tag.asset",
+          "user.read",
+          "user.update",
+          "userLicense.create",
+          "userLicense.read",
+          "userLicense.update",
+          "userLicense.delete",
+          "userOnboarding.read",
+          "userOnboarding.update",
+          "userOnboarding.delete",
+          "userPreference.read",
+          "userPreference.update",
+          "userProfileImage.create",
+          "userProfileImage.read",
+          "userProfileImage.update",
+          "userProfileImage.delete",
+          "queue.read",
+          "queue.update",
+          "queueJob.create",
+          "queueJob.read",
+          "queueJob.update",
+          "queueJob.delete",
+          "workflow.create",
+          "workflow.read",
+          "workflow.update",
+          "workflow.delete",
+          "workflow.logs",
+          "adminUser.create",
+          "adminUser.read",
+          "adminUser.update",
+          "adminUser.delete",
+          "adminSession.read",
+          "adminAuth.unlinkAll"
+        ],
+        "type": "string"
+      },
+      "WorkflowCreateDto": {
+        "properties": {
+          "description": {
+            "description": "Workflow description",
+            "nullable": true,
+            "type": "string"
+          },
+          "enabled": {
+            "description": "Workflow enabled",
+            "type": "boolean"
+          },
+          "logging": {
+            "description": "Workflow logs run results",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "Workflow name",
+            "nullable": true,
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowStepDto"
+            },
+            "type": "array"
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/WorkflowTrigger",
+            "description": "Workflow trigger type"
+          }
+        },
+        "required": [
+          "trigger"
+        ],
+        "type": "object"
+      },
+      "WorkflowLogEntryDto": {
+        "properties": {
+          "at": {
+            "description": "Workflow run date/time",
+            "example": "2024-01-01T00:00:00.000Z",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          },
+          "id": {
+            "description": "Workflow log entry ID",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+            "type": "string"
+          },
+          "lastStep": {
+            "description": "Last step ran, if the workflow ended early",
+            "properties": {
+              "index": {
+                "description": "Index of the step in the workflow",
+                "exclusiveMinimum": true,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "method": {
+                "description": "Method of the step",
+                "type": "string"
+              }
+            },
+            "required": [
+              "method",
+              "index"
+            ],
+            "type": "object"
+          },
+          "result": {
+            "$ref": "#/components/schemas/WorkflowResult"
+          },
+          "triggerDataId": {
+            "description": "Workflow trigger data ID",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "at",
+          "id",
+          "result"
+        ],
+        "type": "object"
+      },
+      "WorkflowResponseDto": {
+        "properties": {
+          "createdAt": {
+            "description": "Creation date",
+            "type": "string"
+          },
+          "description": {
+            "description": "Workflow description",
+            "nullable": true,
+            "type": "string"
+          },
+          "enabled": {
+            "description": "Workflow enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "description": "Workflow ID",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+            "type": "string"
+          },
+          "logging": {
+            "description": "Workflow logs run results",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "Workflow name",
+            "nullable": true,
+            "type": "string"
+          },
+          "steps": {
+            "description": "Workflow steps",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowStepDto"
+            },
+            "type": "array"
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/WorkflowTrigger",
+            "description": "Workflow trigger type"
+          },
+          "updatedAt": {
+            "description": "Update date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "createdAt",
+          "description",
+          "enabled",
+          "id",
+          "logging",
+          "name",
+          "steps",
+          "trigger",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "WorkflowResult": {
+        "description": "Workflow run result",
+        "enum": [
+          "completed",
+          "halted",
+          "error"
+        ],
+        "type": "string"
+      },
+      "WorkflowStepDto": {
+        "properties": {
+          "config": {
+            "additionalProperties": {},
+            "description": "Step configuration",
+            "nullable": true,
+            "type": "object"
+          },
+          "enabled": {
+            "description": "Step is enabled",
+            "type": "boolean"
+          },
+          "method": {
+            "description": "Step plugin method",
+            "type": "string"
+          }
+        },
+        "required": [
+          "config",
+          "method"
+        ],
+        "type": "object"
+      },
+      "WorkflowTrigger": {
+        "description": "Plugin trigger type",
+        "enum": [
+          "AssetCreate",
+          "AssetMetadataExtraction",
+          "AssetTagged"
+        ],
+        "type": "string"
+      },
+      "WorkflowTriggerResponseDto": {
+        "properties": {
+          "trigger": {
+            "$ref": "#/components/schemas/WorkflowTrigger",
+            "description": "Trigger type"
+          },
+          "types": {
+            "description": "Workflow types",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowType"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "trigger",
+          "types"
+        ],
+        "type": "object"
+      },
+      "WorkflowType": {
+        "description": "Workflow type",
+        "enum": [
+          "AssetV1"
+        ],
+        "type": "string"
+      },
+      "WorkflowUpdateDto": {
+        "properties": {
+          "description": {
+            "description": "Workflow description",
+            "nullable": true,
+            "type": "string"
+          },
+          "enabled": {
+            "description": "Workflow enabled",
+            "type": "boolean"
+          },
+          "logging": {
+            "description": "Workflow logs run results",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "Workflow name",
+            "nullable": true,
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowStepDto"
+            },
+            "type": "array"
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/WorkflowTrigger",
+            "description": "Workflow trigger type"
+          }
+        },
         "type": "object"
       }
     }

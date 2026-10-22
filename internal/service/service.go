@@ -79,7 +79,7 @@ func Open(cfg config.Config, logOut io.Writer) (*Service, error) {
 	level := slog.LevelInfo
 	_ = level.UnmarshalText([]byte(cfg.LogLevel))
 	s := &Service{
-		cfg: cfg, store: store, mux: http.NewServeMux(),
+		cfg: cloneConfig(cfg), store: store, mux: http.NewServeMux(),
 		log:      slog.New(slog.NewJSONHandler(logOut, &slog.HandlerOptions{Level: level})),
 		accounts: make(map[string]*accountState), wake: make(chan struct{}, 1),
 	}
@@ -128,18 +128,20 @@ func (s *Service) Reload(cfg config.Config) error {
 		return err
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if cfg.DataDir != s.cfg.DataDir || cfg.Listen != s.cfg.Listen {
+		s.mu.Unlock()
 		return errors.New("restart_required")
 	}
-	previous := make(map[string]config.Account, len(s.cfg.Accounts))
-	for _, account := range s.cfg.Accounts {
+	previousAccounts := append([]config.Account(nil), s.cfg.Accounts...)
+	previous := make(map[string]config.Account, len(previousAccounts))
+	for _, account := range previousAccounts {
 		previous[account.ID] = account
 	}
 	current := make(map[string]config.Account, len(cfg.Accounts))
 	for _, account := range cfg.Accounts {
 		window, err := accountWindow(account)
 		if err != nil {
+			s.mu.Unlock()
 			return err
 		}
 		current[account.ID] = account
@@ -160,11 +162,15 @@ func (s *Service) Reload(cfg config.Config) error {
 		}
 		state.pending = true
 	}
-	s.cfg = cfg
+	s.cfg = cloneConfig(cfg)
 	select {
 	case s.wake <- struct{}{}:
 	default:
 	}
+	s.mu.Unlock()
+	// Best-effort cleanup of only owned workflows; failures stay visible in the
+	// ledger and the structured log.
+	s.cleanupDisabledWorkflows(previousAccounts, cfg)
 	return nil
 }
 
@@ -275,6 +281,21 @@ running:
 	return nil
 }
 
+// cloneConfig keeps the running configuration independent from the caller's
+// slice so later caller mutations cannot bypass Reload.
+func cloneConfig(cfg config.Config) config.Config {
+	cfg.Accounts = append([]config.Account(nil), cfg.Accounts...)
+	for i := range cfg.Accounts {
+		cfg.Accounts[i].AlbumIDs = append([]string(nil), cfg.Accounts[i].AlbumIDs...)
+		cfg.Accounts[i].DirectRoots = append([]config.DirectRoot(nil), cfg.Accounts[i].DirectRoots...)
+		if cfg.Accounts[i].TransferWindow != nil {
+			window := *cfg.Accounts[i].TransferWindow
+			cfg.Accounts[i].TransferWindow = &window
+		}
+	}
+	return cfg
+}
+
 func (s *Service) stateLocked(id string) *accountState {
 	state := s.accounts[id]
 	if state == nil {
@@ -367,6 +388,16 @@ func (s *Service) cycle(ctx context.Context, cfg config.Config, account config.A
 			result.Status = status
 		} else if err == nil {
 			err = statusErr
+		}
+	}
+	// A manual pause also pauses the optional write capability; auth pauses do
+	// not, because the workflow credential is independent.
+	if ctx.Err() == nil && result.Status.PauseReason != "manual" {
+		s.reconcileWorkflow(ctx, account)
+		if engine != nil {
+			if status, statusErr := engine.Status(ctx); statusErr == nil {
+				result.Status = status
+			}
 		}
 	}
 	// A cycle can defer retries; persisted failures still make sync once fail.

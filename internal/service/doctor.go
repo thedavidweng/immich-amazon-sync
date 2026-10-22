@@ -29,6 +29,7 @@ type AccountDiagnosis struct {
 	TargetWrites string      `json:"target_writes"`
 	OriginalRead string      `json:"original_read"`
 	CaptureDate  string      `json:"capture_date"`
+	Workflow     string      `json:"workflow,omitempty"`
 	DirectRoots  DirectRoots `json:"direct_roots"`
 	Checks       []Check     `json:"checks"`
 }
@@ -153,6 +154,26 @@ func diagnoseAccount(ctx context.Context, account config.Account) (AccountDiagno
 			}
 		}
 		record("amazon_read", err)
+	}
+	if account.WorkflowAPIKeyFile != "" {
+		key, err := account.WorkflowKey()
+		record("workflow_credentials", err)
+		if err == nil {
+			client, clientErr := immich.NewWorkflows(account.ImmichURL, key)
+			record("workflow_configuration", clientErr)
+			if clientErr == nil {
+				capability, capabilityErr := client.Capability(ctx)
+				record("workflow_capability", capabilityErr)
+				switch {
+				case capabilityErr != nil:
+					report.Workflow = Code(capabilityErr)
+				case capability.Supported:
+					report.Workflow = "managed"
+				default:
+					report.Workflow = capability.Reason
+				}
+			}
+		}
 	}
 	return report, errors.Join(errs...)
 }

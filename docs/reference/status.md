@@ -23,6 +23,8 @@ overview. There is no public JSON status endpoint.
 | `associations_unconfirmed` | Membership addition/removal intents requiring reconciliation. |
 | `events_pending` | Durable unresolved hints, including failed hints. |
 | `events_failed` | Hints with a recorded processing error. |
+| `workflow` | Managed Immich Workflow state: `active`, `polling`, `creating`, `unconfirmed`, `failed`, `cleanup_failed`, `removed` or `disabled`; omitted when never requested. |
+| `workflow_code` | Optional finite notice or failure for the workflow state, such as `workflow_version_unsupported`, `workflow_permission_missing`, `workflow_unconfirmed` or `workflow_cleanup_failed`. Omitted when healthy. |
 | `incremental_scanning` | A library delta scan is active. |
 | `last_incremental` | Completed library discovery watermark, or `null`; this is the scan-start boundary, not proof of transfer completion. |
 | `work_remaining` | Unpaused work other than window-blocked uploads is eligible for continuation now. False does not mean every job succeeded. |
@@ -33,8 +35,9 @@ overview. There is no public JSON status endpoint.
 | `direct` | Process-local read-only mount diagnostics: `reads`, `bytes_avoided`, per-reason `fallbacks` and fail-closed `failures`. Counters reset on restart and never contain a path. Zero everywhere when no `direct_roots` mapping is configured. |
 | `capture_date` | Capture-date write capability of the pinned target SDK. `metadata_not_supported` means the service cannot set a capture date remotely and does not claim that Immich-only date edits are mirrored; `supported` is reserved for a released SDK operation verified by an authoritative read-back. The field is always present and is never an implied success. |
 
-Counts such as pending, failed and unconfirmed album work overlap; do not add
-them to infer a total. Disabling album mirroring reports zero album/association
+A `polling` workflow state is a capability notice, not a media failure: periodic
+reconciliation is never disabled. Counts such as pending, failed and unconfirmed
+album work overlap; do not add them to infer a total. Disabling album mirroring reports zero album/association
 counts without deleting preserved state. No private asset IDs, filenames, paths,
 URLs or raw remote errors are included in these aggregates.
 
