@@ -11,14 +11,14 @@ tickets, is in [parity.md](parity.md).
 | Immich stable | `v3.3.4`, `69e0cb8606137c4f8dc0e7207a672ff8be39f358`, released October 20, 2026 | Official contract/source inspection and offline adapter fixtures; a live `ca` run used Immich `3.3.3`, not this pin. |
 | Immich comparison | `v2.0.0`, `e4234af3b3bd32f5dd12a2b0808158339deded43` | Offline owned-album/library contracts include timeline and archive; v2 shared albums are unsupported. Other v2/v3 releases are not individually verified. |
 | Immich main | `166e93559f123313cf9cb4e7324c4ee30e21c618`, OpenAPI says `3.3.0-rc.0` | Stale development metadata, not the stable release number or minimum supported version. |
-| aphotos SDK | `v0.1.4` | Released tag containing the corrections from SDK PR #13: strict list/final-status validation and typed transient Retry-After, retaining GetNode auth/rate-error preservation. |
+| aphotos SDK | `v0.1.5` | Released tag. Carries the `v0.1.4` corrections from SDK PR #13 (strict list/final-status validation, typed transient Retry-After, GetNode auth/rate-error preservation) plus tolerant video-bitrate decoding from SDK PR #15, without which a live video node failed to decode at all. |
 | Local runtime | Offline Go, CLI and container contracts plus one live `ca` acceptance run | Real Amazon upload, node re-read, album creation, membership, account-wide MD5 reuse and opt-in trash propagation verified once for one account and one Immich album; format playback, credential renewal and multi-account behavior remain unverified. |
 
 Primary sources: [stable release](https://github.com/immich-app/immich/releases/tag/v3.3.4),
 [stable OpenAPI](https://github.com/immich-app/immich/blob/69e0cb8606137c4f8dc0e7207a672ff8be39f358/open-api/immich-openapi-specs.json),
 [v2 OpenAPI](https://github.com/immich-app/immich/blob/e4234af3b3bd32f5dd12a2b0808158339deded43/open-api/immich-openapi-specs.json),
-[SDK GetNode](https://github.com/thedavidweng/amazon-photos/blob/v0.1.4/pkg/aphotos/account.go),
-[SDK v0.1.4](https://github.com/thedavidweng/amazon-photos/releases/tag/v0.1.4).
+[SDK GetNode](https://github.com/thedavidweng/amazon-photos/blob/v0.1.5/pkg/aphotos/account.go),
+[SDK v0.1.5](https://github.com/thedavidweng/amazon-photos/releases/tag/v0.1.5).
 The SDK pin is a released tag.
 The adapter owns the pinned offline contract check; CI runs it through
 `go test ./...`, without a second mutable upstream download.
@@ -65,7 +65,7 @@ whole-media deadline. Each post-upload metadata verification gets a fresh
 
 ## Storage usage and quota
 
-`aphotos v0.1.4` exposes `GetUsage`, whose categorized `billable`/`total`
+`aphotos v0.1.5` exposes `GetUsage`, whose categorized `billable`/`total`
 observations and `lastCalculated` are pinned by the offline fixture. It does not
 expose a subscription cap, remaining bytes or Prime eligibility. This service
 therefore reports observed `photo`, `video` and `other` usage (plus any
@@ -242,6 +242,55 @@ exercised with a 2-of-12 pass, so the absolute 500 limit stays offline-only; no
 hard delete (asset that never becomes trashed) and no large-library behaviour
 were observed; Amazon's trash retention window and permanent deletion were not
 exercised.
+
+### Parity feature live evidence (2026-10-22, `ca`)
+
+One real `ca` account ran every new remote capability of this release against a
+disposable Immich album holding synthetic samples: two generated PNGs, one
+generated MOV, and one linked still/MOV Live Photo pair. The account was not
+disposable; samples, the album and the workflow were created for this run and
+are removed or trashed afterwards. No personal media was uploaded.
+
+| Operation | Result |
+| --- | --- |
+| Categorized usage read | Observed photo `1061364657222` bytes / `122101` items and video `1669539224` billable bytes / `39` items with a provider `lastCalculated`; capacity and entitlement stayed `unknown`. |
+| Favorite read on an untouched node | `GET /nodes/{id}` returned **no `settings` object**. Treating that omission as unknown blocked every add-only star; the fix makes it an authoritative false. |
+| Favorite star | Applied through the SDK, then read back as `{"favorite": true}`. |
+| Unstar under `mirror` + `favorites_takeover` | Applied, then read back as `{"favorite": false}`. |
+| Manual star under `mirror` without takeover | `preserved`; no write was issued and the remote star stayed. |
+| Source unstar under `mirror` | The service cleared its own star and the remote value became `false`; a later source re-star was re-applied. |
+| Closed transfer window | Four uploads `deferred`, `next_opening` computed for `America/Vancouver`, no dispatch, no failure or unconfirmed state. |
+| Open transfer window | The same work became four `confirmed` Nodes. |
+| Read-only direct mount | Four originals read from the approved mount, `bytes_avoided=5706`, `api_bytes=0`; MD5 and size matched the API path. |
+| Live Photo original pair | Still and MOV uploaded as two Nodes with distinct MD5s (`a0eabe…`/`105` bytes and `28eb1f…`/`5414` bytes); the pair reported `complete`. |
+| Managed Workflow create | One owned Workflow created, read back and verified; a second run reported `verify` and created nothing. |
+| Owned Workflow update | A callback rotation updated only the persisted owned ID. |
+| Owned Workflow removal | Owned Workflow deleted; an unrelated Google workflow was untouched. |
+| Metrics and read-only status | `/metrics` and `/status` returned 200 behind the loopback listener, with hashed account labels and no paths, secrets or asset IDs; `status` read the ledger while `serve` held the writer lock. |
+
+Defects this run found and fixed, both now covered by regression tests:
+
+1. **SDK v0.1.4 rejected every video node.** Amazon returns
+   `contentProperties.video.bitrate` as a JSON float (`22368.0`); the `int64`
+   field failed the whole decode, so `GetNode` and search returned
+   `remote protocol error` and a real video was invisible. Fixed in
+   [SDK PR #15](https://github.com/thedavidweng/amazon-photos/pull/15) and
+   released as `v0.1.5`.
+2. **Favorites treated a missing `settings` object as unknown.** Add-only could
+   not star media Amazon had never mutated. An absent object is now a proven
+   false; a `settings` object without a `favorite` key stays
+   `favorite_unconfirmed`.
+3. **Managed Workflow rejected nullable labels.** The pinned contract declares
+   `name` and `description` nullable, and a live account returns
+   `"description": null` for workflows created elsewhere, so listing failed with
+   `remote_protocol` and registration could not see its own Workflow.
+
+Limits: one account, one marketplace, synthetic samples, images and one short
+H.264 MOV only. Echo Show playback, a real iPhone Live Photo pair, native
+Apple Live Photo linking, HEIC/RAW rendering and the absolute 500-item deletion
+bound were not exercised. Native pairing remains untested: the unofficial API
+exposes no linking operation, and this run's pair is preserved as two separate
+Nodes, not as a playable Live Photo.
 
 ## Originals and metadata
 

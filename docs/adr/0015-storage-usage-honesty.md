@@ -2,7 +2,7 @@
 
 Status: accepted. Date: 2026-10-22.
 
-`aphotos` v0.1.4 exposes categorized `GetUsage` observations and their provider
+`aphotos` v0.1.5 exposes categorized `GetUsage` observations and their provider
 calculation time. It does not expose a subscription cap, remaining bytes or Prime
 eligibility. The service therefore reports observed `photo`, `video` and `other`
 bytes and counts next to `capacity: unknown` and `entitlement: unknown`, and a

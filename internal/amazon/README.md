@@ -20,7 +20,8 @@ collision; an uncertain create cannot authorize recreation. Membership uses only
 SDK collection operations, with stable album ID and account validation. There
 is no media deletion operation.
 
-The SDK pin `v0.1.4` validates list envelopes.
+The SDK pin `v0.1.5` validates list envelopes and decodes a video node whose
+`bitrate` arrives as a JSON float.
 Explicit `{"count":0,"data":[]}` results establish an empty search or album;
 missing/null fields and partial pages cannot establish absence. Find requests
 one bounded page and requires zero or one verified result. Multiple matches are

@@ -134,7 +134,7 @@ func NewWithClient(sdk *aphotos.Client) (*Client, error) {
 }
 
 // CaptureDateCapability is the capture-date write support proven by the pinned
-// aphotos release. v0.1.4 exposes ContentDate and EXIF date fields only as
+// aphotos release. v0.1.5 exposes ContentDate and EXIF date fields only as
 // response data and has no capture-date setter, so the finite answer is
 // metadata_not_supported. Reporting supported requires a released SDK
 // operation plus an authoritative read-back verification; rewriting original

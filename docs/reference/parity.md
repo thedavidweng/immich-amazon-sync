@@ -13,7 +13,7 @@ offline contracts into live claims; dated provider evidence stays in
 | This service | `main` `53877cc81e7368b00aa308be034a87ac5197726e` | PR #15 merged 2026-10-22; the acceptance baseline. |
 | User-maintained Google fork, combined #5/#6/#7 tree | `thedavidweng/immich-gphotos` `3c2ec7925436e9eddea6c001253ede7cba3aaed4` (2026-10-17T05:04:31Z) | The integrated head shared by PRs #5, #6 and #7. This, not the fork's current `main`, is the comparison baseline. |
 | Same fork, separate #9 fix | `da17f7c024932027065d664ebe5b7c65ae67e4ba` (2026-10-20T01:57:52Z) | Must be applied on top of the combined tree for a complete comparison. |
-| `aphotos` SDK | `v0.1.4`, tag commit `366da81406f806924af6d9a3934564a6c3d84e73` (released 2026-10-21T03:59:14Z) | `SetFavorite`, `GetUsage`, `NodeSettings`. |
+| `aphotos` SDK | `v0.1.5`, tag commit `f4dc20fdec464e7e6f5294c36bf7068643ad73f0` (released 2026-10-22T21:22:48Z) | `SetFavorite`, `GetUsage`, `NodeSettings`, tolerant video-bitrate decoding. |
 | Immich contract | `v3.3.4`, `69e0cb8606137c4f8dc0e7207a672ff8be39f358` | Pinned OpenAPI extraction and asset fixtures. |
 
 The four user-authored fork PRs were **open and unmerged** when the spec was
@@ -120,7 +120,7 @@ shapes.
   `livePhotoVideoId` nullable. `TestPinnedAssetFieldPresence` proves an absent
   `isFavorite` decodes as unknown, not as `false`.
 
-### aphotos SDK v0.1.4
+### aphotos SDK fixtures
 
 - `internal/amazon/testdata/aphotos-v0.1.4-settings-usage.json` — raw node
   payloads with no `settings`, explicit `settings.favorite` false/true, and a

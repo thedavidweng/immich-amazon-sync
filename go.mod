@@ -4,7 +4,7 @@ go 1.27.1
 
 require (
 	github.com/spf13/cobra v1.10.2
-	github.com/thedavidweng/amazon-photos v0.1.4
+	github.com/thedavidweng/amazon-photos v0.1.5
 	modernc.org/sqlite v1.60.1
 )
 

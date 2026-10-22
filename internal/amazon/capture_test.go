@@ -13,7 +13,7 @@ import (
 )
 
 // The pinned SDK is the only acceptable proof that a capture-date write
-// operation exists. v0.1.4 exposes contentDate and EXIF dates as response data
+// operation exists. v0.1.5 exposes contentDate and EXIF dates as response data
 // only: uploads, settings PATCH and rename cannot set them. If this test starts
 // failing, the SDK gained such an operation; prove it against the released
 // version and require an authoritative read-back before ever changing

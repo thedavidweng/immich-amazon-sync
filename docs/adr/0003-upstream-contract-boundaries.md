@@ -25,8 +25,13 @@ Both v2 album metadata reads must request `withoutAssets=true`; v2 otherwise
 embeds all assets and defeats bounded discovery. The pinned v3 metadata
 response omits embedded assets and has no such query parameter.
 
-Pin the public aphotos SDK to released tag `v0.1.4`, published through
-[SDK PR #13](https://github.com/thedavidweng/amazon-photos/pull/13).
+Pin the public aphotos SDK to released tag `v0.1.5`, published through
+[SDK PR #15](https://github.com/thedavidweng/amazon-photos/pull/15). `v0.1.5`
+adds tolerant video-bitrate decoding: Amazon returns that field as a JSON float,
+and `v0.1.4` rejected the whole node, hiding every video from `GetNode` and
+search. `v0.1.4`'s corrections from
+[SDK PR #13](https://github.com/thedavidweng/amazon-photos/pull/13) remain the
+baseline this ticket's list, status and retry rules were written against.
 The release includes strict list and final-status validation, preserves
 GetNode auth/rate-error propagation, and retains parsed Retry-After delays.
 Use the released SDK, not a duplicate HTTP client or local workaround.

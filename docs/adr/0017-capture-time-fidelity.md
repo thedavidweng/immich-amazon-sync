@@ -2,7 +2,7 @@
 
 Status: accepted. Date: 2026-10-22.
 
-The pinned `aphotos` v0.1.4 release exposes `contentDate` and the EXIF date
+The pinned `aphotos` v0.1.5 release exposes `contentDate` and the EXIF date
 properties only as response data. Its upload request, settings PATCH and rename
 cannot set them. There is therefore no verified way to mirror a capture date that
 exists only in Immich metadata, and the service must not pretend otherwise.
