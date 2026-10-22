@@ -32,10 +32,19 @@ See [config.example.json](config.example.json) for the minimal deployment shape.
 | `mirror_albums` | `false` | Mirror explicitly selected albums; requires `album_ids` and `library: false`. |
 | `deletions` | `false` | Propagate an Immich trash to the Amazon trash for mapped assets. Off by default; never permanently deletes. |
 | `deletions_confirmation` | unset | Must be exactly `ENABLE DELETIONS` while `deletions` is true; a missing or different phrase rejects the config with `deletion_confirmation_required`. |
+| `managed_workflow` | `false` | Opt-in to creating one owned native Immich Workflow. Requires all three workflow fields below. Polling stays enabled; nothing is created on Immich v2 or without the required grants. |
+| `immich_workflow_api_key_file` | unset | Separate mounted Immich API key with `workflow.read`, `workflow.create`, `workflow.update` and `workflow.delete`; must differ from `immich_api_key_file`. `workflow.logs` additionally enables diagnostics. |
+| `workflow_callback_url` | unset | HTTP(S) URL reachable from Immich that ends in `/events/ACCOUNT_ID`; no embedded credentials, query or fragment (`workflow_callback_url_invalid`). |
+| `workflow_secret_file` | unset | Path for the generated bearer secret. The service creates the file with mode `0600`; the value is never stored in JSON or the ledger. |
 
 At least one album or explicit library mode is required for each account.
 Account IDs must be unique. Zero accounts is only valid when local management
-bootstrap is explicitly enabled with an admin credential. Secret files must be
+bootstrap is explicitly enabled with an admin credential. `managed_workflow:
+true` without a separate workflow key, callback URL or secret path returns
+`workflow_configuration_required`; reusing the polling key path returns
+`workflow_credentials_conflict`. Disabling management may keep the mounted
+paths so best-effort cleanup can still run. See
+[managed Workflow onboarding](../how-to/managed-workflows.md). Secret files must be
 nonempty and at most 64 KiB for remote credentials; the JSON config limit is
 1 MiB on both load and save, including the saved JSON newline. Oversize input
 returns `config_invalid_json`; a rejected save leaves the previous file and
@@ -69,7 +78,9 @@ Without `--config`, the single-account environment mode uses `IMMICH_URL`,
 `ALBUM_IDS`, and `INCLUDE_VIDEOS` (`true`/`false`). Its account ID is `default`.
 Use JSON for multiple accounts and explicit library/album-mirroring options.
 `DATA_DIR`, `LISTEN`, `ADMIN_PASSWORD_FILE` and `WEBHOOK_SECRET_FILE` override
-their corresponding values even with a JSON file.
+their corresponding values even with a JSON file. Environment-only accounts also
+accept `MANAGED_WORKFLOW`, `IMMICH_WORKFLOW_API_KEY_FILE`,
+`WORKFLOW_CALLBACK_URL` and `WORKFLOW_SECRET_FILE`.
 
 Direct `IMMICH_API_KEY` and `AMAZON_COOKIE` values exist for environment-mode
 compatibility. Avoid them in deployments: environment values can appear in

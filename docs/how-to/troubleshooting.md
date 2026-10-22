@@ -21,7 +21,12 @@ issue. Stop the daemon before running another CLI process on the same volume.
 | `membership_guard` | Verify source scope/counts and snapshots. Empty or excessive removals are blocked; there is no guard override. |
 | `invalid_event` | Check UUIDv4, native type/trigger, top-level fields and 64 KiB body limit; see the event contract. |
 | `webhook_unauthorized` | Check the configured account ID and bearer header against the mounted shared secret. |
-| `webhook_unavailable` | Check the secret path/readability, minimum 32 trimmed bytes and maximum 4 KiB file size. |
+| `webhook_unavailable` | Check the secret path/readability, minimum 32 trimmed bytes and maximum 4 KiB file size, or configure a managed Workflow for the account. |
+| `workflow_version_unsupported` / `workflow_permission_missing` / `workflow_trigger_unsupported` | Managed Workflow capability notice, not a media failure. Polling continues. Fix the separate key's Workflow scopes or use a v3.x server, then run `workflow register --apply --force`. |
+| `workflow_unconfirmed` | A create or update may have committed. The next cycle reconciles by reading; never delete or recreate the Remote Workflow manually. |
+| `workflow_not_owned` / `workflow_ambiguous` | The persisted UUID no longer matches this service's marker, or more than one exact match exists. Nothing is mutated. Inspect Immich, keep unrelated workflows, and resolve duplicates before re-applying. |
+| `workflow_cleanup_failed` | Best-effort removal of a disabled or removed account's owned Workflow failed. Re-add the account with its mounted Workflow key, keep `managed_workflow: false`, and run `workflow remove --apply`. |
+| `workflow_secret_unavailable` | The generated secret file is missing or invalid; apply regenerates it with mode `0600`. |
 | `source_changed` | Source content evidence (SHA-1, size, or filesystem modification time) no longer agrees with the recorded original. Preserve confirmed/uncertain mappings; retry does not clear this conflict. A metadata-only Immich edit does not trigger it. |
 | `deletion_guard` | The pending pass exceeds 500 assets or 10% of the mapped library, so nothing was trashed. Inspect `deletions plan`; restore Immich assets or accept a smaller trash before retrying. Disable propagation to withdraw all pending intents. |
 | Deletion trash failure | The asset stays `deletion_pending` with a finite error and retries with backoff. The Amazon node was not confirmed trashed; inspect credentials, ownership and connectivity. |

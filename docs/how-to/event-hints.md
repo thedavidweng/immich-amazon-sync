@@ -50,9 +50,13 @@ Set its URL to the service's `/events/ACCOUNT_ID`, using the exact configured
 local account ID. Set an `Authorization` header to `Bearer ` followed by the
 mounted shared secret's contents. Protect that header as a credential.
 
-Keep the service's Immich polling key read-only. This service does not register
-or modify Workflows automatically. Immich v2 has no Workflow support; use polling
-there. Check [compatibility](../reference/compatibility.md#immich-contract)
+Keep the service's Immich polling key read-only. Manual Workflow creation needs
+no write access from this service. Alternatively, opt in to
+[managed Workflow onboarding](managed-workflows.md) with a separate Immich key
+that holds only Workflow scopes; the service then creates, verifies, rotates and
+removes exactly one owned Workflow and never touches unrelated ones. Immich v2
+has no Workflow support; either path falls back to polling with an explicit
+notice. Check [compatibility](../reference/compatibility.md#immich-contract)
 before depending on a particular server version.
 
 Configure reachability deliberately. Compose publishes host `127.0.0.1` only;

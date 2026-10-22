@@ -13,7 +13,7 @@ when an admin passphrase file is configured. They share the normal listener;
 | `GET /accounts/new` | Source and Destination editor for a new account. |
 | `GET /accounts/{id}/edit` | Existing account editor. |
 | `POST /accounts/discover` | `csrf`, source URL/key file and editor fields; source-only album lookup without save or scope selection. |
-| `POST /accounts/save` | `csrf`, `original_id`, `id`, `immich_url`, `key_file`, `region`, `cookie_file`, `album_ids`, repeated `album_id`, and optional `library`, `include_videos`, `mirror_albums`, `deletions`, `deletions_confirmation`. |
+| `POST /accounts/save` | `csrf`, `original_id`, `id`, `immich_url`, `key_file`, `region`, `cookie_file`, `album_ids`, repeated `album_id`, and optional `library`, `include_videos`, `mirror_albums`, `deletions`, `deletions_confirmation`, `managed_workflow`, `workflow_key_file`, `workflow_callback_url`, `workflow_secret_file`. |
 | `POST /accounts/{id}/pause`, `/resume`, `/retry`, `/doctor` | `csrf`; account control or read-only diagnostics, not a cloud-write probe. |
 | `POST /accounts/{id}/remove` | `csrf`; configuration removal, not local-history or cloud-media deletion. |
 
@@ -23,7 +23,10 @@ checkboxes are `on` or absent. Scope must be explicit: album IDs or whole librar
 All credentials are mounted file paths, never form secret values.
 The overview's durable progress fields are described in the
 [status reference](status.md), including separate media, album and association
-completion. Album mirroring requires explicit album rules with library mode off.
+completion, and the managed Workflow state with its finite notice. Orphaned
+workflow cleanup for removed accounts is listed read-only. Album mirroring
+requires explicit album rules with library mode off. Managed workflow fields
+store mounted paths only; the generated secret is never rendered.
 
 Login without a valid pre-auth cookie/token and authenticated mutations without
 CSRF are rejected. See [local management](../how-to/local-management.md) for
