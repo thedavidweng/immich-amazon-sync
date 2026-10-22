@@ -50,6 +50,8 @@ type Status struct {
 	AssociationsUnconfirmed int            `json:"associations_unconfirmed"`
 	EventsPending           int            `json:"events_pending"`
 	EventsFailed            int            `json:"events_failed"`
+	Workflow                string         `json:"workflow,omitempty"`
+	WorkflowCode            string         `json:"workflow_code,omitempty"`
 	IncrementalScanning     bool           `json:"incremental_scanning"`
 	LastIncremental         *time.Time     `json:"last_incremental"`
 	WorkRemaining           bool           `json:"work_remaining"`
@@ -263,6 +265,11 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 	}
 	if err = e.store.db.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(error_code!=''),0) FROM hints WHERE account_id=?`,
 		e.opts.AccountID).Scan(&st.EventsPending, &st.EventsFailed); err != nil {
+		return st, errors.New("storage_unavailable")
+	}
+	err = e.store.db.QueryRowContext(ctx, "SELECT state,error_code FROM workflows WHERE account_id=?",
+		e.opts.AccountID).Scan(&st.Workflow, &st.WorkflowCode)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return st, errors.New("storage_unavailable")
 	}
 	var watermark string

@@ -171,6 +171,7 @@ func Execute(ctx context.Context, args []string, out, errOut io.Writer, version 
 		},
 	})
 	root.AddCommand(deletions)
+	addWorkflowCommands(root, load, out, func() string { return accountID }, func() bool { return asJSON })
 	if err := root.ExecuteContext(ctx); err != nil {
 		if errors.Is(err, versionPrinted) {
 			return 0
@@ -208,6 +209,11 @@ func printReport(out io.Writer, report service.Report, asJSON bool) error {
 			account.Status.Failed, account.Status.Unconfirmed); err != nil {
 			return outputError(err)
 		}
+		if account.Status.Workflow != "" {
+			if _, err := fmt.Fprintf(out, "  workflow=%s code=%s\n", account.Status.Workflow, orNone(account.Status.WorkflowCode)); err != nil {
+				return outputError(err)
+			}
+		}
 	}
 	return nil
 }
@@ -238,8 +244,9 @@ func printDiagnosis(out io.Writer, report service.DoctorReport, asJSON bool) err
 		return outputError(err)
 	}
 	for _, account := range report.Accounts {
-		if _, err := fmt.Fprintf(out, "%s version=%s region=%s evidence=%s target_writes=%s original_read=%s\n",
-			account.Account, account.Version, account.Region, account.Evidence, account.TargetWrites, account.OriginalRead); err != nil {
+		if _, err := fmt.Fprintf(out, "%s version=%s region=%s evidence=%s target_writes=%s original_read=%s workflow=%s\n",
+			account.Account, account.Version, account.Region, account.Evidence, account.TargetWrites,
+			account.OriginalRead, orNone(account.Workflow)); err != nil {
 			return outputError(err)
 		}
 		for _, check := range account.Checks {

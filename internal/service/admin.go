@@ -11,6 +11,7 @@ import (
 	"github.com/thedavidweng/immich-amazon-sync/internal/bridge"
 	"github.com/thedavidweng/immich-amazon-sync/internal/config"
 	"github.com/thedavidweng/immich-amazon-sync/internal/immich"
+	"github.com/thedavidweng/immich-amazon-sync/internal/workflow"
 )
 
 // SetupConfig is an explicit bootstrap, never a missing-file fallback.
@@ -135,11 +136,28 @@ func (b *adminBackend) Diagnose(ctx context.Context, id string) ([]admin.Diagnos
 			admin.Diagnostic{Name: "target_writes", Code: account.TargetWrites},
 			admin.Diagnostic{Name: "original_read", Code: account.OriginalRead},
 		)
+		if account.Workflow != "" {
+			checks = append(checks, admin.Diagnostic{Name: "workflow", Code: account.Workflow})
+		}
 		for _, check := range account.Checks {
 			checks = append(checks, admin.Diagnostic{Name: check.Name, Code: check.Code})
 		}
 	}
 	return checks, err
+}
+
+func (b *adminBackend) OrphanWorkflows(ctx context.Context) ([]admin.WorkflowOrphan, error) {
+	reports, err := b.WorkflowStatus(ctx, "")
+	var orphans []admin.WorkflowOrphan
+	for _, report := range reports {
+		if report.Configured || report.State == "" || report.State == workflow.StateRemoved {
+			continue
+		}
+		orphans = append(orphans, admin.WorkflowOrphan{
+			Account: report.Account, State: report.State, Code: report.Code,
+		})
+	}
+	return orphans, err
 }
 
 func (b *adminBackend) Code(err error) string {

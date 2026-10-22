@@ -51,7 +51,12 @@ func knownCode(code string) string {
 		"account_id_invalid", "immich_url_invalid", "amazon_region_required", "amazon_region_invalid",
 		"credentials_required", "credential_sources_conflict", "source_scope_required",
 		"source_scope_conflict", "album_id_invalid", "secret_unreadable", "secret_invalid",
-		"invalid_options", "include_videos_invalid", "config_write_failed":
+		"invalid_options", "include_videos_invalid", "config_write_failed",
+		"managed_workflow_invalid", "workflow_configuration_required",
+		"workflow_credentials_conflict", "workflow_callback_url_invalid",
+		"workflow_not_configured", "workflow_management_active", "workflow_not_managed",
+		"workflow_not_owned", "workflow_ambiguous", "workflow_unconfirmed",
+		"workflow_mismatch", "workflow_cleanup_failed", "workflow_secret_unavailable":
 		return code
 	}
 	return "operation_failed"
@@ -76,14 +81,17 @@ func ExitCode(err error) int {
 	case "storage_unavailable", "writer_locked", "locking_unsupported", "unsupported_schema",
 		"staging_quota", "staging_corrupt", "config_write_failed":
 		return 4
-	case bridge.Authentication, bridge.Permission, "credentials_required", "credential_sources_conflict", "secret_unreadable", "secret_invalid", "webhook_unauthorized":
+	case bridge.Authentication, bridge.Permission, "credentials_required", "credential_sources_conflict", "secret_unreadable", "secret_invalid", "webhook_unauthorized", "workflow_secret_unavailable":
 		return 3
 	case "config_unreadable", "config_invalid_json", "data_directory_required",
 		"listen_address_invalid", "scan_interval_invalid", "resource_limits_invalid",
 		"log_level_invalid", "accounts_required", "account_required", "account_not_found",
 		"account_id_invalid", "immich_url_invalid", "amazon_region_required", "amazon_region_invalid",
 		"source_scope_required", "source_scope_conflict", "album_id_invalid", "invalid_options",
-		"include_videos_invalid", "invalid_event", "deletion_confirmation_required":
+		"include_videos_invalid", "invalid_event", "deletion_confirmation_required",
+		"managed_workflow_invalid", "workflow_configuration_required",
+		"workflow_credentials_conflict", "workflow_callback_url_invalid",
+		"workflow_not_configured", "workflow_management_active", "workflow_not_managed":
 		return 2
 	}
 	return 1

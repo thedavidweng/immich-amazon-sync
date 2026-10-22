@@ -25,6 +25,11 @@ type Diagnostic struct {
 	Name, Code string
 }
 
+// WorkflowOrphan is a persisted workflow whose account is no longer configured.
+type WorkflowOrphan struct {
+	Account, State, Code string
+}
+
 // Backend keeps account state and cloud access in the service runtime.
 type Backend interface {
 	Config() config.Config
@@ -34,6 +39,7 @@ type Backend interface {
 	Pause(context.Context, string, bool) error
 	Retry(context.Context, string) error
 	Diagnose(context.Context, string) ([]Diagnostic, error)
+	OrphanWorkflows(context.Context) ([]WorkflowOrphan, error)
 	Code(error) string
 }
 
@@ -371,5 +377,6 @@ func (d *dashboard) index(w http.ResponseWriter, r *http.Request) {
 			Account: account, Status: status, Code: d.backend.Code(err),
 		})
 	}
+	view.Orphans, _ = d.backend.OrphanWorkflows(r.Context())
 	d.render(w, "index", view)
 }
