@@ -13,6 +13,12 @@ type Album struct {
 	Count int    `json:"count"`
 }
 
+type Tag struct {
+	ID    string `json:"id"`
+	Name  string `json:"name,omitempty"`
+	Value string `json:"value,omitempty"`
+}
+
 type Asset struct {
 	ID             string    `json:"id"`
 	Name           string    `json:"name"`
@@ -23,7 +29,11 @@ type Asset struct {
 	TakenAt        time.Time `json:"taken_at"`
 	FileModifiedAt time.Time `json:"file_modified_at"`
 	LivePhotoVideo bool      `json:"live_photo_video"`
-	ExcludedReason string    `json:"excluded_reason,omitempty"`
+	Archived       bool      `json:"archived"`
+	// Tags is nil when the source did not provide tag provenance. An empty,
+	// non-nil slice is authoritative "no tags".
+	Tags           []Tag  `json:"tags"`
+	ExcludedReason string `json:"excluded_reason,omitempty"`
 }
 
 type Scope struct {
