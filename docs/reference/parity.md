@@ -36,7 +36,7 @@ Checked with `gh api repos/ImAleeexx/immich-gphotos/pulls/<n>`; `merged` was
 
 | Grade | Meaning |
 | --- | --- |
-| **Live evidence** | Exercised against a disposable real Amazon account; operation, date and limits are recorded in [compatibility.md](compatibility.md). |
+| **Live evidence** | Exercised against a real Amazon account using disposable samples; operation, date and limits are recorded in [compatibility.md](compatibility.md). |
 | **Offline contract** | Proven only by pinned offline fixtures and repository tests. No live-provider claim. |
 | **Not yet tested** | Promised by the spec but not implemented or proven yet. The delivering ticket names the grade it must reach. |
 | **Unsupported** | No verified Amazon capability exists, or the capability is Google-specific and deliberately not ported. No implementation or user-facing claim. |
@@ -51,41 +51,41 @@ do not move. Grades describe this repository's proof, not the comparison fork's.
 | --- | --- | --- | --- | --- |
 | Initial backfill and periodic reconciliation | Yes | Yes | Live evidence (CA, 2026-10-21) | #17 preserves (baseline shipped) |
 | Manual native event/webhook ingestion | Yes | Yes | Offline contract | #17 preserves |
-| Automatic Workflow create/update/remove | Yes | Yes, `managed_workflow` with a separate credential; only the Workflow it owns is created, updated or removed, and v2/missing grants fall back to polling with a notice | Offline contract | #25 |
+| Automatic Workflow create/update/remove | Yes | Yes, `managed_workflow` with a separate credential; only the Workflow it owns is created, updated or removed, and v2/missing grants fall back to polling with a notice | Offline contract + live `ca` (2026-10-22) | #25 |
 | Read-only Workflow log diagnostics | Yes | `workflow logs` CLI and the authenticated dashboard action report aggregate run counts only | Offline contract | #25 delivered; #27 adds the dashboard surface |
 | Strict dedup and verified remote identity (MD5, size, owned Node) | SHA-1 via `gpmc` | MD5/size/owned Node; `confirmed`/`existing` | Live evidence | #17 preserves |
 | Byte-identical originals; no recompression | Yes | Yes | Offline contract + live evidence | #17 preserves; #31 asserts unchanged bytes and mtimes on both upload paths |
 | Opt-in trash propagation, 500-item/10% guard, trash only | Yes | Yes (PR #15) | Live evidence (CA, 2026-10-22) | #17 regression coverage; #15 shipped |
 | Favorite reads with field-presence semantics | PR #6 tree | Presence-aware `isFavorite`; a `settings` object without an explicit `favorite` is `favorite_unconfirmed`, an absent `settings` object is a proven false | Offline contract + live `ca` | #18 |
-| Star new uploads and Existing Nodes | Yes | Yes, when `favorites: add_only`; verified by re-read | Offline contract | #18 |
-| Add-only mode that never unstars | Not offered | Yes (`off` is the default) | Offline contract | #18 |
+| Star new uploads and Existing Nodes | Yes | Yes, when `favorites: add_only`; verified by re-read | Offline contract + live `ca` (2026-10-22) | #18 |
+| Add-only mode that never unstars | Not offered | Yes (`off` is the default) | Offline contract + live `ca` (2026-10-22) | #18 |
 | Durable per-Node favorite outcome and independent retry | No | One row per node; a lost mutation is retried only after a fresh read | Offline contract | #18 |
-| Authoritative mirror/unstar with consent | PR #6 tree | Yes, `favorites: mirror`; only stars this service applied, plus recorded `favorites_takeover` for manual stars | Offline contract | #19 |
+| Authoritative mirror/unstar with consent | PR #6 tree | Yes, `favorites: mirror`; only stars this service applied, plus recorded `favorites_takeover` for manual stars | Offline contract + live `ca` (2026-10-22) | #19 |
 | Shared-Node conflict, drift repair, read-before-retry | No | `shared_target_conflict` blocks both accounts; bounded 6h audit repairs drift | Offline contract | #19 |
-| Trusted read-only direct originals with API fallback | PR #5 tree (mtime re-date) | Yes, opt-in `direct_roots`; verified bytes stage with zero Immich downloads and every ineligible path falls back to the API | Offline contract | #23 |
+| Trusted read-only direct originals with API fallback | PR #5 tree (mtime re-date) | Yes, opt-in `direct_roots`; verified bytes stage with zero Immich downloads and every ineligible path falls back to the API | Offline contract + live `ca` (2026-10-22) | #23 |
 | Explicit selected-album mirroring | Yes | Yes | Live evidence (one album) | #17 preserves |
 | All-accessible album discovery and mirroring | Yes | Yes, `album_sync_mode: all_accessible`; failure and permission errors change nothing and preserve owned albums and memberships | Offline contract | #24 |
 | Album rename/removal safeguards | Google-specific | Owned map + bounded membership guard | Offline contract | #17 preserves; #24 extends |
 | Destination album capacity handling | 20,000-item split | No assumed limit | Unsupported (20k not ported) | #24 only after verified evidence |
-| Daily per-account transfer window | Engine window, no UI | Yes, per-account IANA window incl. midnight crossing and DST; config and dashboard edits apply live; in-flight uploads finish and metadata work continues | Offline contract | #20 |
+| Daily per-account transfer window | Engine window, no UI | Yes, per-account IANA window incl. midnight crossing and DST; config and dashboard edits apply live; in-flight uploads finish and metadata work continues | Offline contract + live `ca` (2026-10-22) | #20 |
 | Per-account workers and uplink byte cap | Global-ish worker/cap | Workers + byte cap existing | Offline contract | #17 preserves; #20/#27 clarify |
 | Configurable retry policy | Engine object | Per-account `retry` block, bounded to 1..10 attempts and a 1s..5m ceiling; `Unconfirmed` still reconciles | Offline contract | #27 |
 | Filters: type, video, size, RAW, archive, tags, album allowlist | Engine partial | Yes: media type/video, maximum original bytes, RAW, archive visibility and excluded tags; album selection remains `album_ids`/`library` | Offline contract | #21 |
 | Durable, reevaluable, non-destructive exclusions | Partial | Explicit finite exclusion reasons that requeue on policy, tag or metadata change; never deletion evidence | Offline contract | #21 |
-| Categorized storage usage (`photo`, `video`, `other`, `lastCalculated`) | Quota mode proxy | Surfaced in doctor, status, CLI and dashboard with observed bytes/counts | Offline contract | #22 |
-| Honest unknown capacity; no quality selector | No | Original bytes only; capacity, remaining bytes and Prime entitlement are `unknown` | Offline contract | #22 |
+| Categorized storage usage (`photo`, `video`, `other`, `lastCalculated`) | Quota mode proxy | Surfaced in doctor, status, CLI and dashboard with observed bytes/counts | Offline contract + live `ca` (2026-10-22) | #22 |
+| Honest unknown capacity; no quality selector | No | Original bytes only; capacity, remaining bytes and Prime entitlement are `unknown` | Offline contract + live `ca` (2026-10-22) | #22 |
 | Video advisory threshold and opt-in hold; quota error classification | No | Explicit per-account budget; distinct `storage_quota_exceeded` keeps originals staged | Offline contract | #22 |
 | Capture date for missing EXIF | PR #5 re-dates direct reads | Preserves EXIF and mtimes; no source writes; doctor/status report finite `metadata_not_supported` | Unsupported (no released SDK setter) | #31 delivered the honest capability; a setter would require read-back verification |
-| Apple Live Photo still + MOV original-pair preservation | PR #7 muxes a derived Google Motion Photo | Two unchanged originals with independent hashes and Nodes (`live_photo_mode: original_pair`); `pair_incomplete` when the companion is missing or ineligible | Offline contract | #26 |
-| Native Apple Live Photo pairing and playback | No | No | Unsupported until disposable samples prove it | #30 |
+| Apple Live Photo still + MOV original-pair preservation | PR #7 muxes a derived Google Motion Photo | Two unchanged originals with independent hashes and Nodes (`live_photo_mode: original_pair`); `pair_incomplete` when the companion is missing or ineligible | Offline contract + live `ca` (2026-10-22) | #26 |
+| Native Apple Live Photo pairing and playback | No | No | Untested: no linking operation exists in the released SDK or the Drive endpoints this service uses | #30 |
 | Google/Samsung Motion Photo mux | Yes (PR #7) | No conversion path | Unsupported (deliberately not ported) | #26 keeps original pairs; #30 is the only native-pairing experiment |
 | Managed multi-account local UI | Yes | Yes | Offline contract | #17 preserves |
-| Prometheus `/metrics` with low cardinality | Yes | Optional `/metrics` and `/status`, off by default, loopback-only or bearer-token gated | Offline contract | #27 |
+| Prometheus `/metrics` with low cardinality | Yes | Optional `/metrics` and `/status`, off by default, loopback-only or bearer-token gated | Offline contract + live `ca` (2026-10-22) | #27 |
 | Health/readiness independent of Amazon | Variable | Yes | Offline contract | #17 preserves |
-| Status, CLI and UI parity for new state | Partial | `status`, HTTP `/status`, dashboard and metrics derive from one durable report | Offline contract | #27 |
+| Status, CLI and UI parity for new state | Partial | `status`, HTTP `/status`, dashboard and metrics derive from one durable report | Offline contract + live `ca` (2026-10-22) | #27 |
 | Fail-closed unknown and partial operations | Variable | Explicit `Unconfirmed` and guards | Offline contract + live evidence | #17 preserves |
-| Dated live-provider matrix for new writes | None | Partial CA evidence for existing writes | Live evidence (limited) | #28 |
-| Upgrade and dual-architecture release gate | Migration #9 | Schema v3 live ledger and every checked-in v1..v9 fixture upgrade in place with mappings, cursors, album ownership, deletion states, staging references and unconfirmed intents preserved; safe defaults verified; unknown versions fail closed with `unsupported_schema`; amd64/arm64 image build and container smoke include a version-3 migration and read-only originals mount | Offline contract | #29 |
+| Dated live-provider matrix for new writes | None | Every new remote operation exercised once on `ca`; limits recorded | Live evidence (limited) | #28 |
+| Upgrade and dual-architecture release gate | Migration #9 | Every checked-in v1..v9 fixture and a copy of the real deployed schema-2 ledger upgrade in place, with mappings, cursors, album ownership, deletion states, staging references and unconfirmed intents preserved and no new feature enabled; unknown versions fail closed with `unsupported_schema`; amd64/arm64 images build and the container smoke includes a version-3 migration and a read-only originals mount | Offline contract + real-ledger upgrade | #29 |
 
 ## Deliberately not ported (Google-only)
 

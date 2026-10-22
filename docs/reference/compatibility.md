@@ -104,15 +104,23 @@ origin/discovery columns; 4→5 managed Workflow ownership; 5→6 favorite state
 6→7 explicit filter exclusions; 7→8 the usage observation; 8→9 the favorite
 drift audit; 9→10 the Live Photo pair ledger and applied per-account mode.
 
-Offline tests upgrade the deployed version-3 schema and every checked-in fixture
-(`v1`, `v3`–`v9`). They assert that confirmed and Existing mappings, account
-identity, rules and scan cursors, album ownership and memberships, deletion
-states, staging references and unconfirmed intents survive, while favorite,
-Live Photo pair, album-mirroring, transfer-window, usage-hold, managed Workflow
-and direct-read scope stay off. The container smoke repeats the version-3
-migration and the future-schema refusal on amd64 and arm64. Evidence grade:
-offline contract plus dual-architecture container smoke; no live account was
-upgraded outside disposable data.
+Offline tests upgrade every checked-in fixture (`v1`, `v3`–`v9`). They assert
+that confirmed and Existing mappings, account identity, rules and scan cursors,
+album ownership and memberships, deletion states, staging references and
+unconfirmed intents survive, while favorite, Live Photo pair, album-mirroring,
+transfer-window, usage-hold, managed Workflow and direct-read scope stay off.
+The container smoke repeats a version-3 migration and the future-schema refusal
+on amd64 and arm64.
+
+On 2026-10-22 a copy of the real deployed ledger — schema **2**, seven assets,
+three `confirmed` with node mappings and three with none, two `failed` and two
+`unconfirmed` — was opened by the release build. A read-only `status` refused it
+with `schema_migration_required` and left the file untouched; the first writable
+command migrated it to 10, kept all seven rows in their original states with
+their node mappings, created no favorite, pair or workflow row, and reported
+`favorites_mode: off`, `live_photo_mode: still_only` and
+`album_sync_mode: off`. Evidence grade: offline contract, dual-architecture
+container smoke and one real-ledger upgrade on a copy.
 
 ## Immich contract
 

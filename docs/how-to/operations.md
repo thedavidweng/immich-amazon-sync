@@ -130,9 +130,12 @@ column (9), and the Live Photo pair ledger with its applied per-account mode
 (10). Historical mappings, cursors, rules, album ownership,
 confirmed/existing state, deletion state, staging references and unconfirmed
 intents are preserved, and no migration widens scope or enables a new write. The
-upgrade path is exercised from the deployed version-3 schema and from every
-checked-in prior fixture under `internal/syncer/testdata`; the container smoke
-also migrates a checked-in version-3 ledger and proves its mapping survives.
+upgrade path is exercised from every checked-in prior fixture under
+`internal/syncer/testdata`; the container smoke also migrates a checked-in
+version-3 ledger and proves its mapping survives. The real deployed ledger in
+this project was schema 2, and a copy of it upgraded on 2026-10-22 with all
+seven rows, their states and their node mappings intact and every new feature
+still off.
 
 An unknown schema version fails closed. This binary refuses a ledger whose
 `user_version` is newer than schema 10, or otherwise out of range, with the
