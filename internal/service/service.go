@@ -102,6 +102,10 @@ func Open(cfg config.Config, logOut io.Writer) (*Service, error) {
 		writeHealth(w, http.StatusOK, "ok")
 	})
 	s.mux.HandleFunc("POST /events/{account}", s.event)
+	// Both routes answer 404 while metrics are disabled, so enabling them is an
+	// explicit configuration change and never an accidental public surface.
+	s.mux.HandleFunc("GET /metrics", s.metrics)
+	s.mux.HandleFunc("GET /status", s.statusJSON)
 	return s, nil
 }
 
@@ -177,7 +181,10 @@ func (s *Service) Reload(cfg config.Config) error {
 // sameRuntimeConfig reports whether two accounts are identical apart from the
 // transfer window, which is applied in place without cancelling a cycle.
 func sameRuntimeConfig(a, b config.Account) bool {
+	// Window and retry tuning schedule the next dispatch; neither cancels a
+	// cycle that is already streaming.
 	a.TransferWindow, b.TransferWindow = nil, nil
+	a.Retry, b.Retry = nil, nil
 	return reflect.DeepEqual(a, b)
 }
 
@@ -292,6 +299,10 @@ func cloneConfig(cfg config.Config) config.Config {
 			window := *cfg.Accounts[i].TransferWindow
 			cfg.Accounts[i].TransferWindow = &window
 		}
+		if cfg.Accounts[i].Retry != nil {
+			retry := *cfg.Accounts[i].Retry
+			cfg.Accounts[i].Retry = &retry
+		}
 	}
 	return cfg
 }
@@ -355,8 +366,11 @@ func newEngine(store *syncer.Store, cfg config.Config, account config.Account, s
 		Workers:                  cfg.Workers,
 		MaxStagingBytes:          cfg.MaxStagingBytes,
 		MaxStagingFiles:          cfg.MaxStagingFiles, BytesPerSecond: cfg.BytesPerSecond,
-		CaptureDate: amazon.CaptureDateCapability,
-		Window:      state.window, Logger: logger,
+		CaptureDate:   amazon.CaptureDateCapability,
+		Window:        state.window,
+		MaxAttempts:   account.RetryMaxAttempts(),
+		RetryMaxDelay: account.RetryMaxDelay(),
+		Logger:        logger,
 	})
 	digest := sha256.Sum256([]byte(secrets.APIKey + "\x00" + secrets.Cookie))
 	return engine, digest, err
@@ -484,11 +498,21 @@ func (s *Service) accountState(id string) *accountState {
 }
 
 func (s *Service) Status(ctx context.Context, id string) (syncer.Status, error) {
-	engine, err := s.engine(id)
+	if id == "" {
+		return syncer.Status{}, errors.New("account_required")
+	}
+	report, err := s.StatusReport(ctx, id)
 	if err != nil {
 		return syncer.Status{}, err
 	}
-	return engine.Status(ctx)
+	if len(report.Accounts) != 1 {
+		return syncer.Status{}, errors.New("account_not_found")
+	}
+	result := report.Accounts[0]
+	if result.Code != "ok" {
+		return result.Status, errors.New(result.Code)
+	}
+	return result.Status, nil
 }
 
 type DeletionReport struct {

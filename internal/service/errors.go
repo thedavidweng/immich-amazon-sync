@@ -65,7 +65,9 @@ func knownCode(code string) string {
 		"workflow_mismatch", "workflow_cleanup_failed", "workflow_secret_unavailable",
 		"video_usage_threshold_invalid", "video_usage_threshold_required",
 		"hold_videos_at_threshold_invalid",
-		"transfer_window_timezone_invalid", "transfer_window_time_invalid", "transfer_window_bounds_invalid":
+		"transfer_window_timezone_invalid", "transfer_window_time_invalid", "transfer_window_bounds_invalid",
+		"retry_max_attempts_invalid", "retry_max_delay_invalid",
+		"metrics_invalid", "metrics_token_invalid", "metrics_listener_public":
 		return code
 	}
 	return "operation_failed"
@@ -107,7 +109,9 @@ func ExitCode(err error) int {
 		"workflow_not_configured", "workflow_management_active", "workflow_not_managed",
 		"video_usage_threshold_invalid", "video_usage_threshold_required",
 		"hold_videos_at_threshold_invalid",
-		"transfer_window_timezone_invalid", "transfer_window_time_invalid", "transfer_window_bounds_invalid":
+		"transfer_window_timezone_invalid", "transfer_window_time_invalid", "transfer_window_bounds_invalid",
+		"retry_max_attempts_invalid", "retry_max_delay_invalid",
+		"metrics_invalid", "metrics_token_invalid", "metrics_listener_public":
 		return 2
 	}
 	return 1

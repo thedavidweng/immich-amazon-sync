@@ -147,7 +147,7 @@ func (e *Engine) trashAsset(ctx context.Context, id string) error {
 	}
 	code := errorCode(err)
 	attempts++
-	next := e.opts.Now().Add(retryDelay(attempts, err)).UnixMilli()
+	next := e.opts.Now().Add(e.retryDelay(attempts, err)).UnixMilli()
 	if _, dbErr := e.store.db.ExecContext(ctx, `UPDATE assets SET error_code=?,attempts=?,next_at=?
 		WHERE account_id=? AND id=?`, code, attempts, next, e.opts.AccountID, id); dbErr != nil {
 		return errors.New("storage_unavailable")

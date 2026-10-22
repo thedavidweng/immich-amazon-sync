@@ -34,6 +34,35 @@ in-flight streams. Two accounts with different windows stay independent.
 Confirm the window's local time against your own clock: `next_opening` is
 computed in the configured zone, including DST transitions.
 
+## Monitor metrics
+
+Metrics are optional and off by default. Set `metrics: true` and keep the
+listener private; a loopback `listen` address needs no further configuration:
+
+```json
+{"listen": "127.0.0.1:8080", "metrics": true}
+```
+
+To bind a non-loopback address, mount a bearer token and require it on every
+scrape:
+
+```json
+{"listen": "0.0.0.0:8080", "metrics": true, "metrics_token_file": "/run/secrets/metrics_token"}
+```
+
+`GET /metrics` returns Prometheus text exposition and `GET /status` returns the
+same durable report as `status --json`. Both answer `404` while metrics are
+disabled, and both require `Authorization: Bearer <token>` when a token file is
+configured. Labels are the hashed account plus finite state, code, reason,
+category and mode values, so no filename, asset UUID, raw account name, URL or
+secret is exposed.
+
+Durable counts come from the ledger. Direct/API byte counters and direct-read
+fallback/failure counters are process-local and reset when the process
+restarts. Health and readiness never depend on Amazon availability, and a
+scrape failure does not pause backups. Do not infer a subscription cap or
+remaining capacity from usage counters; they are observations only.
+
 ## Back up
 
 Stop writes before archiving SQLite, its WAL/SHM files, staging and identity

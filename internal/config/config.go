@@ -23,17 +23,23 @@ import (
 )
 
 type Config struct {
-	DataDir           string    `json:"data_dir"`
-	Listen            string    `json:"listen"`
-	ScanInterval      string    `json:"scan_interval"`
-	Workers           int       `json:"workers"`
-	MaxStagingBytes   int64     `json:"max_staging_bytes"`
-	MaxStagingFiles   int       `json:"max_staging_files"`
-	BytesPerSecond    int64     `json:"bytes_per_second"`
-	LogLevel          string    `json:"log_level"`
-	AdminPasswordFile string    `json:"admin_password_file,omitempty"`
-	WebhookSecretFile string    `json:"webhook_secret_file,omitempty"`
-	Accounts          []Account `json:"accounts"`
+	DataDir           string `json:"data_dir"`
+	Listen            string `json:"listen"`
+	ScanInterval      string `json:"scan_interval"`
+	Workers           int    `json:"workers"`
+	MaxStagingBytes   int64  `json:"max_staging_bytes"`
+	MaxStagingFiles   int    `json:"max_staging_files"`
+	BytesPerSecond    int64  `json:"bytes_per_second"`
+	LogLevel          string `json:"log_level"`
+	AdminPasswordFile string `json:"admin_password_file,omitempty"`
+	WebhookSecretFile string `json:"webhook_secret_file,omitempty"`
+	// Metrics enables the optional Prometheus text endpoint. It is off by
+	// default and shares the private listener. A non-loopback listener also
+	// requires MetricsTokenFile so the endpoint has an explicit authentication
+	// policy instead of relying on network placement alone.
+	Metrics          bool      `json:"metrics,omitempty"`
+	MetricsTokenFile string    `json:"metrics_token_file,omitempty"`
+	Accounts         []Account `json:"accounts"`
 }
 
 type Account struct {
@@ -90,8 +96,66 @@ type Account struct {
 	// read-only local roots. Empty (the default, and for every existing
 	// account) keeps every original on the Immich API.
 	DirectRoots []DirectRoot `json:"direct_roots,omitempty"`
-	apiKey      string
-	cookie      string
+	// Retry bounds this account's durable retry schedule. It may only narrow
+	// the conservative defaults: an Unconfirmed write is still reconciled by
+	// re-reading the target and is never retried as a fresh POST.
+	Retry  *Retry `json:"retry,omitempty"`
+	apiKey string
+	cookie string
+}
+
+// Retry is the optional per-account retry tuning. Zero values keep the
+// engine's conservative defaults. MaxAttempts is a hard per-item cap and
+// MaxDelay caps the exponential backoff; an explicit remote Retry-After still
+// wins. Neither setting authorizes a retry whose prior write is Unconfirmed.
+type Retry struct {
+	MaxAttempts int    `json:"max_attempts,omitempty"`
+	MaxDelay    string `json:"max_delay,omitempty"`
+}
+
+const (
+	DefaultMaxAttempts = 5
+	DefaultRetryDelay  = 30 * time.Second
+	minRetryDelay      = time.Second
+	maxRetryDelay      = 5 * time.Minute
+	maxRetryAttempts   = 10
+)
+
+// RetryMaxAttempts resolves the bounded attempt cap without requiring the
+// caller to distinguish an absent block from a zero value.
+func (a Account) RetryMaxAttempts() int {
+	if a.Retry != nil && a.Retry.MaxAttempts > 0 {
+		return a.Retry.MaxAttempts
+	}
+	return DefaultMaxAttempts
+}
+
+// RetryMaxDelay resolves the bounded backoff ceiling. Validation guarantees a
+// parseable, in-range value whenever the block is present.
+func (a Account) RetryMaxDelay() time.Duration {
+	if a.Retry != nil && a.Retry.MaxDelay != "" {
+		if delay, err := time.ParseDuration(a.Retry.MaxDelay); err == nil {
+			return delay
+		}
+	}
+	return DefaultRetryDelay
+}
+
+func (r *Retry) validate() error {
+	if r == nil {
+		return nil
+	}
+	if r.MaxAttempts < 0 || r.MaxAttempts > maxRetryAttempts {
+		return errors.New("retry_max_attempts_invalid")
+	}
+	if r.MaxDelay == "" {
+		return nil
+	}
+	delay, err := time.ParseDuration(r.MaxDelay)
+	if err != nil || delay < minRetryDelay || delay > maxRetryDelay {
+		return errors.New("retry_max_delay_invalid")
+	}
+	return nil
 }
 
 // TransferWindow is one optional daily upload window in an IANA timezone.
@@ -260,6 +324,25 @@ func Load(path string) (Config, error) {
 			TransferWindow: environmentWindow(os.Getenv("TRANSFER_TIMEZONE"),
 				os.Getenv("TRANSFER_WINDOW_START"), os.Getenv("TRANSFER_WINDOW_END")),
 		}
+		if attemptValue := os.Getenv("RETRY_MAX_ATTEMPTS"); attemptValue != "" {
+			attempts, err := strconv.Atoi(attemptValue)
+			if err != nil {
+				return cfg, errors.New("retry_max_attempts_invalid")
+			}
+			if account.Retry == nil {
+				account.Retry = &Retry{}
+			}
+			account.Retry.MaxAttempts = attempts
+		}
+		if delayValue := os.Getenv("RETRY_MAX_DELAY"); delayValue != "" {
+			if _, err := time.ParseDuration(delayValue); err != nil {
+				return cfg, errors.New("retry_max_delay_invalid")
+			}
+			if account.Retry == nil {
+				account.Retry = &Retry{}
+			}
+			account.Retry.MaxDelay = delayValue
+		}
 		policy, err := envFilters()
 		if err != nil {
 			return cfg, err
@@ -278,6 +361,16 @@ func Load(path string) (Config, error) {
 	}
 	if value := os.Getenv("WEBHOOK_SECRET_FILE"); value != "" {
 		cfg.WebhookSecretFile = value
+	}
+	if value := os.Getenv("METRICS"); value != "" {
+		enabled, err := strconv.ParseBool(value)
+		if err != nil {
+			return cfg, errors.New("metrics_invalid")
+		}
+		cfg.Metrics = enabled
+	}
+	if value := os.Getenv("METRICS_TOKEN_FILE"); value != "" {
+		cfg.MetricsTokenFile = value
 	}
 	return cfg, nil
 }
@@ -398,6 +491,20 @@ func windowClock(value string) (int, error) {
 	return parsed.Hour()*60 + parsed.Minute(), nil
 }
 
+// loopbackListen reports whether a listen address only accepts local
+// connections. Empty hosts bind every interface and are never private.
+func loopbackListen(listen string) bool {
+	host, _, err := net.SplitHostPort(listen)
+	if err != nil || host == "" {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 func (c Config) Validate() error {
 	if strings.TrimSpace(c.DataDir) == "" {
 		return errors.New("data_directory_required")
@@ -419,6 +526,19 @@ func (c Config) Validate() error {
 	}
 	if len(c.Accounts) == 0 && c.AdminPasswordFile == "" {
 		return errors.New("accounts_required")
+	}
+	if c.MetricsTokenFile != "" && !c.Metrics {
+		return errors.New("metrics_token_invalid")
+	}
+	if c.Metrics {
+		if _, _, err := net.SplitHostPort(c.Listen); err != nil {
+			return errors.New("listen_address_invalid")
+		}
+		if c.MetricsTokenFile == "" && !loopbackListen(c.Listen) {
+			// Metrics are private by construction: either the listener is
+			// loopback-only or an explicit bearer token is required.
+			return errors.New("metrics_listener_public")
+		}
 	}
 	seen := make(map[string]bool)
 	for _, account := range c.Accounts {
@@ -502,6 +622,9 @@ func (c Config) Validate() error {
 			return errors.New("favorites_takeover_requires_mirror")
 		}
 		if err := account.TransferWindow.validate(); err != nil {
+			return err
+		}
+		if err := account.Retry.validate(); err != nil {
 			return err
 		}
 		if _, err := direct.New(account.Roots()); err != nil {

@@ -116,6 +116,25 @@ func formAccount(r *http.Request) (config.Account, error) {
 	if window != (config.TransferWindow{}) {
 		transferWindow = &window
 	}
+	retry := config.Retry{}
+	if value := strings.TrimSpace(r.PostForm.Get("retry_max_attempts")); value != "" {
+		attempts, err := strconv.Atoi(value)
+		if err != nil || attempts < 1 || attempts > 10 {
+			return config.Account{}, errors.New("retry_max_attempts_invalid")
+		}
+		retry.MaxAttempts = attempts
+	}
+	if value := strings.TrimSpace(r.PostForm.Get("retry_max_delay")); value != "" {
+		delay, err := time.ParseDuration(value)
+		if err != nil || delay < time.Second || delay > 5*time.Minute {
+			return config.Account{}, errors.New("retry_max_delay_invalid")
+		}
+		retry.MaxDelay = value
+	}
+	var retryPolicy *config.Retry
+	if retry != (config.Retry{}) {
+		retryPolicy = &retry
+	}
 	return config.Account{
 		ID: r.PostForm.Get("id"), ImmichURL: r.PostForm.Get("immich_url"),
 		APIKeyFile: r.PostForm.Get("key_file"), CookieFile: r.PostForm.Get("cookie_file"),
@@ -136,6 +155,7 @@ func formAccount(r *http.Request) (config.Account, error) {
 		VideoUsageThresholdBytes: threshold,
 		HoldVideosAtThreshold:    r.PostForm.Get("hold_videos_at_threshold") == "on",
 		TransferWindow:           transferWindow,
+		Retry:                    retryPolicy,
 	}, nil
 }
 

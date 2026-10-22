@@ -17,6 +17,8 @@ See [config.example.json](config.example.json) for the minimal deployment shape.
 | `log_level` | `info` | `debug`, `info`, `warn`, `error`. |
 | `admin_password_file` | unset | Optional mounted admin passphrase file, at least 12 characters; enables the local UI. |
 | `webhook_secret_file` | unset | Optional bearer-secret file for `/events/{account}`; trimmed secret at least 32 bytes, raw file at most 4 KiB. |
+| `metrics` | `false` | Enables `GET /metrics` and `GET /status` on the normal listener. Off by default. With a non-loopback `listen`, `metrics_token_file` is required. See [optional metrics](#optional-metrics). |
+| `metrics_token_file` | unset | Mounted bearer token required on both routes. Checked on every request, so rotating the file needs no restart. Only legal together with `metrics: true`. |
 | `accounts` | empty | Explicit, isolated account configurations. |
 
 | Per-account field | Default | Meaning |
@@ -46,6 +48,7 @@ See [config.example.json](config.example.json) for the minimal deployment shape.
 | `workflow_secret_file` | unset | Path for the generated bearer secret. The service creates the file with mode `0600`; the value is never stored in JSON or the ledger. |
 | `transfer_window` | unset | Optional daily upload window: `{"timezone":"America/New_York","start":"23:00","end":"06:00"}`. `timezone` is an IANA name; `start`/`end` are local `HH:MM` wall-clock times. `start` is inclusive, `end` is exclusive, and `start` may be later than `end` to cross midnight. Equal bounds are invalid, as are unknown or `Local` zones. Unset (or `null`) preserves continuous transfers. |
 | `direct_roots` | empty | Optional read-only mappings from an Immich-reported path prefix to a local directory. Each entry has `immich_path` and `host_path`; both must be absolute and clean, and `immich_path` must be unique. Empty means every original is downloaded from Immich. |
+| `retry` | conservative defaults | Optional bounded retry tuning: `{"max_attempts":5,"max_delay":"30s"}`. `max_attempts` is 1..10; `max_delay` is 1s..5m. It caps definite-failure retries only: an `unconfirmed` write is always reconciled by re-reading the target before another POST, and a remote `Retry-After` still wins over the local ceiling. |
 
 ### Live Photo originals
 
@@ -210,11 +213,45 @@ accepted instead of `MEDIA_TYPES`; supplying both returns `filter_conflict`.
 Its account ID is `default`.
 Optional environment-mode window values are `TRANSFER_TIMEZONE`,
 `TRANSFER_WINDOW_START` and `TRANSFER_WINDOW_END`; set all three together or none.
+Optional `RETRY_MAX_ATTEMPTS` (1..10) and `RETRY_MAX_DELAY` (Go duration,
+1s..5m) apply the same bounded retry tuning.
 Use JSON for multiple accounts.
-`DATA_DIR`, `LISTEN`, `ADMIN_PASSWORD_FILE` and `WEBHOOK_SECRET_FILE` override
-their corresponding values even with a JSON file. Environment-only accounts also
+`DATA_DIR`, `LISTEN`, `ADMIN_PASSWORD_FILE`, `WEBHOOK_SECRET_FILE`, `METRICS`
+(`true`/`false`) and `METRICS_TOKEN_FILE` override their corresponding values
+even with a JSON file. Environment-only accounts also
 accept `MANAGED_WORKFLOW`, `IMMICH_WORKFLOW_API_KEY_FILE`,
 `WORKFLOW_CALLBACK_URL` and `WORKFLOW_SECRET_FILE`.
+
+## Optional metrics
+
+Metrics are off by default. `metrics: true` adds `GET /metrics` (Prometheus text
+exposition) and `GET /status` (the same durable `Report` JSON as
+`status --json`) to the normal listener. Both routes answer `404` while metrics
+are disabled.
+
+The access policy is explicit rather than assumed:
+
+- With no `metrics_token_file`, `listen` must be a loopback address
+  (`127.0.0.1`, `::1` or `localhost`). A public bind is rejected with
+  `metrics_listener_public`.
+- With `metrics_token_file`, a non-loopback bind is allowed and every request
+  must present `Authorization: Bearer <token>`. A missing or wrong token returns
+  `401`; an unreadable token file returns `503 metrics_unavailable`.
+- `metrics_token_file` without `metrics: true` is rejected with
+  `metrics_token_invalid`.
+
+Labels are bounded to the hashed account identifier plus finite `state`, `code`,
+`reason`, `category`, `kind` and `mode` values. Filenames, asset UUIDs, raw
+account names, URLs, cookies and API keys never appear. Unknown label values
+collapse to `other` instead of creating new series.
+
+Signal families cover media `confirmed`/`existing`, favorite pending/failed,
+filter exclusions, album and membership pending, managed-Workflow state, the
+transfer window, direct-versus-API source bytes, usage categories, quota/video
+holds and Live Photo pair completeness. Byte counters and direct-read counters
+are process-local and reset on restart; durable counts come from the ledger.
+`/healthz` and `/readyz` never depend on these settings or on Amazon
+availability.
 
 Direct `IMMICH_API_KEY` and `AMAZON_COOKIE` values exist for environment-mode
 compatibility. Avoid them in deployments: environment values can appear in

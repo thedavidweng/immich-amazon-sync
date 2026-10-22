@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -154,6 +155,25 @@ func Execute(ctx context.Context, args []string, out, errOut io.Writer, version 
 		parent.AddCommand(&cobra.Command{Use: child, Short: name + " " + child, Args: cobra.NoArgs, RunE: run})
 		root.AddCommand(parent)
 	}
+	root.AddCommand(&cobra.Command{
+		Use: "status", Short: "Show durable status without contacting either remote", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := load()
+			if err != nil {
+				return operational(err)
+			}
+			runtime, err := service.Open(cfg, io.Discard)
+			if err != nil {
+				return operational(err)
+			}
+			report, reportErr := runtime.StatusReport(cmd.Context(), "")
+			closeErr := runtime.Close()
+			if err := printReport(out, report, asJSON); err != nil {
+				return err
+			}
+			return operational(errors.Join(reportErr, closeErr))
+		},
+	})
 	deletions := &cobra.Command{Use: "deletions", RunE: func(*cobra.Command, []string) error { return usage }}
 	deletions.AddCommand(&cobra.Command{
 		Use: "plan", Short: "Show the pending deletion manifest without changing anything", Args: cobra.NoArgs,
@@ -261,12 +281,57 @@ func printReport(out io.Writer, report service.Report, asJSON bool) error {
 		if _, err := fmt.Fprintln(out); err != nil {
 			return outputError(err)
 		}
+		if _, err := fmt.Fprintf(out, "  albums active=%d pending=%d failed=%d unconfirmed=%d inaccessible=%d associations pending=%d failed=%d unconfirmed=%d events pending=%d failed=%d scanning=%d\n",
+			account.Status.AlbumsActive, account.Status.AlbumsPending, account.Status.AlbumsFailed,
+			account.Status.AlbumsUnconfirmed, account.Status.AlbumsInaccessible,
+			account.Status.AssociationsPending, account.Status.AssociationsFailed,
+			account.Status.AssociationsUnconfirmed, account.Status.EventsPending,
+			account.Status.EventsFailed, account.Status.Scanning); err != nil {
+			return outputError(err)
+		}
+		if _, err := fmt.Fprintf(out, "  retry max_attempts=%d max_delay_ms=%d\n",
+			account.Status.MaxAttempts, account.Status.RetryMaxDelayMS); err != nil {
+			return outputError(err)
+		}
+		if _, err := fmt.Fprintf(out, "  direct reads=%d bytes=%d api_bytes=%d\n",
+			account.Status.Direct.Reads, account.Status.Direct.BytesAvoided, account.Status.Direct.APIBytes); err != nil {
+			return outputError(err)
+		}
+		if err := printCounts(out, "  exclusion", account.Status.Exclusions); err != nil {
+			return outputError(err)
+		}
+		if err := printCounts(out, "  error", account.Status.Errors); err != nil {
+			return outputError(err)
+		}
+		if err := printCounts(out, "  direct_fallback", account.Status.Direct.Fallbacks); err != nil {
+			return outputError(err)
+		}
+		if err := printCounts(out, "  direct_failure", account.Status.Direct.Failures); err != nil {
+			return outputError(err)
+		}
 		if account.Status.Workflow != "" {
 			if _, err := fmt.Fprintf(out, "  workflow=%s code=%s\n", account.Status.Workflow, orNone(account.Status.WorkflowCode)); err != nil {
 				return outputError(err)
 			}
 		}
 		if err := printUsage(out, "usage", account.Status.Usage); err != nil {
+			return outputError(err)
+		}
+	}
+	return nil
+}
+
+// printCounts emits one deterministic line per nonzero finite code or reason.
+func printCounts(out io.Writer, prefix string, counts map[string]int) error {
+	keys := make([]string, 0, len(counts))
+	for key, count := range counts {
+		if count > 0 {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if _, err := fmt.Fprintf(out, "%s %s=%d\n", prefix, key, counts[key]); err != nil {
 			return outputError(err)
 		}
 	}
@@ -351,11 +416,11 @@ func printDiagnosis(out io.Writer, report service.DoctorReport, asJSON bool) err
 		return outputError(err)
 	}
 	for _, account := range report.Accounts {
-		if _, err := fmt.Fprintf(out, "%s version=%s region=%s evidence=%s target_writes=%s original_read=%s workflow=%s direct_roots=%d/%d capture_date=%s\n",
+		if _, err := fmt.Fprintf(out, "%s version=%s region=%s evidence=%s target_writes=%s original_read=%s workflow=%s direct_roots=%d/%d capture_date=%s retry_max_attempts=%d retry_max_delay_ms=%d\n",
 			account.Account, account.Version, account.Region, account.Evidence, account.TargetWrites,
 			account.OriginalRead, orNone(account.Workflow),
 			account.DirectRoots.Available, account.DirectRoots.Configured,
-			account.CaptureDate); err != nil {
+			account.CaptureDate, account.MaxAttempts, account.RetryDelayMS); err != nil {
 			return outputError(err)
 		}
 		if err := printUsage(out, "  usage", account.Usage); err != nil {

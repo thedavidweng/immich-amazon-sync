@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -51,8 +52,23 @@ type Options struct {
 	// DirectRoots are operator-approved read-only mappings. Empty keeps every
 	// original on the Immich API.
 	DirectRoots []direct.Root
-	Logger      *slog.Logger
+	// MaxAttempts bounds durable retries for one item. Zero keeps the
+	// conservative default; values above maxRetryAttempts are refused.
+	MaxAttempts int
+	// RetryMaxDelay caps the exponential backoff. Zero keeps the conservative
+	// default. A remote Retry-After still wins.
+	RetryMaxDelay time.Duration
+	Logger        *slog.Logger
 }
+
+// maxRetryAttempts is the hard ceiling for account retry tuning.
+const maxRetryAttempts = 10
+
+// minRetryDelay and maxRetryDelay bound the tunable backoff ceiling.
+const (
+	minRetryDelay = time.Second
+	maxRetryDelay = 5 * time.Minute
+)
 
 // WindowStatus is the optional transfer-window view in account status.
 type WindowStatus struct {
@@ -119,6 +135,10 @@ type Status struct {
 	TransferWindow          *WindowStatus  `json:"transfer_window,omitempty"`
 	BytesPerSecond          int64          `json:"bytes_per_second"`
 	Direct                  DirectCounters `json:"direct"`
+	// MaxAttempts and RetryMaxDelayMS are the effective bounded retry tuning
+	// for this account. They never change Unconfirmed reconciliation.
+	MaxAttempts     int   `json:"max_attempts"`
+	RetryMaxDelayMS int64 `json:"retry_max_delay_ms"`
 }
 
 type Engine struct {
@@ -149,6 +169,9 @@ func New(store *Store, source bridge.Source, target bridge.Target, opts Options)
 		opts.Workers < 0 || opts.Workers > 32 || opts.MaxStagingBytes < 0 ||
 		opts.MaxStagingFiles < 0 || opts.BytesPerSecond < 0 ||
 		opts.VideoUsageThresholdBytes < 0 ||
+		opts.MaxAttempts < 0 || opts.MaxAttempts > maxRetryAttempts ||
+		opts.RetryMaxDelay < 0 ||
+		(opts.RetryMaxDelay != 0 && (opts.RetryMaxDelay < minRetryDelay || opts.RetryMaxDelay > maxRetryDelay)) ||
 		(opts.HoldVideosAtThreshold && opts.VideoUsageThresholdBytes == 0) {
 		return nil, errors.New("invalid_options")
 	}
@@ -175,6 +198,12 @@ func New(store *Store, source bridge.Source, target bridge.Target, opts Options)
 	}
 	if opts.MaxStagingFiles == 0 {
 		opts.MaxStagingFiles = 2
+	}
+	if opts.MaxAttempts == 0 {
+		opts.MaxAttempts = defaultMaxAttempts
+	}
+	if opts.RetryMaxDelay == 0 {
+		opts.RetryMaxDelay = defaultRetryDelay
 	}
 	if opts.Now == nil {
 		opts.Now = time.Now
@@ -281,8 +310,15 @@ func (e *Engine) Retry(ctx context.Context) error {
 	return nil
 }
 
+// attemptLimit renders the configured attempt bound for SQL. The value is a
+// validated integer, so it can never carry caller text.
+func (e *Engine) attemptLimit(column string) string {
+	return column + "attempts<" + strconv.Itoa(e.opts.MaxAttempts)
+}
+
 func (e *Engine) summary(ctx context.Context) (Status, error) {
-	st := Status{Errors: map[string]int{}, Exclusions: map[string]int{}, BytesPerSecond: e.opts.BytesPerSecond}
+	st := Status{Errors: map[string]int{}, Exclusions: map[string]int{}, BytesPerSecond: e.opts.BytesPerSecond,
+		MaxAttempts: e.opts.MaxAttempts, RetryMaxDelayMS: e.opts.RetryMaxDelay.Milliseconds()}
 	var reason, code string
 	var last *string
 	err := e.store.db.QueryRowContext(ctx, "SELECT pause_reason,last_success,error_code FROM accounts WHERE id=?",
@@ -513,7 +549,7 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 		coalesce(sum(state IN ('pending','staged','failed')
 			AND (?=0 OR coalesce(json_extract(metadata,'$.kind'),'')!='VIDEO')),0),
 		coalesce(sum(state='unconfirmed'),0)
-		FROM assets a WHERE account_id=? AND attempts<5 AND next_at<=?
+		FROM assets a WHERE account_id=? AND `+e.attemptLimit("")+` AND next_at<=?
 		AND error_code!='source_changed' AND `+e.eligibleSQL(),
 		videoHold, e.opts.AccountID, nowMillis).Scan(&uploadDue, &reconcileDue)
 	if err != nil {
@@ -521,15 +557,15 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 	}
 	var otherDue int
 	err = e.store.db.QueryRowContext(ctx, `SELECT
-		(SELECT count(*) FROM rules WHERE account_id=? AND active=1 AND complete=0 AND (error_code='' OR (attempts<5 AND next_at<=?)))+
-		(SELECT count(*) FROM hints WHERE account_id=? AND attempts<5 AND next_at<=?)+
+		(SELECT count(*) FROM rules WHERE account_id=? AND active=1 AND complete=0 AND (error_code='' OR (`+e.attemptLimit("")+` AND next_at<=?)))+
+		(SELECT count(*) FROM hints WHERE account_id=? AND `+e.attemptLimit("")+` AND next_at<=?)+
 		(SELECT count(*) FROM incremental WHERE account_id=? AND active=1 AND error_code='')+
 		(SELECT count(*) FROM assets WHERE account_id=? AND state='delete_pending' AND next_at<=?)+
 		(SELECT count(*) FROM albums a JOIN rules r ON r.account_id=a.account_id AND r.scope=a.scope
 		 WHERE a.account_id=? AND ? AND r.active=1 AND r.complete=1 AND a.state NOT IN ('creating','unconfirmed')
-		 AND a.error_code!='' AND a.attempts<5 AND a.next_at<=?)+
+		 AND a.error_code!='' AND `+e.attemptLimit("a.")+` AND a.next_at<=?)+
 		(SELECT count(*) FROM favorites WHERE account_id=? AND ? AND state IN ('pending','failed','uncertain')
-		 AND attempts<5 AND next_at<=? AND `+favoriteEligibleSQL+`)`,
+		 AND `+e.attemptLimit("")+` AND next_at<=? AND `+favoriteEligibleSQL+`)`,
 		e.opts.AccountID, nowMillis, e.opts.AccountID, nowMillis, e.opts.AccountID,
 		e.opts.AccountID, nowMillis,
 		e.opts.AccountID, e.mirrorsAlbums(), nowMillis,
@@ -548,16 +584,16 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 	var next *int64
 	err = e.store.db.QueryRowContext(ctx, `SELECT min(next_at) FROM (
 		SELECT next_at FROM assets a WHERE account_id=? AND state IN ('failed','unconfirmed')
-			AND attempts<5 AND error_code!='source_changed'
+			AND `+e.attemptLimit("")+` AND error_code!='source_changed'
 			AND (?=0 OR coalesce(json_extract(a.metadata,'$.kind'),'')!='VIDEO') AND `+e.eligibleSQL()+`
-		UNION ALL SELECT next_at FROM hints WHERE account_id=? AND attempts<5
+		UNION ALL SELECT next_at FROM hints WHERE account_id=? AND `+e.attemptLimit("")+`
 		UNION ALL SELECT next_at FROM assets WHERE account_id=? AND state='delete_pending'
-		UNION ALL SELECT next_at FROM rules WHERE account_id=? AND active=1 AND complete=0 AND attempts<5
+		UNION ALL SELECT next_at FROM rules WHERE account_id=? AND active=1 AND complete=0 AND `+e.attemptLimit("")+`
 		UNION ALL SELECT a.next_at FROM albums a JOIN rules r ON r.account_id=a.account_id AND r.scope=a.scope
-			WHERE a.account_id=? AND ? AND r.active=1 AND a.attempts<5 AND a.error_code!=''
+			WHERE a.account_id=? AND ? AND r.active=1 AND `+e.attemptLimit("a.")+` AND a.error_code!=''
 			AND a.state NOT IN ('creating','unconfirmed')
 		UNION ALL SELECT next_at FROM favorites WHERE account_id=? AND ? AND state IN ('pending','failed','uncertain')
-			AND attempts<5 AND `+favoriteEligibleSQL+`) WHERE next_at>?`,
+			AND `+e.attemptLimit("")+` AND `+favoriteEligibleSQL+`) WHERE next_at>?`,
 		e.opts.AccountID, videoHold, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID,
 		e.opts.AccountID, e.mirrorsAlbums(), e.opts.AccountID, e.favoritesOn(), nowMillis).Scan(&next)
 	if err != nil {
@@ -720,7 +756,7 @@ func (e *Engine) run(ctx context.Context, full, incremental bool) error {
 	// An inaccessible album stays visibly failed until discovery returns it.
 	if _, err = e.store.db.ExecContext(ctx, `UPDATE rules SET error_code='' WHERE account_id=?
 		AND active=1 AND error_code!='album_inaccessible'
-		AND (? OR (attempts<5 AND next_at<=?))`, e.opts.AccountID, full, e.opts.Now().UnixMilli()); err != nil {
+		AND (? OR (`+e.attemptLimit("")+` AND next_at<=?))`, e.opts.AccountID, full, e.opts.Now().UnixMilli()); err != nil {
 		return errors.New("storage_unavailable")
 	}
 	if incremental {

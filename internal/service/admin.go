@@ -162,6 +162,20 @@ func (b *adminBackend) Diagnose(ctx context.Context, id string) ([]admin.Diagnos
 	return checks, err
 }
 
+func (b *adminBackend) WorkflowLogs(ctx context.Context, id string, limit int) ([]admin.WorkflowLog, error) {
+	reports, err := b.Service.WorkflowLogs(ctx, id, limit)
+	logs := make([]admin.WorkflowLog, 0, len(reports))
+	for _, report := range reports {
+		entry := admin.WorkflowLog{Account: report.Account, Completed: report.Completed,
+			Halted: report.Halted, Error: report.Error}
+		if report.Last != nil {
+			entry.Last = report.Last.UTC().Format("2006-01-02 15:04:05 MST")
+		}
+		logs = append(logs, entry)
+	}
+	return logs, err
+}
+
 func (b *adminBackend) OrphanWorkflows(ctx context.Context) ([]admin.WorkflowOrphan, error) {
 	reports, err := b.WorkflowStatus(ctx, "")
 	var orphans []admin.WorkflowOrphan

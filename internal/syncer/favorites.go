@@ -238,7 +238,7 @@ type pendingFavorite struct {
 // Shared-target conflicts are never due and therefore never write.
 func (e *Engine) dueFavorites(ctx context.Context) ([]pendingFavorite, error) {
 	rows, err := e.store.db.QueryContext(ctx, `SELECT node_id,desired,applied,attempts FROM favorites
-		WHERE account_id=? AND state IN ('pending','failed','uncertain') AND attempts<5
+		WHERE account_id=? AND state IN ('pending','failed','uncertain') AND `+e.attemptLimit("")+`
 		AND next_at<=? AND error_code<>'shared_target_conflict' AND `+favoriteEligibleSQL+`
 		ORDER BY next_at,node_id LIMIT ?`, e.opts.AccountID, e.opts.Now().UnixMilli(), favoriteBatch)
 	if err != nil {
@@ -390,7 +390,7 @@ func (e *Engine) favoriteFailed(ctx context.Context, nodeID string, attempts int
 	attempts++
 	_, dbErr := e.store.db.ExecContext(context.WithoutCancel(ctx), `UPDATE favorites SET state=?,
 		error_code=?,attempts=?,next_at=?,updated_at=? WHERE account_id=? AND node_id=?`,
-		state, code, attempts, e.opts.Now().Add(retryDelay(attempts-1, err)).UnixMilli(),
+		state, code, attempts, e.opts.Now().Add(e.retryDelay(attempts-1, err)).UnixMilli(),
 		e.opts.Now().UTC().Format(time.RFC3339Nano), e.opts.AccountID, nodeID)
 	if dbErr != nil {
 		return errors.New("storage_unavailable")

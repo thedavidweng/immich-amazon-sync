@@ -33,6 +33,8 @@ type AccountDiagnosis struct {
 	Workflow     string             `json:"workflow,omitempty"`
 	DirectRoots  DirectRoots        `json:"direct_roots"`
 	Usage        syncer.UsageStatus `json:"usage"`
+	MaxAttempts  int                `json:"max_attempts"`
+	RetryDelayMS int64              `json:"retry_max_delay_ms"`
 	Checks       []Check            `json:"checks"`
 }
 
@@ -85,7 +87,8 @@ func diagnoseAccount(ctx context.Context, account config.Account) (AccountDiagno
 	report := AccountDiagnosis{
 		Account: AccountHash(account.ID), TargetWrites: "untested", OriginalRead: "untested",
 		CaptureDate: amazon.CaptureDateCapability,
-		Checks:      []Check{},
+		MaxAttempts: account.RetryMaxAttempts(), RetryDelayMS: account.RetryMaxDelay().Milliseconds(),
+		Checks: []Check{},
 	}
 	var errs []error
 	record := func(name string, err error) {

@@ -104,7 +104,7 @@ func (e *Engine) nextJob(ctx context.Context, attempted map[string]bool) (*job, 
 		deferAllowed = 1
 	}
 	rows, err := e.store.db.QueryContext(ctx, `SELECT id,metadata,state,stage_name,md5,sha1,size,node_id,attempts FROM assets a
-		WHERE account_id=? AND state IN ('pending','staged','deferred','unconfirmed','failed') AND next_at<=? AND attempts<5
+		WHERE account_id=? AND state IN ('pending','staged','deferred','unconfirmed','failed') AND next_at<=? AND `+e.attemptLimit("")+`
 		AND error_code!='source_changed' AND (state!='deferred' OR ?)
 		AND `+e.eligibleSQL()+` ORDER BY priority DESC,id LIMIT 64`, e.opts.AccountID, now.UnixMilli(), deferAllowed)
 	if err != nil {
@@ -545,7 +545,7 @@ func (e *Engine) fail(ctx context.Context, j job, err error) error {
 		return errors.New(code)
 	}
 	j.attempts++
-	j.next = e.opts.Now().Add(retryDelay(j.attempts-1, err)).UnixMilli()
+	j.next = e.opts.Now().Add(e.retryDelay(j.attempts-1, err)).UnixMilli()
 	state := "blocked"
 	if j.state == "unconfirmed" || j.state == "running" {
 		state = "unconfirmed"
@@ -553,7 +553,7 @@ func (e *Engine) fail(ctx context.Context, j job, err error) error {
 		code == bridge.Unavailable || code == "staging_quota" || code == "storage_unavailable" || code == "canceled" {
 		state = "failed"
 	}
-	if state == "failed" && j.attempts >= maxAttempts {
+	if state == "failed" && j.attempts >= e.opts.MaxAttempts {
 		state = "blocked"
 	}
 	if dbErr := e.setState(ctx, &j, state, code, ""); dbErr != nil {
@@ -634,6 +634,8 @@ func (e *Engine) stage(ctx context.Context, j *job) (result error) {
 	}
 	if original.direct {
 		e.store.recordDirect(e.opts.AccountID, n)
+	} else {
+		e.store.recordAPI(e.opts.AccountID, n)
 	}
 	return nil
 }

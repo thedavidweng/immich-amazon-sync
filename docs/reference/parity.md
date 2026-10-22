@@ -48,7 +48,7 @@ Checked with `gh api repos/ImAleeexx/immich-gphotos/pulls/<n>`; `merged` was
 | Initial backfill and periodic reconciliation | Yes | Yes | Live evidence (CA, 2026-10-21) | #17 preserves (baseline shipped) |
 | Manual native event/webhook ingestion | Yes | Yes | Offline contract | #17 preserves |
 | Automatic Workflow create/update/remove | Yes | No (manual only) | Not yet tested | #25 |
-| Read-only Workflow log diagnostics | Yes | Doctor only | Not yet tested | #25 |
+| Read-only Workflow log diagnostics | Yes | `workflow logs` CLI and the authenticated dashboard action report aggregate run counts only | Offline contract | #25 delivered; #27 adds the dashboard surface |
 | Strict dedup and verified remote identity (MD5, size, owned Node) | SHA-1 via `gpmc` | MD5/size/owned Node; `confirmed`/`existing` | Live evidence | #17 preserves |
 | Byte-identical originals; no recompression | Yes | Yes | Offline contract + live evidence | #17 preserves; #31 asserts unchanged bytes and mtimes on both upload paths |
 | Opt-in trash propagation, 500-item/10% guard, trash only | Yes | Yes (PR #15) | Live evidence (CA, 2026-10-22) | #17 regression coverage; #15 shipped |
@@ -65,7 +65,7 @@ Checked with `gh api repos/ImAleeexx/immich-gphotos/pulls/<n>`; `merged` was
 | Destination album capacity handling | 20,000-item split | No assumed limit | Unsupported (20k not ported) | #24 only after verified evidence |
 | Daily per-account transfer window | Engine window, no UI | No | Not yet tested | #20 |
 | Per-account workers and uplink byte cap | Global-ish worker/cap | Workers + byte cap existing | Offline contract | #17 preserves; #20/#27 clarify |
-| Configurable retry policy | Engine object | Fixed conservative bounds | Not yet tested | #27 |
+| Configurable retry policy | Engine object | Per-account `retry` block, bounded to 1..10 attempts and a 1s..5m ceiling; `Unconfirmed` still reconciles | Offline contract | #27 |
 | Filters: type, video, size, RAW, archive, tags, album allowlist | Engine partial | Limited type/video/scope | Offline contract | #21 |
 | Durable, reevaluable, non-destructive exclusions | Partial | Skip reasons only | Offline contract | #21 |
 | Categorized storage usage (`photo`, `video`, `other`, `lastCalculated`) | Quota mode proxy | Surfaced in doctor, status, CLI and dashboard with observed bytes/counts | Offline contract | #22 |
@@ -76,9 +76,9 @@ Checked with `gh api repos/ImAleeexx/immich-gphotos/pulls/<n>`; `merged` was
 | Native Apple Live Photo pairing and playback | No | No | Unsupported until disposable samples prove it | #30 |
 | Google/Samsung Motion Photo mux | Yes (PR #7) | No conversion path | Unsupported (deliberately not ported) | #26 keeps original pairs; #30 is the only native-pairing experiment |
 | Managed multi-account local UI | Yes | Yes | Offline contract | #17 preserves |
-| Prometheus `/metrics` with low cardinality | Yes | No | Not yet tested | #27 |
+| Prometheus `/metrics` with low cardinality | Yes | Optional `/metrics` and `/status`, off by default, loopback-only or bearer-token gated | Offline contract | #27 |
 | Health/readiness independent of Amazon | Variable | Yes | Offline contract | #17 preserves |
-| Status, CLI and UI parity for new state | Partial | Baseline counters | Not yet tested | #27 |
+| Status, CLI and UI parity for new state | Partial | `status`, HTTP `/status`, dashboard and metrics derive from one durable report | Offline contract | #27 |
 | Fail-closed unknown and partial operations | Variable | Explicit `Unconfirmed` and guards | Offline contract + live evidence | #17 preserves |
 | Dated live-provider matrix for new writes | None | Partial CA evidence for existing writes | Live evidence (limited) | #28 |
 | Upgrade and dual-architecture release gate | Migration #9 | Schema v3 plus v1 fixture | Offline contract | #29 |
