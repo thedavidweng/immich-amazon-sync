@@ -1,184 +1,138 @@
 # immich-amazon-sync
 
-A self-hosted, one-way backup service: **Immich originals -> durable SQLite
-queue -> aphotos Go SDK -> Amazon Photos**. Run one container with one persistent
-data volume. Select source albums by ID; whole-library backup requires an
-explicit choice. Album mirroring is off by default and can be scoped to those
-selected albums or to every album the API key can read.
+A self-hosted, one-way backup service that continuously syncs original photos and videos from [Immich](https://github.com/immich-app/immich) to Amazon Photos.
 
-Amazon Photos has no official public API. This service uses an unofficial SDK;
-sessions expire and upstream behavior can change. Keep an independent backup.
-Offline tests and read-only diagnostics do not prove real cloud uploads.
+The service runs as a single container backed by a durable local SQLite ledger. It preserves original byte streams without transcoding or quality reduction, queries remote checksums before dispatching uploads to avoid duplicate storage, and enforces non-destructive defaults.
 
-Eligible external-library originals and assets with unknown source checksum
-provenance use MD5 and byte size computed from the staged original; their source
-checksum is not treated as a verified byte checksum. Review the
-[compatibility limits](docs/reference/compatibility.md) before deployment.
+## Quick start
 
-The backup contract is the **original bytes**. There is no quality selector,
-Storage Saver mode or recompression path. Amazon reports observed photo, video
-and other usage by category, which doctor, status and the local dashboard show
-with its calculation time; subscription capacity, remaining bytes and Prime
-entitlement remain explicitly unknown. An optional per-account video advisory
-threshold can warn or hold new video uploads without pausing photos. A real
-quota rejection is a distinct finite error and never misreported as rate
-limiting; staged originals stay durable and resume without a blind retry. See
-[storage usage and quota](docs/reference/compatibility.md#storage-usage-and-quota).
+### Prerequisites
 
-Media is never permanently deleted from Amazon by this service. Removing a source
-asset, album, rule or account does not remove its cloud backup. Optional
-deletion propagation is off by default: when explicitly enabled per account,
-an Immich asset trashed by the user moves the corresponding Amazon node to the
-Amazon trash, which is recoverable, never emptied by this service. Enabling it
-requires `deletions: true` together with the exact typed confirmation phrase in
-`deletions_confirmation`. A pass that would trash more than 500 assets or more
-than 10% of the account's mapped library is refused. See
-[deletion policy](docs/explanation/safety.md#deletion-propagation). Managed
-album membership is separate from media.
+- Docker Engine with Compose v2+
+- Immich instance and API key
+- Amazon Photos session cookie
 
-An original that already exists elsewhere in the same Amazon account (another
-folder, or only inside an album) is reused instead of uploaded again. Reuse
-requires exactly one AVAILABLE, owned node with matching MD5 and byte size,
-re-read by ID; the staging file is released, the node mapping is kept and a
-requested album membership is still applied. Status counts that asset as
-`existing`, not `confirmed`. Zero or multiple matches, mismatched metadata,
-unproven ownership and incomplete pagination are never reused and never counted
-as `existing`; a fresh asset still uploads only when the complete lookup proves
-no copy, while an uncertain write stays `unconfirmed` unless one verified match
-is found.
+### 1. Preparation
 
-Favorite sync is separately opt-in. With `favorites: add_only` on an account, a
-verified node whose source asset explicitly reports favorite is starred; an
-absent source field is unknown and writes nothing, and the service never
-unstars. `favorites: mirror` also clears a star, but only one this service
-applied and only after a fresh read proves the explicit remote value.
-`favorites_takeover: true` (mirror only) records source authority over stars
-applied manually on the Amazon side; without it those stars are preserved. Two
-local accounts that resolve to one Amazon node with contradictory wishes report
-`shared_target_conflict` and neither writes. Every mutation is confirmed by an
-authoritative Amazon re-read of an explicit `settings.favorite` field, a lost
-mutation is retried only after a fresh read, and a bounded audit repairs drift.
-Favorite state and counters are separate from media states.
-Each account can optionally limit new uploads to one daily window in an IANA
-timezone, including windows that cross midnight. Outside it, scans and metadata
-checks continue, an upload already running finishes, and waiting work is
-reported as `deferred` rather than failed. The scheduler wakes at the next
-DST-correct opening, and editing the window applies without restart. See
-[transfer hour limits](docs/how-to/operations.md#limit-transfer-hours).
+Clone the repository and prepare configuration and secrets directories:
 
-Apple Live Photos are preserved as original pairs only when explicitly enabled.
-With `live_photo_mode: original_pair` on an account, a still's hidden MOV
-companion is backed up as a second, independent original with its own hash and
-Node; nothing is muxed, converted or paired remotely, and a missing or
-ineligible companion is reported as `pair_incomplete` rather than a full Live
-Photo backup. The default `still_only` keeps the historical hidden-MOV
-exclusion, and switching modes never re-uploads, overwrites or trashes a Node.
-See [Live Photo originals](docs/reference/configuration.md#live-photo-originals).
-
-Optional read-only originals: an account can approve a mapping from Immich's
-reported original paths to a local directory mounted read-only, so eligible
-originals are staged from disk with zero Immich downloads. It is off by default,
-never writes to or retimes the mount, verifies bytes against the recorded size
-and checksum, and falls back to the Immich API when the mount is absent. Path
-escapes and non-regular files fail closed. See
-[direct originals](docs/how-to/direct-originals.md).
-
-Eligibility filters are validated per account and default to today's behaviour:
-images only, archive included. Optional rules skip camera RAW, originals above a
-byte limit, excluded tags and archived media. Every rejection is a durable,
-reevaluable exclusion rather than a permanent state, so a policy, tag or album
-change requeues the asset without a full rescan. Filters never delete media,
-remove an album relation or authorize trash. See
-[eligibility filters](docs/reference/configuration.md#eligibility-filters).
-
-Managed Workflow onboarding is a separate per-account opt-in with its own Immich
-credential. Without it, native Workflow hints stay manual and polling continues.
-When enabled, the service creates, verifies, updates and removes only the single
-Workflow it owns, and falls back to polling with a finite notice on Immich v2 or
-missing grants. See [managed Workflows](docs/how-to/managed-workflows.md).
-
-Optional Prometheus `/metrics` and `/status` share the private listener, are off
-by default and are loopback-only or bearer-token gated. Per-account retry tuning
-is bounded and never authorizes replaying an unconfirmed write. See
-[status and metrics](docs/reference/status.md).
-
-## Compose quickstart
-
-Requires Docker Engine with Compose v2+ and buildx, on Linux amd64 or arm64.
-
-```sh
+```bash
 git clone https://github.com/thedavidweng/immich-amazon-sync.git
 cd immich-amazon-sync
 cp docs/reference/config.example.json config.json
 mkdir -m 700 secrets
-docker compose build
 ```
 
-Create `secrets/immich-api-key` and `secrets/amazon-cookie` using the
-[credential guide](docs/how-to/credentials.md). These contain a source API key
-and the destination Cookie request-header value, respectively. On Linux, make
-both files owned by UID/GID `10001:10001` with mode `0400`. Edit `config.json`
-with your source URL, actual Amazon marketplace and selected album IDs.
-The example UUID and hostname are placeholders; it contains no credentials.
+### 2. Credentials
 
-```sh
-docker compose run --rm sync --config /etc/immich-amazon-sync/config.json albums list
+Save your Immich API key and Amazon Photos session cookie to secret files:
+
+```bash
+echo "YOUR_IMMICH_API_KEY" > secrets/immich-api-key
+echo "YOUR_AMAZON_COOKIE_HEADER" > secrets/amazon-cookie
+chmod 600 secrets/*
+```
+
+For instructions on obtaining the session cookie, see the [Credentials guide](docs/how-to/credentials.md). On Linux hosts, verify that files are readable by container UID 10001 (or set permissions to `0644`).
+
+### 3. Configuration
+
+Edit `config.json` to specify your Immich server URL, Amazon marketplace region (`us`, `ca`, `de`, `uk`, `jp`, etc.), and backup scope (whole library or specific album IDs):
+
+```json
+{
+  "data_dir": "/data",
+  "listen": "0.0.0.0:8080",
+  "accounts": [
+    {
+      "id": "primary",
+      "immich_url": "http://immich-server:2283",
+      "immich_api_key_file": "/run/secrets/immich_api_key",
+      "amazon_region": "us",
+      "amazon_cookie_file": "/run/secrets/amazon_cookie",
+      "library": true
+    }
+  ]
+}
+```
+
+### 4. Verification and startup
+
+Build the container image and run read-only diagnostic checks:
+
+```bash
+docker compose build
 docker compose run --rm sync --config /etc/immich-amazon-sync/config.json doctor --json
-# This command writes to Amazon; use it only after reviewing the chosen scope.
-docker compose run --rm sync --config /etc/immich-amazon-sync/config.json sync once --json
+```
+
+Start the synchronization daemon in the background:
+
+```bash
 docker compose up -d
 docker compose exec sync wget -q -O - http://127.0.0.1:8080/readyz
 ```
 
-Follow the [first-backup tutorial](docs/tutorials/first-backup.md) for every setup
-step. Compose builds the local image, mounts credentials read-only and initializes
-the named volume for nonroot UID 10001. It publishes port 8080 only on
-`127.0.0.1`; the process listens on all container interfaces. Do not run `sync once`
-against the live daemon's data volume.
+## CLI operations
 
-## Local management
+The container provides diagnostic and inspection commands:
 
-The dashboard is optional; without `ADMIN_PASSWORD_FILE` (or the JSON
-`admin_password_file` path), its routes are absent. Keep the existing
-Compose quickstart for headless operation. For browser-based first setup, use
-explicit `serve --setup --config /data/config.json` with a mounted admin
-passphrase file and a writable config directory. Saving an account activates
-its scheduled work; no source scope is selected implicitly.
+```bash
+# Test connectivity and credentials
+docker compose run --rm sync --config /etc/immich-amazon-sync/config.json doctor --json
 
-See [local setup and management](docs/how-to/local-management.md) for the
-container commands, read-only versus editable modes and session security.
-Do not expose the dashboard publicly; publish only on host loopback.
+# List available albums and IDs from Immich
+docker compose run --rm sync --config /etc/immich-amazon-sync/config.json albums list
+
+# Run a single synchronization pass and exit
+docker compose run --rm sync --config /etc/immich-amazon-sync/config.json sync once --json
+```
+
+An optional local web dashboard can be enabled by providing an admin passphrase file. See [Local management](docs/how-to/local-management.md).
+
+## Capabilities
+
+- **Original preservation**: Transfers exact byte streams; never transcodes, compresses, or modifies EXIF data.
+- **Deduplication**: Matches byte size and MD5 before dispatch to reuse existing remote files and prevent duplicate uploads.
+- **Album synchronization**: Supports selected album IDs, whole-library backups, and remote album mirroring.
+- **Deletion safety**: Remote deletions are disabled by default. Optional trash propagation requires explicit typed confirmation and strictly guards against mass deletion.
+- **Direct disk access**: Optionally reads asset files directly from read-only host mounts to eliminate network overhead.
+- **Transfer windows**: Configurable IANA timezone schedules to restrict uploads to off-peak hours.
+- **Apple Live Photos**: Optional preservation of still and companion MOV pairs as independent originals.
+- **Favorites synchronization**: Opt-in one-way or two-way mirroring of favorite status.
+
+Internal guarantees, recovery handling, and pipeline details are documented in [Architecture and design principles](docs/explanation/architecture.md).
 
 ## Documentation
 
-| Need | Read |
+| Guide | Description |
 | --- | --- |
-| Learn the first backup workflow | [Tutorial](docs/tutorials/first-backup.md) |
-| Obtain or renew credentials | [Credentials](docs/how-to/credentials.md) |
-| Set up or use the optional dashboard | [Local management](docs/how-to/local-management.md) |
-| Back up, restore, upgrade or fix permissions | [Operations](docs/how-to/operations.md) |
-| Diagnose a blocked or uncertain transfer | [Troubleshooting](docs/how-to/troubleshooting.md) |
-| Look up JSON fields and environment variables | [Configuration](docs/reference/configuration.md) |
-| Look up CLI, exits and health behavior | [CLI](docs/reference/cli.md) |
-| Set up trusted event hints and incremental polling | [Event hints](docs/how-to/event-hints.md) |
-| Onboard native Workflow hints | [Managed Workflows](docs/how-to/managed-workflows.md) |
-| Choose what is eligible for backup | [Eligibility filters](docs/reference/configuration.md#eligibility-filters) |
-| Expose optional metrics or tune retries | [Status and metrics](docs/reference/status.md) |
-| Understand managed album membership and uncertainty | [Managed albums](docs/how-to/managed-albums.md) |
-| Interpret progress counters and scheduling | [Status](docs/reference/status.md) |
-| Assess versions, regions and media limitations | [Compatibility evidence](docs/reference/compatibility.md) |
-| Compare capability parity and evidence grades | [Parity baseline](docs/reference/parity.md) |
-| Understand identities and deletion safety | [Safety model](docs/explanation/safety.md) |
-| Understand deployment and upstream contract choices | [ADRs](docs/adr/) |
+| [First backup tutorial](docs/tutorials/first-backup.md) | Guided walkthrough for initial setup and verification |
+| [Credentials](docs/how-to/credentials.md) | Extracting and renewing Amazon session cookies and Immich API keys |
+| [Local management](docs/how-to/local-management.md) | Enabling and using the optional local web dashboard |
+| [Direct originals](docs/how-to/direct-originals.md) | Mounting local Immich storage to bypass network downloads |
+| [Managed albums](docs/how-to/managed-albums.md) | Album sync modes, ID resolution, and membership guards |
+| [Operations](docs/how-to/operations.md) | Backup, restore, migrations, and transfer window scheduling |
+| [Event hints and workflows](docs/how-to/event-hints.md) | Webhook triggers and [managed Immich workflows](docs/how-to/managed-workflows.md) |
+| [Troubleshooting](docs/how-to/troubleshooting.md) | Resolving uncertain writes, auth failures, and error states |
+| [Configuration reference](docs/reference/configuration.md) | Complete JSON schema options and defaults ([example config](docs/reference/config.example.json)) |
+| [CLI reference](docs/reference/cli.md) | Command syntax, subcommands, flags, and exit codes |
+| [Status and metrics](docs/reference/status.md) | Health endpoints, progress counters, and Prometheus metrics |
+| [Compatibility](docs/reference/compatibility.md) | Upstream pins, quota handling, and [feature parity](docs/reference/parity.md) |
+| [Architecture](docs/explanation/architecture.md) | Service pipeline, deduplication, and operational guarantees |
+| [Safety model](docs/explanation/safety.md) | Idempotency, uncertainty tracking, and deletion guards |
+| [Architecture decisions](docs/adr/) | Historical record of design choices (ADRs) |
 
-[Rainforest](https://github.com/thedavidweng/rainforest) handles desktop local-file
-backup and recovery. [aphotos](https://github.com/thedavidweng/amazon-photos) owns
-the reusable Amazon API implementation. This service owns Immich orchestration
-and its own database; it does not share Rainforest's state or run its desktop UI.
-The scenarios were informed by
-[vanessa/immich-amazon-sync](https://github.com/vanessa/immich-amazon-sync) and
-[immich-gphotos](https://github.com/ImAleeexx/immich-gphotos).
+## Acknowledgements
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the offline quality gate and container
-tests. Licensed **AGPL-3.0-only**: [LICENSE](LICENSE). The MIT SDK attribution and
-full license text are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+- [immich-gphotos](https://github.com/ImAleeexx/immich-gphotos) for the workflow patterns, reconciler model, and user scenarios.
+- [aphotos](https://github.com/thedavidweng/amazon-photos) for the Amazon Photos Go SDK.
+- [Rainforest](https://github.com/thedavidweng/rainforest) for local desktop backup patterns and protocol research.
+- [vanessa/immich-amazon-sync](https://github.com/vanessa/immich-amazon-sync) for early integration scenarios.
+
+## Disclaimer
+
+Amazon Photos has no official public API. This service uses an unofficial SDK; sessions expire and upstream behavior can change without notice. Always maintain an independent primary backup of your media.
+
+## License
+
+Licensed under [AGPL-3.0-only](LICENSE). Third-party software notices and licenses are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
