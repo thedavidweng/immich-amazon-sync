@@ -150,6 +150,27 @@ func Execute(ctx context.Context, args []string, out, errOut io.Writer, version 
 		parent.AddCommand(&cobra.Command{Use: child, Short: name + " " + child, Args: cobra.NoArgs, RunE: run})
 		root.AddCommand(parent)
 	}
+	deletions := &cobra.Command{Use: "deletions", RunE: func(*cobra.Command, []string) error { return usage }}
+	deletions.AddCommand(&cobra.Command{
+		Use: "plan", Short: "Show the pending deletion manifest without changing anything", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := load()
+			if err != nil {
+				return operational(err)
+			}
+			runtime, err := service.Open(cfg, io.Discard)
+			if err != nil {
+				return operational(err)
+			}
+			reports, planErr := runtime.DeletionPlan(cmd.Context(), accountID)
+			closeErr := runtime.Close()
+			if err := printDeletions(out, reports, asJSON); err != nil {
+				return err
+			}
+			return operational(errors.Join(planErr, closeErr))
+		},
+	})
+	root.AddCommand(deletions)
 	if err := root.ExecuteContext(ctx); err != nil {
 		if errors.Is(err, versionPrinted) {
 			return 0
@@ -181,10 +202,29 @@ func printReport(out io.Writer, report service.Report, asJSON bool) error {
 		return outputError(json.NewEncoder(out).Encode(report))
 	}
 	for _, account := range report.Accounts {
-		if _, err := fmt.Fprintf(out, "%s %s confirmed=%d existing=%d pending=%d failed=%d unconfirmed=%d\n",
-			account.Account, account.Code, account.Status.Confirmed, account.Status.Existing, account.Status.Pending,
+		if _, err := fmt.Fprintf(out, "%s %s confirmed=%d existing=%d deleted=%d deletion_pending=%d pending=%d failed=%d unconfirmed=%d\n",
+			account.Account, account.Code, account.Status.Confirmed, account.Status.Existing,
+			account.Status.Deleted, account.Status.DeletePending, account.Status.Pending,
 			account.Status.Failed, account.Status.Unconfirmed); err != nil {
 			return outputError(err)
+		}
+	}
+	return nil
+}
+
+func printDeletions(out io.Writer, reports []service.DeletionReport, asJSON bool) error {
+	if asJSON {
+		return outputError(json.NewEncoder(out).Encode(map[string]any{"accounts": reports}))
+	}
+	for _, report := range reports {
+		if _, err := fmt.Fprintf(out, "%s deletion_pending=%d synced=%d blocked=%t\n",
+			report.Account, report.Plan.Pending, report.Plan.Synced, report.Plan.Blocked); err != nil {
+			return outputError(err)
+		}
+		for _, id := range report.Plan.Assets {
+			if _, err := fmt.Fprintf(out, "  %s\n", id); err != nil {
+				return outputError(err)
+			}
 		}
 	}
 	return nil

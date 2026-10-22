@@ -227,3 +227,48 @@ func TestSyncOnceContinuesAfterAccountFailureAndReportsAggregateExit(t *testing.
 		}
 	}
 }
+
+func TestDeletionsPlanIsReadOnlyAndReportsAnEmptyManifest(t *testing.T) {
+	dir := t.TempDir()
+	key := filepath.Join(dir, "key")
+	cookie := filepath.Join(dir, "cookie")
+	for path, value := range map[string]string{key: "private-key", cookie: "session-id=1; ubid-acbca=2; at-acbca=3"} {
+		if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := filepath.Join(dir, "config.json")
+	document := `{"data_dir":"` + dir + `/data","listen":"127.0.0.1:18080","scan_interval":"15m",
+		"workers":1,"max_staging_bytes":1024,"max_staging_files":1,"log_level":"info",
+		"accounts":[{"id":"home","immich_url":"http://immich.local","immich_api_key_file":"` + key + `",
+		"amazon_region":"ca","amazon_cookie_file":"` + cookie + `","album_ids":["album"],
+		"deletions":true,"deletions_confirmation":"ENABLE DELETIONS"}]}`
+	if err := os.WriteFile(cfg, []byte(document), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	code := cli.Execute(context.Background(), []string{"--config", cfg, "deletions", "plan", "--json"}, &out, &errOut, "dev")
+	if code != 0 || errOut.Len() != 0 {
+		t.Fatalf("exit=%d stderr=%q", code, errOut.String())
+	}
+	var report struct {
+		Accounts []struct {
+			Account string `json:"account"`
+			Plan    struct {
+				Pending int  `json:"pending"`
+				Synced  int  `json:"synced"`
+				Blocked bool `json:"blocked"`
+			} `json:"plan"`
+		} `json:"accounts"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Accounts) != 1 || report.Accounts[0].Plan.Pending != 0 ||
+		report.Accounts[0].Plan.Synced != 0 || report.Accounts[0].Plan.Blocked {
+		t.Fatalf("manifest: %+v", report)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "data", "sync.sqlite")); err != nil {
+		t.Fatalf("plan did not open local state read-only: %v", err)
+	}
+}

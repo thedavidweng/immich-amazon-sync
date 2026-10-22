@@ -42,6 +42,13 @@ func (s metadataSDK) GetNode(ctx context.Context, id string) (*aphotos.Node, err
 	})
 }
 
+func (s metadataSDK) MoveToTrash(ctx context.Context, nodeIDs []string) error {
+	_, err := metadataCall(ctx, func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, s.Client.MoveToTrash(ctx, nodeIDs)
+	})
+	return err
+}
+
 func (s metadataSDK) QueryNodes(ctx context.Context, opts aphotos.NodeQueryOptions) (*aphotos.Page[aphotos.Node], error) {
 	return metadataCall(ctx, func(ctx context.Context) (*aphotos.Page[aphotos.Node], error) {
 		return s.Client.QueryNodes(ctx, opts)

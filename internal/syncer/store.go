@@ -142,14 +142,20 @@ func (s *Store) migrate() error {
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 2 {
+	if version > 3 {
 		return errors.New("unsupported_schema")
 	}
-	if version == 2 {
+	if version == 3 {
 		return nil
 	}
+	if version == 2 {
+		return s.migrateP2()
+	}
 	if version == 1 {
-		return s.migrateP1()
+		if err := s.migrateP1(); err != nil {
+			return err
+		}
+		return s.migrateP2()
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -216,7 +222,10 @@ func (s *Store) migrate() error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return s.migrateP1()
+	if err := s.migrateP1(); err != nil {
+		return err
+	}
+	return s.migrateP2()
 }
 
 func (s *Store) migrateP1() error {
@@ -265,6 +274,20 @@ func (s *Store) migrateP1() error {
 		account_id TEXT NOT NULL REFERENCES incremental(account_id),asset_id TEXT NOT NULL,
 		PRIMARY KEY(account_id,asset_id));
 	PRAGMA user_version=2;`)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) migrateP2() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(`ALTER TABLE assets ADD COLUMN prior_state TEXT NOT NULL DEFAULT '';
+	PRAGMA user_version=3;`)
 	if err != nil {
 		return err
 	}

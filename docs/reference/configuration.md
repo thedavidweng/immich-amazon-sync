@@ -30,6 +30,8 @@ See [config.example.json](config.example.json) for the minimal deployment shape.
 | `library` | `false` | Deliberate whole-accessible-library choice, mutually exclusive with `album_ids`. |
 | `include_videos` | `false` | Include eligible standalone originals classified as video. |
 | `mirror_albums` | `false` | Mirror explicitly selected albums; requires `album_ids` and `library: false`. |
+| `deletions` | `false` | Propagate an Immich trash to the Amazon trash for mapped assets. Off by default; never permanently deletes. |
+| `deletions_confirmation` | unset | Must be exactly `ENABLE DELETIONS` while `deletions` is true; a missing or different phrase rejects the config with `deletion_confirmation_required`. |
 
 At least one album or explicit library mode is required for each account.
 Account IDs must be unique. Zero accounts is only valid when local management

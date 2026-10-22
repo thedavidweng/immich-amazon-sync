@@ -41,9 +41,17 @@ type Account struct {
 	Library       bool     `json:"library"`
 	IncludeVideos bool     `json:"include_videos"`
 	MirrorAlbums  bool     `json:"mirror_albums"`
-	apiKey        string
-	cookie        string
+	// Deletions propagates a source trash to the Amazon node. Enabling it also
+	// requires DeletionConfirmation to equal DeletionConfirmationPhrase.
+	Deletions            bool   `json:"deletions"`
+	DeletionConfirmation string `json:"deletions_confirmation,omitempty"`
+	apiKey               string
+	cookie               string
 }
+
+// DeletionConfirmationPhrase is the exact text a configuration must contain to
+// turn deletion propagation on. Turning it off is never gated.
+const DeletionConfirmationPhrase = "ENABLE DELETIONS"
 
 type Secrets struct {
 	APIKey string
@@ -160,6 +168,9 @@ func (c Config) Validate() error {
 		}
 		if account.Library && (len(account.AlbumIDs) > 0 || account.MirrorAlbums) {
 			return errors.New("source_scope_conflict")
+		}
+		if account.Deletions && account.DeletionConfirmation != DeletionConfirmationPhrase {
+			return errors.New("deletion_confirmation_required")
 		}
 		for _, id := range account.AlbumIDs {
 			if !identifier.MatchString(id) {

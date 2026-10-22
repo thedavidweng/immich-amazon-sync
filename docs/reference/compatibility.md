@@ -10,7 +10,7 @@ live-account success.
 | Immich comparison | `v2.0.0`, `e4234af3b3bd32f5dd12a2b0808158339deded43` | Offline owned-album/library contracts include timeline and archive; v2 shared albums are unsupported. Other v2/v3 releases are not individually verified. |
 | Immich main | `166e93559f123313cf9cb4e7324c4ee30e21c618`, OpenAPI says `3.3.0-rc.0` | Stale development metadata, not the stable release number or minimum supported version. |
 | aphotos SDK | `v0.1.4` | Released tag containing the corrections from SDK PR #13: strict list/final-status validation and typed transient Retry-After, retaining GetNode auth/rate-error preservation. |
-| Local runtime | Offline Go, CLI and container contracts plus one live `ca` acceptance run | Real Amazon upload, node re-read, album creation, membership and account-wide MD5 reuse verified once for one account and one Immich album; format playback, credential renewal and multi-account behavior remain unverified. |
+| Local runtime | Offline Go, CLI and container contracts plus one live `ca` acceptance run | Real Amazon upload, node re-read, album creation, membership, account-wide MD5 reuse and opt-in trash propagation verified once for one account and one Immich album; format playback, credential renewal and multi-account behavior remain unverified. |
 
 Primary sources: [stable release](https://github.com/immich-app/immich/releases/tag/v3.3.4),
 [stable OpenAPI](https://github.com/immich-app/immich/blob/69e0cb8606137c4f8dc0e7207a672ff8be39f358/open-api/immich-openapi-specs.json),
@@ -109,7 +109,7 @@ controls accepted region codes.
 | Code | Marketplace | SDK evidence | This service's live evidence |
 | --- | --- | --- | --- |
 | `us`, `com` | United States | `verified` upstream | untested |
-| `ca` | Canada | `experimental` | partial, one account: uploads re-read and confirmed, album created and populated, account-wide MD5 reuse outside the target root verified; see [live evidence](#canada-live-evidence) and [reuse regression evidence](#canada-reuse-regression-evidence) |
+| `ca` | Canada | `experimental` | partial, one account: uploads re-read and confirmed, album created and populated, account-wide MD5 reuse outside the target root and opt-in trash propagation verified; see [live evidence](#canada-live-evidence), [reuse regression evidence](#canada-reuse-regression-evidence) and [deletion propagation evidence](#canada-deletion-propagation-evidence) |
 | `uk`, `co.uk` | United Kingdom | `experimental` | untested |
 | `jp`, `co.jp` | Japan | `experimental` | untested |
 | `at be bg ch cy cz de dk ee es fi fr gr hr hu ie is it li lt lu lv mt nl no pl pt ro se si sk` | Individual supported European marketplaces | `experimental` | untested |
@@ -164,6 +164,28 @@ folder parent were observed, so placement that is reachable *solely* through a
 visual collection stays offline-only; the pre-#14 baseline was a local build of
 that commit, not a released artifact.
 
+### Canada deletion propagation evidence
+
+On 2026-10-22 the same `ca` account ran the opt-in deletion path over the merged
+reuse work. A disposable Immich album held twelve originals already mapped in
+the Amazon account, so the pass performed no uploads.
+
+| Step | Action | Result |
+| --- | --- | --- |
+| Baseline | `sync once` with `deletions: true` | `confirmed=10`, `existing=2`, `deletion_pending=0`; `deletions plan` empty |
+| One source trash | Immich trash of one mapped asset | `deleted=1`, staging empty, `last_success` advanced |
+| Node outcome | Re-read by ID | The mapped node status changed `AVAILABLE` -> `TRASH`; no other node changed |
+| Guard | Immich trash of two more assets | Pass refused: `deletion_guard`, `deletion_pending=2`, `deletions plan blocked=true`; both nodes still `AVAILABLE` |
+| Withdrawal | Restore in Immich, next pass | Pending intents withdrawn; both assets back to `confirmed`, plan empty |
+| Opt-in default | Trash one asset with `deletions: false` | Asset stayed `confirmed`; its node stayed `AVAILABLE` |
+| Cleanup | Restore in Amazon and Immich | Node `AVAILABLE` again; no permanent deletion |
+
+Limits: one account, JPEG only, twelve mapped assets; the guard bound was
+exercised with a 2-of-12 pass, so the absolute 500 limit stays offline-only; no
+hard delete (asset that never becomes trashed) and no large-library behaviour
+were observed; Amazon's trash retention window and permanent deletion were not
+exercised.
+
 ## Originals and metadata
 
 | Media/metadata | Intended handling | Evidence/limitation |
@@ -173,7 +195,7 @@ that commit, not a released artifact.
 | HEIC/HEIF, RAW | Preserve eligible original bytes without claiming preview support | Experimental/unverified format behavior. |
 | Android embedded Motion Photo | Original image retains embedded motion bytes | No Amazon motion-playback guarantee. |
 | Apple Live Photo | Still and hidden MOV can be separate originals | Still-only backup does not preserve the complete pair; no full Live Photo claim. |
-| Hidden/locked/trashed/offline media | Excluded or explicitly reported as unsupported | Not evidence of source deletion; never authorizes media removal. |
+| Hidden/locked/trashed/offline media | Excluded or explicitly reported as unsupported | Only an explicit `isTrashed` observation, with opt-in propagation and a re-verified node, can move a mapped node to the Amazon trash. Hidden, locked and offline states never do. |
 | Embedded EXIF | Preserved inside unchanged original bytes | No metadata rewriting. |
 | Immich-only capture-date edits | Not written separately by the current SDK | Amazon inferred dates can differ. |
 

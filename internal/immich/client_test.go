@@ -337,3 +337,32 @@ func TestSharedV2AlbumScopeIsExplicitlyUnsupported(t *testing.T) {
 		t.Fatalf("shared scope: %v", err)
 	}
 }
+
+func TestIncludingTrashedRequestsDeletedAssets(t *testing.T) {
+	var seen []bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/server/version" {
+			_, _ = fmt.Fprint(w, `{"major":3,"minor":3,"patch":4}`)
+			return
+		}
+		var body struct {
+			WithDeleted bool `json:"withDeleted"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		seen = append(seen, body.WithDeleted)
+		_, _ = fmt.Fprint(w, `{"assets":{"count":1,"items":[`+photoJSON+`],"nextPage":null}}`)
+	}))
+	defer srv.Close()
+	c, _ := immich.New(srv.URL, "secret")
+	if _, err := c.Assets(t.Context(), bridge.Scope{Library: true, IncludeTrashed: true}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Assets(t.Context(), bridge.Scope{Library: true}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 2 || !seen[0] || seen[1] {
+		t.Fatalf("withDeleted flags: %v", seen)
+	}
+}

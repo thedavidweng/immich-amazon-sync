@@ -104,7 +104,7 @@ func (e *Engine) resolveHint(ctx context.Context, id string, priority, version i
 			assets = []bridge.Asset{a}
 		} else {
 			p, err := readRetry(ctx, func() (bridge.Page, error) {
-				return e.source.Assets(ctx, bridge.Scope{AlbumID: album, AssetID: id}, "")
+				return e.source.Assets(ctx, bridge.Scope{AlbumID: album, AssetID: id, IncludeTrashed: e.opts.Deletions}, "")
 			})
 			if err != nil {
 				return err

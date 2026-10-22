@@ -17,6 +17,7 @@ type Options struct {
 	Library         bool
 	IncludeVideos   bool
 	MirrorAlbums    bool
+	Deletions       bool
 	Workers         int
 	MaxStagingBytes int64
 	MaxStagingFiles int
@@ -34,6 +35,8 @@ type Status struct {
 	Blocked                 int            `json:"blocked"`
 	Skipped                 int            `json:"skipped"`
 	Existing                int            `json:"existing"`
+	DeletePending           int            `json:"deletion_pending"`
+	Deleted                 int            `json:"deleted"`
 	Scanning                int            `json:"scanning"`
 	Paused                  bool           `json:"paused"`
 	PauseReason             string         `json:"pause_reason,omitempty"`
@@ -204,6 +207,10 @@ func (e *Engine) summary(ctx context.Context) (Status, error) {
 			st.Skipped += count
 		case "existing":
 			st.Existing += count
+		case "delete_pending":
+			st.DeletePending += count
+		case "deleted":
+			st.Deleted += count
 		}
 		if code != "" && state != "skipped" {
 			st.Errors[code] += count
@@ -302,10 +309,13 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 		(SELECT count(*) FROM incremental WHERE account_id=? AND active=1 AND error_code='')+
 		(SELECT count(*) FROM assets a WHERE account_id=? AND state IN ('pending','staged','failed','unconfirmed')
 		 AND attempts<5 AND next_at<=unixepoch('subsec')*1000 AND error_code!='source_changed' AND `+eligibleSQL+`)+
+		(SELECT count(*) FROM assets WHERE account_id=? AND state='delete_pending'
+		 AND next_at<=unixepoch('subsec')*1000)+
 		(SELECT count(*) FROM albums a JOIN rules r ON r.account_id=a.account_id AND r.scope=a.scope
 		 WHERE a.account_id=? AND ? AND r.active=1 AND r.complete=1 AND a.state NOT IN ('creating','unconfirmed')
 		 AND a.error_code!='' AND a.attempts<5 AND a.next_at<=unixepoch('subsec')*1000)`,
-		e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.MirrorAlbums).Scan(&due)
+		e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID,
+		e.opts.AccountID, e.opts.MirrorAlbums).Scan(&due)
 	if err != nil {
 		return st, errors.New("storage_unavailable")
 	}
@@ -315,11 +325,13 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 		SELECT next_at FROM assets a WHERE account_id=? AND state IN ('failed','unconfirmed')
 			AND attempts<5 AND error_code!='source_changed' AND `+eligibleSQL+`
 		UNION ALL SELECT next_at FROM hints WHERE account_id=? AND attempts<5
+		UNION ALL SELECT next_at FROM assets WHERE account_id=? AND state='delete_pending'
 		UNION ALL SELECT next_at FROM rules WHERE account_id=? AND active=1 AND complete=0 AND attempts<5
 		UNION ALL SELECT a.next_at FROM albums a JOIN rules r ON r.account_id=a.account_id AND r.scope=a.scope
 			WHERE a.account_id=? AND ? AND r.active=1 AND a.attempts<5 AND a.error_code!=''
 			AND a.state NOT IN ('creating','unconfirmed')) WHERE next_at>unixepoch('subsec')*1000`,
-		e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.MirrorAlbums).Scan(&next)
+		e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID,
+		e.opts.MirrorAlbums).Scan(&next)
 	if err != nil {
 		return st, errors.New("storage_unavailable")
 	}
@@ -362,6 +374,11 @@ func (e *Engine) run(ctx context.Context, full, incremental bool) error {
 	}
 	if err = e.configureRules(ctx, full); err != nil {
 		return errors.New("storage_unavailable")
+	}
+	if !e.opts.Deletions {
+		if err = e.withdrawDeletions(ctx); err != nil {
+			return err
+		}
 	}
 	// Explicit runs retry immediately; continuations honor persisted scan backoff.
 	if _, err = e.store.db.ExecContext(ctx, `UPDATE rules SET error_code='' WHERE account_id=?
@@ -417,6 +434,12 @@ func (e *Engine) run(ctx context.Context, full, incremental bool) error {
 		}
 		if !more && !st.IncrementalScanning {
 			break
+		}
+	}
+	if err := e.sweepDeletions(ctx); err != nil {
+		workErr = err
+		if errorCode(err) == "deletion_guard" {
+			workErr = e.accountError(ctx, err)
 		}
 	}
 	if err := e.mirror(ctx); err != nil {
@@ -484,7 +507,7 @@ func errorCode(err error) string {
 		bridge.NotFound, bridge.Conflict, bridge.Unconfirmed, bridge.Protocol, bridge.Unsupported,
 		"identity_unavailable", "identity_mismatch", "storage_unavailable", "staging_quota",
 		"checksum_mismatch", "size_mismatch", "staging_corrupt", "unsafe_filename", "source_changed", "canceled",
-		"invalid_event", "album_unconfirmed", "membership_guard":
+		"invalid_event", "album_unconfirmed", "membership_guard", "deletion_guard":
 		return code
 	}
 	return "remote_error"

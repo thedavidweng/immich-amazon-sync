@@ -14,10 +14,16 @@ provenance use MD5 and byte size computed from the staged original; their source
 checksum is not treated as a verified byte checksum. Review the
 [compatibility limits](docs/reference/compatibility.md) before deployment.
 
-Media is never deleted from Amazon by this service. Removing a source asset,
-album, rule or account does not remove its cloud backup. Optional media deletion
-is deferred to [ticket #8](https://github.com/thedavidweng/immich-amazon-sync/issues/8).
-Managed album membership is separate from media.
+Media is never permanently deleted from Amazon by this service. Removing a source
+asset, album, rule or account does not remove its cloud backup. Optional
+deletion propagation is off by default: when explicitly enabled per account,
+an Immich asset trashed by the user moves the corresponding Amazon node to the
+Amazon trash, which is recoverable, never emptied by this service. Enabling it
+requires `deletions: true` together with the exact typed confirmation phrase in
+`deletions_confirmation`. A pass that would trash more than 500 assets or more
+than 10% of the account's mapped library is refused. See
+[deletion policy](docs/explanation/safety.md#deletion-propagation). Managed
+album membership is separate from media.
 
 An original that already exists elsewhere in the same Amazon account (another
 folder, or only inside an album) is reused instead of uploaded again. Reuse

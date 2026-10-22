@@ -25,6 +25,11 @@ applied without downloading or uploading the original again. A failed
 association retries the relationship without another media upload. Safe
 additions can proceed during incomplete historical backfill.
 
+Deletion propagation is a separate opt-in. A `deleted` asset drops out of the
+desired member set, so normal bounded membership reconciliation removes that
+relationship without touching other media. Removing an album or rule still
+does not trash media.
+
 If album creation may have committed without a known returned ID,
 `album_unconfirmed` remains visible across retry and restart. The service does
 not recreate it or bind a same-name album automatically. Preserve the database
