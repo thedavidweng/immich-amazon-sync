@@ -24,6 +24,7 @@ issue. Stop the daemon before running another CLI process on the same volume.
 | `webhook_unavailable` | Check the secret path/readability, minimum 32 trimmed bytes and maximum 4 KiB file size. |
 | `source_changed` | Source content evidence (SHA-1, size, or filesystem modification time) no longer agrees with the recorded original. Preserve confirmed/uncertain mappings; retry does not clear this conflict. A metadata-only Immich edit does not trigger it. |
 | `deletion_guard` | The pending pass exceeds 500 assets or 10% of the mapped library, so nothing was trashed. Inspect `deletions plan`; restore Immich assets or accept a smaller trash before retrying. Disable propagation to withdraw all pending intents. |
+| `favorite_unconfirmed` | The Amazon payload lacked an explicit `settings.favorite` field or a favorite mutation could not be verified by re-read. No media is re-uploaded; the node stays uncertain and retries only after a fresh read. Check the account region/API capability and keep the state volume. |
 | Deletion trash failure | The asset stays `deletion_pending` with a finite error and retries with backoff. The Amazon node was not confirmed trashed; inspect credentials, ownership and connectivity. |
 | Local storage/lock failure | Stop the competing writer, fix volume ownership/capacity, and retry. Never remove a live process's lock. |
 
