@@ -10,7 +10,7 @@ live-account success.
 | Immich comparison | `v2.0.0`, `e4234af3b3bd32f5dd12a2b0808158339deded43` | Offline owned-album/library contracts include timeline and archive; v2 shared albums are unsupported. Other v2/v3 releases are not individually verified. |
 | Immich main | `166e93559f123313cf9cb4e7324c4ee30e21c618`, OpenAPI says `3.3.0-rc.0` | Stale development metadata, not the stable release number or minimum supported version. |
 | aphotos SDK | `v0.1.4` | Released tag containing the corrections from SDK PR #13: strict list/final-status validation and typed transient Retry-After, retaining GetNode auth/rate-error preservation. |
-| Local runtime | Offline Go, CLI and container contracts plus one live `ca` acceptance run | Real Amazon upload, node re-read, album creation and membership verified once for one account and one Immich album; format playback, credential renewal and multi-account behavior remain unverified. |
+| Local runtime | Offline Go, CLI and container contracts plus one live `ca` acceptance run | Real Amazon upload, node re-read, album creation, membership and account-wide MD5 reuse verified once for one account and one Immich album; format playback, credential renewal and multi-account behavior remain unverified. |
 
 Primary sources: [stable release](https://github.com/immich-app/immich/releases/tag/v3.3.4),
 [stable OpenAPI](https://github.com/immich-app/immich/blob/69e0cb8606137c4f8dc0e7207a672ff8be39f358/open-api/immich-openapi-specs.json),
@@ -109,7 +109,7 @@ controls accepted region codes.
 | Code | Marketplace | SDK evidence | This service's live evidence |
 | --- | --- | --- | --- |
 | `us`, `com` | United States | `verified` upstream | untested |
-| `ca` | Canada | `experimental` | partial, one account: uploads re-read and confirmed, album created and populated; see [live evidence](#canada-live-evidence) |
+| `ca` | Canada | `experimental` | partial, one account: uploads re-read and confirmed, album created and populated, account-wide MD5 reuse outside the target root verified; see [live evidence](#canada-live-evidence) and [reuse regression evidence](#canada-reuse-regression-evidence) |
 | `uk`, `co.uk` | United Kingdom | `experimental` | untested |
 | `jp`, `co.jp` | Japan | `experimental` | untested |
 | `at be bg ch cy cz de dk ee es fi fr gr hr hu ie is it li lt lu lv mt nl no pl pt ro se si sk` | Individual supported European marketplaces | `experimental` | untested |
@@ -140,6 +140,29 @@ assets already existed in the account under an album parent, so the
 target-scoped lookup found nothing and the upload was recorded `unconfirmed`.
 That was a service defect, not a region incompatibility, and it is not evidence
 of successful `ca` compatibility either way.
+
+### Canada reuse regression evidence
+
+On 2026-10-22 the same `ca` account was rerun against a disposable Immich album
+holding three originals: two already present in the Amazon account only outside
+the target root, and one already at the root.
+
+| Step | Service | Result |
+| --- | --- | --- |
+| Baseline | `main` before #14 | Both outside-root assets `unconfirmed` / `content_conflict`, two staged originals retained |
+| Reconcile | merged #14 | Both outside-root assets `existing`, staging emptied, node IDs `dXXxMfGLR8ah5Xw8tQAfcQ` and `wcSL-kXQTGG_7j_B_OJt_w` |
+| Repeat | merged #14 | `existing=2`, `confirmed=1`, `work_remaining=false`, `last_success` set, staging still empty |
+| Album mirroring | merged #14 with `mirror_albums` | Album `-q_6sYtmTFiEM6uhtljx3A` created; membership read back listing both reused nodes |
+
+Account-wide `/nodes` MD5 queries returned exactly one owned `AVAILABLE` node per
+asset before and after every step, with matching size and the same node IDs, so
+reuse performed no upload. The root asset was recorded `confirmed`
+(`cWvZnLTGQd2XoUirEkqA5w`), not `existing`.
+
+Limits: three JPEG assets, one account and one album; only nodes that also have a
+folder parent were observed, so placement that is reachable *solely* through a
+visual collection stays offline-only; the pre-#14 baseline was a local build of
+that commit, not a released artifact.
 
 ## Originals and metadata
 
