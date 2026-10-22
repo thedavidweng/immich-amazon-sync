@@ -93,8 +93,9 @@ restore the matching backup/image together rather than editing SQLite by hand.
 The P1 upgrade migrates SQLite schema 1 to 2 in place, preserving confirmed media
 and account history while adding durable hints, incremental progress and album
 relationships. Later steps add album scope/origin columns, managed Workflow
-ownership, favorite state, explicit filter exclusions and a normalized
-categorized usage snapshot (schema 8), also in place; historical mappings,
+ownership, favorite state, explicit filter exclusions, a normalized
+categorized usage snapshot and the favorite drift-audit column (schema 9), also
+in place; historical mappings,
 cursors, confirmed/existing state and deletion state are preserved, and no
 migration widens scope or enables a new write. Take the stopped complete-volume
 backup before first startup with the new binary. To roll back, restore that

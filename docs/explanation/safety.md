@@ -45,19 +45,42 @@ baseline, nonempty desired set and the
 
 ## Favorite writes
 
-Favorite sync is add-only and opt-in per account; `off` is the default for every
-account. When `favorites: add_only` is set, a verified Node mapped from an
-`confirmed` or `existing` asset is starred only if the source explicitly reports
-`isFavorite: true`. An omitted source field is unknown and cannot authorize a
-write, and a Node is never unstarred.
+Favorite sync is opt-in per account; `off` is the default for every account and
+no migration or upgrade enables it. When `favorites: add_only` is set, a
+verified Node mapped from a `confirmed` or `existing` asset is starred only if
+the source explicitly reports `isFavorite: true`. An omitted source field is
+unknown and cannot authorize a write, and add-only never unstars.
+
+`favorites: mirror` adds an unstar, but only under durable authority: the star
+must have been applied by this service and verified earlier, and the unstar is
+issued only after a fresh read proves an explicit remote `settings.favorite:
+true` immediately before the mutation. A star this service did not apply is
+preserved, so manually curated Amazon favorites survive enabling mirror on
+`existing` Nodes. `favorites_takeover: true`, legal only with mirror, is the
+single recording that lets the source clear those manual stars too. Nothing
+about a stale local observation can trigger an unstar: the value that authorizes
+it comes from the read in the same attempt.
 
 The pre-write read and the post-write verification both require an explicit raw
 `settings.favorite` field. A missing field is `favorite_unconfirmed`; the SDK's
 mutation response is never proof. A lost or timed-out mutation stays uncertain
-and is retried only after a fresh read, so a committed star settles without a
-second PATCH and no media is uploaded again. Trashed, Deleted and Unconfirmed
-Nodes are ineligible. Several assets or albums sharing a Node produce one
-durable outcome and one write.
+and is retried only after a fresh read, so a committed star or unstar settles
+without a second PATCH and no media is uploaded again. Trashed, Deleted and
+Unconfirmed Nodes are ineligible, so a source trash never resurrects or alters
+their star. Several assets or albums sharing a Node produce one durable outcome
+and one write.
+
+Drift is repaired by a bounded audit: each settled node is re-read at most once
+per six hours, oldest first, and at most sixteen per pass. A manual unstar of a
+star the source still wants is re-starred; with takeover, a manual re-star is
+cleared. An outage during the audit becomes an ordinary per-node retry with
+backoff, so a restart or a remote outage converges without a retry storm.
+
+Two local accounts can resolve to the same Amazon identity. When they record
+contradictory wishes for a shared Node, both stop writing it and report
+`shared_target_conflict` instead of alternating PATCH requests. The conflict is
+derived on every pass and withdraws as soon as one source wish changes; it never
+counts as deletion evidence or affects media state.
 ## Originals and capture time
 
 Every upload path only reads the source original and writes a separate staging

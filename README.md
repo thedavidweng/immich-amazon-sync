@@ -47,12 +47,18 @@ as `existing`; a fresh asset still uploads only when the complete lookup proves
 no copy, while an uncertain write stays `unconfirmed` unless one verified match
 is found.
 
-Favorite sync is separately opt-in and add-only. With `favorites: add_only` on
-an account, a verified node whose source asset explicitly reports favorite is
-starred; an absent source field is unknown and writes nothing, and the service
-never unstars. Every star is confirmed by an authoritative Amazon re-read of an
-explicit `settings.favorite` field, and a lost mutation is retried only after a
-fresh read. Favorite state and counters are separate from media states.
+Favorite sync is separately opt-in. With `favorites: add_only` on an account, a
+verified node whose source asset explicitly reports favorite is starred; an
+absent source field is unknown and writes nothing, and the service never
+unstars. `favorites: mirror` also clears a star, but only one this service
+applied and only after a fresh read proves the explicit remote value.
+`favorites_takeover: true` (mirror only) records source authority over stars
+applied manually on the Amazon side; without it those stars are preserved. Two
+local accounts that resolve to one Amazon node with contradictory wishes report
+`shared_target_conflict` and neither writes. Every mutation is confirmed by an
+authoritative Amazon re-read of an explicit `settings.favorite` field, a lost
+mutation is retried only after a fresh read, and a bounded audit repairs drift.
+Favorite state and counters are separate from media states.
 Each account can optionally limit new uploads to one daily window in an IANA
 timezone, including windows that cross midnight. Outside it, scans and metadata
 checks continue, an upload already running finishes, and waiting work is

@@ -200,20 +200,29 @@ func (s *Store) migrate() error {
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 8 {
+	if version > 9 {
 		return errors.New("unsupported_schema")
 	}
-	if version == 8 {
+	if version == 9 {
 		return nil
 	}
+	if version == 8 {
+		return s.migrateP8()
+	}
 	if version == 7 {
-		return s.migrateP7()
+		if err := s.migrateP7(); err != nil {
+			return err
+		}
+		return s.migrateP8()
 	}
 	if version == 6 {
 		if err := s.migrateP6(); err != nil {
 			return err
 		}
-		return s.migrateP7()
+		if err := s.migrateP7(); err != nil {
+			return err
+		}
+		return s.migrateP8()
 	}
 	if version == 5 {
 		if err := s.migrateP5(); err != nil {
@@ -222,7 +231,10 @@ func (s *Store) migrate() error {
 		if err := s.migrateP6(); err != nil {
 			return err
 		}
-		return s.migrateP7()
+		if err := s.migrateP7(); err != nil {
+			return err
+		}
+		return s.migrateP8()
 	}
 	if version == 4 {
 		if err := s.migrateP4(); err != nil {
@@ -234,7 +246,10 @@ func (s *Store) migrate() error {
 		if err := s.migrateP6(); err != nil {
 			return err
 		}
-		return s.migrateP7()
+		if err := s.migrateP7(); err != nil {
+			return err
+		}
+		return s.migrateP8()
 	}
 	if version == 3 {
 		if err := s.migrateP3(); err != nil {
@@ -249,7 +264,10 @@ func (s *Store) migrate() error {
 		if err := s.migrateP6(); err != nil {
 			return err
 		}
-		return s.migrateP7()
+		if err := s.migrateP7(); err != nil {
+			return err
+		}
+		return s.migrateP8()
 	}
 	if version == 2 {
 		if err := s.migrateP2(); err != nil {
@@ -267,7 +285,10 @@ func (s *Store) migrate() error {
 		if err := s.migrateP6(); err != nil {
 			return err
 		}
-		return s.migrateP7()
+		if err := s.migrateP7(); err != nil {
+			return err
+		}
+		return s.migrateP8()
 	}
 	if version == 1 {
 		if err := s.migrateP1(); err != nil {
@@ -288,7 +309,10 @@ func (s *Store) migrate() error {
 		if err := s.migrateP6(); err != nil {
 			return err
 		}
-		return s.migrateP7()
+		if err := s.migrateP7(); err != nil {
+			return err
+		}
+		return s.migrateP8()
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -373,7 +397,10 @@ func (s *Store) migrate() error {
 	if err := s.migrateP6(); err != nil {
 		return err
 	}
-	return s.migrateP7()
+	if err := s.migrateP7(); err != nil {
+		return err
+	}
+	return s.migrateP8()
 }
 
 // migrateP3 records how each album rule came into scope. Explicit rules are
@@ -556,6 +583,24 @@ func (s *Store) migrateP7() error {
 		hold INTEGER NOT NULL DEFAULT 0
 	);
 	PRAGMA user_version=8;`)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// migrateP8 adds the drift-audit timestamp to the existing per-node favorite
+// outcome. It is purely additive: desired, ownership, observations and retry
+// state are untouched, and a settled row becomes auditable once instead of
+// being rewritten or re-starred by the migration.
+func (s *Store) migrateP8() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(`ALTER TABLE favorites ADD COLUMN checked_at INTEGER NOT NULL DEFAULT 0;
+	PRAGMA user_version=9;`)
 	if err != nil {
 		return err
 	}

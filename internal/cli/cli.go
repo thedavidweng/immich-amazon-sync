@@ -221,14 +221,15 @@ func printReport(out io.Writer, report service.Report, asJSON bool) error {
 		for _, count := range account.Status.Exclusions {
 			excluded += count
 		}
-		if _, err := fmt.Fprintf(out, "%s %s album_sync_mode=%s confirmed=%d existing=%d deleted=%d deletion_pending=%d pending=%d failed=%d unconfirmed=%d deferred=%d albums_active=%d albums_inaccessible=%d excluded=%d favorites_mode=%s favorites_desired=%d favorites_applied=%d favorites_pending=%d favorites_failed=%d favorites_uncertain=%d favorites_unknown=%d",
+		if _, err := fmt.Fprintf(out, "%s %s album_sync_mode=%s confirmed=%d existing=%d deleted=%d deletion_pending=%d pending=%d failed=%d unconfirmed=%d deferred=%d albums_active=%d albums_inaccessible=%d excluded=%d favorites_mode=%s favorites_authority=%s favorites_desired=%d favorites_observed=%d favorites_applied=%d favorites_preserved=%d favorites_pending=%d favorites_failed=%d favorites_uncertain=%d favorites_unknown=%d favorites_conflict=%d",
 			account.Account, account.Code, account.Status.AlbumSyncMode, account.Status.Confirmed, account.Status.Existing,
 			account.Status.Deleted, account.Status.DeletePending, account.Status.Pending,
 			account.Status.Failed, account.Status.Unconfirmed, account.Status.Deferred,
 			account.Status.AlbumsActive, account.Status.AlbumsInaccessible, excluded,
-			account.Status.FavoritesMode, account.Status.FavoritesDesired, account.Status.FavoritesApplied,
+			account.Status.FavoritesMode, account.Status.FavoritesAuthority, account.Status.FavoritesDesired,
+			account.Status.FavoritesObserved, account.Status.FavoritesApplied, account.Status.FavoritesPreserved,
 			account.Status.FavoritesPending, account.Status.FavoritesFailed, account.Status.FavoritesUncertain,
-			account.Status.FavoritesUnknown); err != nil {
+			account.Status.FavoritesUnknown, account.Status.FavoritesConflict); err != nil {
 			return outputError(err)
 		}
 		if window := account.Status.TransferWindow; window != nil {

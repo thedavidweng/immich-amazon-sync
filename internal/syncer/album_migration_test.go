@@ -52,7 +52,7 @@ func TestVersionThreeStoreAddsAlbumScopeColumnsWithoutWideningIt(t *testing.T) {
 			WHERE account_id='account' AND album_id!=''`).Scan(&active, &origin, &discovered); err != nil {
 			t.Fatal(err)
 		}
-		if version != 8 || active != 1 || origin != "explicit" || discovered != 1 {
+		if version != 9 || active != 1 || origin != "explicit" || discovered != 1 {
 			t.Fatalf("migration widened or lost scope: version=%d active=%d origin=%s discovered=%d",
 				version, active, origin, discovered)
 		}
