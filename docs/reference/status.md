@@ -5,11 +5,18 @@
 anonymous `account` identifier, a finite `code` and a `status` object computed
 from the same durable ledger without contacting either remote. Scheduled service
 cycles log aggregate status; the optional authenticated dashboard renders the
-same counters. `status` is read-only and never starts a sync pass.
+same counters. `status` is read-only and never starts a sync pass: it opens the
+ledger without the writer lock, without migrating, cleaning staging or
+rewriting crash markers, so it also works beside a running service. A ledger
+that is absent (`ledger_absent`), older than this binary
+(`schema_migration_required`) or unknown/newer (`unsupported_schema`) is refused
+instead of being reported as current.
 
 HTTP and metrics routes are off by default: `GET /status` and `GET /metrics`
 exist only with `metrics: true`, on a loopback listener or behind a bearer
-token. See [configuration](configuration.md#optional-metrics).
+token. `GET /status` is part of that metrics opt-in; there is no separate status
+listener or always-on status route. See
+[configuration](configuration.md#optional-metrics).
 
 | Status field | Meaning |
 | --- | --- |

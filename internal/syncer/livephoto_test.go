@@ -3,6 +3,7 @@ package syncer_test
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/thedavidweng/immich-amazon-sync/internal/bridge"
 	"github.com/thedavidweng/immich-amazon-sync/internal/filter"
@@ -433,5 +434,89 @@ func TestTrashedCompanionFollowsDeletionPolicy(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Withdrawing original_pair settles a companion that has not settled yet. A
+// queued companion would otherwise stay pending/deferred forever because only
+// the removed pair relationship made it eligible.
+func TestWithdrawingOriginalPairSettlesPendingCompanion(t *testing.T) {
+	calculated := time.Date(2026, 10, 20, 8, 30, 0, 0, time.UTC)
+	still, companion := liveStill("still", "mov"), liveCompanion("mov")
+	s := &sourceFake{identity: "source", pages: map[string]bridge.Page{
+		"": {Assets: []bridge.Asset{still}},
+	}, assets: map[string]bridge.Asset{"still": still, "mov": companion},
+		data: map[string]string{"still": "hello", "mov": "world"}}
+	d := &targetFake{identity: "target", usage: usageObservation(2000, calculated)}
+	store, err := syncer.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	opts := options()
+	opts.Workers = 1
+	opts.LivePhotoMode = bridge.LivePhotoOriginalPair
+	opts.VideoUsageThresholdBytes = 1000
+	opts.HoldVideosAtThreshold = true
+	if err := engine(t, store, s, d, opts).Once(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	stillOpts := options()
+	stillOpts.LivePhotoMode = bridge.LivePhotoStillOnly
+	e := engine(t, store, s, d, stillOpts)
+	if st := status(t, e); st.Confirmed != 1 || st.Pending != 1 {
+		t.Fatalf("setup: %+v", st)
+	}
+	if err := e.Once(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	st := status(t, e)
+	if st.Pending != 0 || st.Deferred != 0 || st.Skipped != 1 || st.Exclusions["live_photo_companion"] != 1 {
+		t.Fatalf("pending companion was stranded: %+v", st)
+	}
+	if len(d.bodies) != 1 {
+		t.Fatalf("withdrawal uploaded the settled companion: %v", d.bodies)
+	}
+}
+
+// A deferred companion is settled the same way, so the transfer window cannot
+// leave withdrawn pair work scheduled forever.
+func TestWithdrawingOriginalPairSettlesDeferredCompanion(t *testing.T) {
+	still, companion := liveStill("still", "mov"), liveCompanion("mov")
+	s := &sourceFake{identity: "source", pages: map[string]bridge.Page{
+		"": {Assets: []bridge.Asset{still}},
+	}, assets: map[string]bridge.Asset{"still": still, "mov": companion},
+		data: map[string]string{"still": "hello", "mov": "world"}}
+	d := &targetFake{identity: "target"}
+	store, err := syncer.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	clock := &testClock{now: time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)}
+	opts, _ := windowedOptions(t, clock, "UTC", "23:00", "06:00")
+	opts.LivePhotoMode = bridge.LivePhotoOriginalPair
+	e := engine(t, store, s, d, opts)
+	// The still defers first; a second pass defers the companion it registered.
+	for range 2 {
+		if err := e.Once(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if st := status(t, e); st.Deferred != 2 || st.Skipped != 0 {
+		t.Fatalf("setup: %+v", st)
+	}
+	stillOpts, _ := windowedOptions(t, clock, "UTC", "23:00", "06:00")
+	stillOpts.LivePhotoMode = bridge.LivePhotoStillOnly
+	e = engine(t, store, s, d, stillOpts)
+	if err := e.Once(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	st := status(t, e)
+	if st.Deferred != 1 || st.Skipped != 1 || st.Exclusions["live_photo_companion"] != 1 {
+		t.Fatalf("deferred companion was stranded: %+v", st)
+	}
+	if len(d.bodies) != 0 {
+		t.Fatalf("closed window uploaded withdrawn work: %v", d.bodies)
 	}
 }

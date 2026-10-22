@@ -21,6 +21,7 @@ import (
 	"github.com/thedavidweng/immich-amazon-sync/internal/config"
 	"github.com/thedavidweng/immich-amazon-sync/internal/immich"
 	"github.com/thedavidweng/immich-amazon-sync/internal/syncer"
+	"github.com/thedavidweng/immich-amazon-sync/internal/window"
 )
 
 type Service struct {
@@ -49,12 +50,12 @@ type accountState struct {
 
 // setWindow keeps one shared window holder per account so a reload applies to
 // an engine that is already running.
-func (s *accountState) setWindow(window *syncer.Window) {
+func (s *accountState) setWindow(value *window.Window) {
 	if s.window == nil {
-		s.window = syncer.NewWindowState(window)
+		s.window = syncer.NewWindowState(value)
 		return
 	}
-	s.window.Set(window)
+	s.window.Set(value)
 }
 
 type AccountResult struct {
@@ -69,10 +70,29 @@ type Report struct {
 
 // Open performs only local validation and opens one Store for all accounts.
 func Open(cfg config.Config, logOut io.Writer) (*Service, error) {
+	return open(cfg, logOut, false)
+}
+
+// OpenReadOnly builds the same account view for a reporting command. It takes
+// no writer lock, performs no migration, cleanup or crash-marker rewrite and
+// never creates the ledger, so it can run beside a live service. A ledger that
+// is absent or not at the current schema fails with a finite code instead of
+// reporting stale counters as current.
+func OpenReadOnly(cfg config.Config, logOut io.Writer) (*Service, error) {
+	return open(cfg, logOut, true)
+}
+
+func open(cfg config.Config, logOut io.Writer, readOnly bool) (*Service, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	store, err := syncer.Open(cfg.DataDir)
+	var store *syncer.Store
+	var err error
+	if readOnly {
+		store, err = syncer.OpenReadOnly(cfg.DataDir)
+	} else {
+		store, err = syncer.Open(cfg.DataDir)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -189,11 +209,11 @@ func sameRuntimeConfig(a, b config.Account) bool {
 }
 
 // accountWindow parses the configured window; nil means continuous transfers.
-func accountWindow(account config.Account) (*syncer.Window, error) {
+func accountWindow(account config.Account) (*window.Window, error) {
 	if account.TransferWindow == nil {
 		return nil, nil
 	}
-	return syncer.NewWindow(account.TransferWindow.Timezone, account.TransferWindow.Start, account.TransferWindow.End)
+	return window.New(account.TransferWindow.Timezone, account.TransferWindow.Start, account.TransferWindow.End)
 }
 
 // Run binds cfg.Listen and schedules accounts independently. All in-flight HTTP

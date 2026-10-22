@@ -85,9 +85,7 @@ func (e *Engine) discoverPair(ctx context.Context, tx *sql.Tx, a bridge.Asset, e
 		return err
 	}
 	if a.LivePhotoID == "" || exclusion != "" {
-		_, err := tx.ExecContext(ctx, "DELETE FROM live_pairs WHERE account_id=? AND still_id=?",
-			e.opts.AccountID, a.ID)
-		return err
+		return e.settleWithdrawnPairs(ctx, tx, "still_id=?", a.ID)
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO live_pairs(account_id,still_id,companion_id) VALUES(?,?,?)
 		ON CONFLICT(account_id,still_id) DO UPDATE SET
@@ -105,6 +103,35 @@ func (e *Engine) discoverPair(ctx context.Context, tx *sql.Tx, a bridge.Asset, e
 		WHERE account_id=? AND id=? AND state='skipped' AND exclusion IN ('hidden','live_photo_companion')`,
 		e.opts.AccountID, a.LivePhotoID)
 	return err
+}
+
+// settleWithdrawnPairs stops queued work for a companion that loses its only
+// pair relationship and then removes the matching pair rows. A companion is
+// eligible only through that relationship, so leaving it pending, staged,
+// deferred or failed would strand it forever. A verified Node, an in-flight
+// upload and an Unconfirmed write are never rewritten; a released staging
+// reference is removed by cleanStaging at the next startup. Nothing here
+// deletes remote media.
+func (e *Engine) settleWithdrawnPairs(ctx context.Context, tx *sql.Tx, predicate string, args ...any) error {
+	settleArgs := append([]any{e.opts.AccountID}, args...)
+	settleArgs = append(settleArgs, args...)
+	_, err := tx.ExecContext(ctx, `UPDATE assets SET state='skipped',exclusion='live_photo_companion',
+		error_code='',attempts=0,next_at=0,stage_name=''
+		WHERE account_id=? AND state IN ('pending','staged','deferred','blocked','failed')
+		AND EXISTS(SELECT 1 FROM live_pairs p WHERE p.account_id=assets.account_id
+			AND p.companion_id=assets.id AND `+predicate+`)
+		AND NOT EXISTS(SELECT 1 FROM live_pairs k WHERE k.account_id=assets.account_id
+			AND k.companion_id=assets.id AND NOT (`+predicate+`))
+		AND NOT EXISTS(SELECT 1 FROM assets a WHERE a.account_id=assets.account_id
+			AND a.id=assets.id AND `+eligibleSQL+`)`, settleArgs...)
+	if err != nil {
+		return errors.New("storage_unavailable")
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM live_pairs WHERE account_id=? AND `+predicate,
+		append([]any{e.opts.AccountID}, args...)...); err != nil {
+		return errors.New("storage_unavailable")
+	}
+	return nil
 }
 
 // reconcileLivePhotoMode applies an explicit mode change without touching
@@ -165,8 +192,8 @@ func (e *Engine) reconcileLivePhotoMode(ctx context.Context) error {
 			e.opts.AccountID); err != nil {
 			return errors.New("storage_unavailable")
 		}
-	} else if _, err = tx.ExecContext(ctx, "DELETE FROM live_pairs WHERE account_id=?", e.opts.AccountID); err != nil {
-		return errors.New("storage_unavailable")
+	} else if err = e.settleWithdrawnPairs(ctx, tx, "1=1"); err != nil {
+		return err
 	}
 	if _, err = tx.ExecContext(ctx, "UPDATE accounts SET live_photo_mode=? WHERE id=?", mode, e.opts.AccountID); err != nil {
 		return errors.New("storage_unavailable")

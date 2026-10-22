@@ -44,6 +44,13 @@ const eligibleSQL = `(EXISTS(SELECT 1 FROM scope_assets m JOIN rules r ON r.acco
 	OR EXISTS(SELECT 1 FROM signals m JOIN rules r ON r.account_id=m.account_id AND r.scope=m.scope
 	WHERE m.account_id=a.account_id AND m.asset_id=a.id AND r.active=1 AND m.generation=r.generation AND r.error_code=''))`
 
+// videoHoldSQL excludes a held video from dispatch and from runnable counts.
+// It mirrors assetKind: an explicit kind wins and an absent kind falls back to
+// the MIME type, so the queue decision and the reported status cannot diverge.
+const videoHoldSQL = `(?=0 OR (CASE WHEN coalesce(json_extract(a.metadata,'$.kind'),'')<>''
+	THEN upper(json_extract(a.metadata,'$.kind'))<>'VIDEO'
+	ELSE NOT (coalesce(json_extract(a.metadata,'$.mime'),'') LIKE 'video/%') END))`
+
 // errWindowClosed marks a job deferred by the transfer window. It is never
 // persisted as a failure and never consumes a retry.
 var errWindowClosed = errors.New("transfer_window_closed")
@@ -103,10 +110,16 @@ func (e *Engine) nextJob(ctx context.Context, attempted map[string]bool) (*job, 
 	if e.windowOpen(now) {
 		deferAllowed = 1
 	}
+	videoHold := 0
+	if e.videoHold.Load() {
+		videoHold = 1
+	}
 	rows, err := e.store.db.QueryContext(ctx, `SELECT id,metadata,state,stage_name,md5,sha1,size,node_id,attempts FROM assets a
 		WHERE account_id=? AND state IN ('pending','staged','deferred','unconfirmed','failed') AND next_at<=? AND `+e.attemptLimit("")+`
 		AND error_code!='source_changed' AND (state!='deferred' OR ?)
-		AND `+e.eligibleSQL()+` ORDER BY priority DESC,id LIMIT 64`, e.opts.AccountID, now.UnixMilli(), deferAllowed)
+		AND (state='unconfirmed' OR `+videoHoldSQL+`)
+		AND `+e.eligibleSQL()+` ORDER BY priority DESC,id LIMIT 64`,
+		e.opts.AccountID, now.UnixMilli(), deferAllowed, videoHold)
 	if err != nil {
 		return nil, errors.New("storage_unavailable")
 	}
@@ -119,9 +132,6 @@ func (e *Engine) nextJob(ctx context.Context, attempted map[string]bool) (*job, 
 		}
 		if err = json.Unmarshal([]byte(metadata), &j.asset); err != nil {
 			break
-		}
-		if e.videoHold.Load() && assetKind(j.asset) == "VIDEO" {
-			continue
 		}
 		if !attempted[j.id] {
 			attempted[j.id] = true
@@ -441,11 +451,9 @@ func (e *Engine) setState(ctx context.Context, j *job, state, code, exclusion st
 
 // deferUpload persists a job as deferred without consuming a retry. The window
 // state, not a stored timestamp, decides when it becomes dispatchable again, so
-// an edited window applies to the next dispatch.
+// an edited window applies to the next dispatch. Callers reach here only after
+// windowOpen reported a configured, closed window.
 func (e *Engine) deferUpload(ctx context.Context, j *job) error {
-	if e.currentWindow() == nil {
-		return nil
-	}
 	j.next = 0
 	if err := e.setState(ctx, j, "deferred", "", ""); err != nil {
 		return err

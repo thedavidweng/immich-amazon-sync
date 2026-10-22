@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ type Store struct {
 	db         *sql.DB
 	dir        string
 	lock       *os.File
+	readOnly   bool
 	runs       sync.Map
 	staging    sync.Mutex
 	stageBytes int64
@@ -100,6 +102,16 @@ const schemaVersion = 10
 // sees why an older binary refused a newer volume.
 var errUnsupportedSchema = errors.New("unsupported_schema")
 
+// errSchemaMigrationRequired is the finite failure for a read-only report of a
+// ledger this binary could read only after migrating it. A status command never
+// migrates and never reports counters from another schema version as current.
+var errSchemaMigrationRequired = errors.New("schema_migration_required")
+
+// errLedgerAbsent is the finite failure for a report before any ledger exists.
+// A read-only open never creates one, so the operator learns that a sync pass
+// has not run yet instead of being shown a fabricated empty store.
+var errLedgerAbsent = errors.New("ledger_absent")
+
 func Open(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		return nil, errors.New("storage_unavailable")
@@ -140,6 +152,45 @@ func Open(dataDir string) (*Store, error) {
 			return nil, err
 		}
 		return nil, errors.New("storage_unavailable")
+	}
+	return s, nil
+}
+
+// OpenReadOnly opens the existing durable ledger for reporting only. It takes
+// no writer lock, performs no migration, never rewrites a crash marker and
+// leaves staging untouched, so a report works beside a running service. A
+// ledger that is absent, older than this binary or newer than it fails with a
+// finite code instead of silently reporting counters from another schema.
+func OpenReadOnly(dataDir string) (*Store, error) {
+	dbPath := filepath.Join(dataDir, "sync.sqlite")
+	if _, err := os.Stat(dbPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, errLedgerAbsent
+		}
+		return nil, errors.New("storage_unavailable")
+	}
+	s := &Store{dir: dataDir, readOnly: true, direct: make(map[string]*DirectCounters)}
+	dsn := (&url.URL{Scheme: "file", Path: dbPath, RawQuery: "mode=ro"}).String()
+	var err error
+	s.db, err = sql.Open("sqlite", dsn)
+	if err == nil {
+		s.db.SetMaxOpenConns(1)
+		_, err = s.db.Exec(`PRAGMA query_only=ON; PRAGMA busy_timeout=5000;`)
+	}
+	var version int
+	if err == nil {
+		err = s.db.QueryRow("PRAGMA user_version").Scan(&version)
+	}
+	if err != nil {
+		s.Close()
+		return nil, errors.New("storage_unavailable")
+	}
+	if version != schemaVersion {
+		s.Close()
+		if version < 0 || version > schemaVersion {
+			return nil, errUnsupportedSchema
+		}
+		return nil, errSchemaMigrationRequired
 	}
 	return s, nil
 }

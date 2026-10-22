@@ -9,6 +9,7 @@ import (
 
 	"github.com/thedavidweng/immich-amazon-sync/internal/bridge"
 	"github.com/thedavidweng/immich-amazon-sync/internal/config"
+	"github.com/thedavidweng/immich-amazon-sync/internal/window"
 )
 
 func TestExplicitScopeAndSecretFiles(t *testing.T) {
@@ -531,5 +532,26 @@ func TestUpgradedConfigurationKeepsEveryNewMutatingFeatureOff(t *testing.T) {
 		policy.SkipRAW || policy.IncludeArchived == nil || !*policy.IncludeArchived ||
 		len(policy.ExcludedTags) != 0 {
 		t.Fatalf("legacy include_videos changed scope: %+v", policy)
+	}
+}
+
+// Configuration validation and the engine share one validated window
+// constructor, so an accepted config can never describe a window the engine
+// rejects (or vice versa).
+func TestTransferWindowValidationUsesTheSharedConstructor(t *testing.T) {
+	for _, tc := range []struct{ zone, start, end string }{
+		{"UTC", "09:00", "17:00"},
+		{"UTC", "23:00", "06:00"},
+		{"UTC", "09:00", "09:00"},
+		{"Local", "09:00", "17:00"},
+		{"Mars/Olympus", "09:00", "17:00"},
+		{"UTC", "9:00", "17:00"},
+		{"UTC", "09:00", ""},
+	} {
+		_, want := window.New(tc.zone, tc.start, tc.end)
+		got := windowConfig(&config.TransferWindow{Timezone: tc.zone, Start: tc.start, End: tc.end}).Validate()
+		if (got == nil) != (want == nil) || got != nil && got.Error() != want.Error() {
+			t.Fatalf("%+v: config=%v constructor=%v", tc, got, want)
+		}
 	}
 }
