@@ -126,6 +126,7 @@ func formAccount(r *http.Request) (config.Account, error) {
 		AlbumSyncMode:            r.PostForm.Get("album_sync_mode"),
 		Favorites:                r.PostForm.Get("favorites"),
 		LivePhotoMode:            r.PostForm.Get("live_photo_mode"),
+		FavoritesTakeover:        r.PostForm.Get("favorites_takeover") == "on",
 		Deletions:                r.PostForm.Get("deletions") == "on",
 		DeletionConfirmation:     r.PostForm.Get("deletions_confirmation"),
 		ManagedWorkflow:          r.PostForm.Get("managed_workflow") == "on",

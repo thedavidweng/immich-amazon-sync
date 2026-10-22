@@ -117,7 +117,7 @@ func TestVersionThreeStoreMigratesFavoritesWithoutWideningScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var version, favorite, rows int
+	var version, favorite, rows, checked int
 	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
@@ -127,11 +127,14 @@ func TestVersionThreeStoreMigratesFavoritesWithoutWideningScope(t *testing.T) {
 	if err = db.QueryRow("SELECT count(*) FROM favorites").Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
+	if err = db.QueryRow("SELECT count(*) FROM pragma_table_info('favorites') WHERE name='checked_at'").Scan(&checked); err != nil {
+		t.Fatal(err)
+	}
 	if err = db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if version != 9 || favorite != -1 || rows != 0 {
-		t.Fatalf("migration widened scope: version=%d favorite=%d rows=%d", version, favorite, rows)
+	if version != 10 || favorite != -1 || rows != 0 || checked != 1 {
+		t.Fatalf("migration widened scope: version=%d favorite=%d rows=%d checked=%d", version, favorite, rows, checked)
 	}
 
 	store, err = syncer.Open(dir)
@@ -219,7 +222,7 @@ func TestVersionThreeStoreReevaluatesLegacyVideoSkip(t *testing.T) {
 	}
 	defer db.Close()
 	var version int
-	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 9 {
+	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 10 {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
 	var state, exclusion string
@@ -276,7 +279,7 @@ func TestVersionFiveStoreAddsFavoritesAndKeepsWorkflowOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var version, favorite, rows int
+	var version, favorite, rows, checked int
 	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
@@ -286,11 +289,14 @@ func TestVersionFiveStoreAddsFavoritesAndKeepsWorkflowOwnership(t *testing.T) {
 	if err = db.QueryRow("SELECT count(*) FROM favorites").Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
+	if err = db.QueryRow("SELECT count(*) FROM pragma_table_info('favorites') WHERE name='checked_at'").Scan(&checked); err != nil {
+		t.Fatal(err)
+	}
 	if err = db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if version != 9 || favorite != -1 || rows != 0 {
-		t.Fatalf("favorites migration widened scope: version=%d favorite=%d rows=%d", version, favorite, rows)
+	if version != 10 || favorite != -1 || rows != 0 || checked != 1 {
+		t.Fatalf("favorites migration widened scope: version=%d favorite=%d rows=%d checked=%d", version, favorite, rows, checked)
 	}
 
 	// Off by default: the migrated account performs no favorite write.
@@ -368,7 +374,7 @@ func TestVersionSixStoreAddsFiltersAndKeepsFavorites(t *testing.T) {
 	}
 	defer db.Close()
 	var version, favorite, applied int
-	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 9 {
+	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 10 {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
 	if err = db.QueryRow("SELECT favorite FROM assets WHERE account_id='account' AND id='video'").Scan(&favorite); err != nil {
@@ -436,7 +442,7 @@ func TestVersionSevenStoreAddsUsageWithoutTouchingFiltersOrFavorites(t *testing.
 	defer db.Close()
 	var version, favorite, applied int
 	var fingerprint string
-	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 9 {
+	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 10 {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
 	if err = db.QueryRow("SELECT filter_fingerprint FROM accounts WHERE id='account'").Scan(&fingerprint); err != nil ||
@@ -463,6 +469,74 @@ func TestVersionSevenStoreAddsUsageWithoutTouchingFiltersOrFavorites(t *testing.
 	}
 }
 
+// A version 8 store already has the usage observation. The drift-audit step
+// must add only the checked_at column and leave every durable row untouched.
+func TestVersionEightStoreAddsFavoriteAuditWithoutTouchingUsage(t *testing.T) {
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "sync.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema, err := os.ReadFile("testdata/v8.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(string(schema)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO accounts(id,source_identity,target_identity,filter_fingerprint)
+		VALUES('account','source','target','fingerprint');
+		INSERT INTO favorites(account_id,node_id,desired,applied,observed,state)
+		VALUES('account','node','1','1','1','applied');
+		INSERT INTO usage(account_id,observed_at,last_calculated,categories,hold)
+		VALUES('account','2026-10-22T00:00:00Z','2026-10-21T00:00:00Z','[{"type":"photo"}]',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := syncer.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = sql.Open("sqlite", filepath.Join(dir, "sync.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var version, checked int
+	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 10 {
+		t.Fatalf("schema version = %d, %v", version, err)
+	}
+	if err = db.QueryRow("SELECT count(*) FROM pragma_table_info('favorites') WHERE name='checked_at'").Scan(&checked); err != nil ||
+		checked != 1 {
+		t.Fatalf("drift-audit column missing: %d %v", checked, err)
+	}
+	var desired, applied, observed, rowChecked int
+	var state string
+	if err = db.QueryRow(`SELECT desired,applied,observed,state,checked_at FROM favorites
+		WHERE account_id='account' AND node_id='node'`).Scan(&desired, &applied, &observed, &state, &rowChecked); err != nil {
+		t.Fatal(err)
+	}
+	if desired != 1 || applied != 1 || observed != 1 || state != "applied" || rowChecked != 0 {
+		t.Fatalf("migration disturbed the favorite row: desired=%d applied=%d observed=%d state=%s checked=%d",
+			desired, applied, observed, state, rowChecked)
+	}
+	var observedAt, lastCalculated, categories string
+	var hold int
+	if err = db.QueryRow(`SELECT observed_at,last_calculated,categories,hold FROM usage
+		WHERE account_id='account'`).Scan(&observedAt, &lastCalculated, &categories, &hold); err != nil {
+		t.Fatal(err)
+	}
+	if observedAt != "2026-10-22T00:00:00Z" || lastCalculated != "2026-10-21T00:00:00Z" ||
+		categories != `[{"type":"photo"}]` || hold != 1 {
+		t.Fatalf("migration disturbed the usage row: %q %q %q %d", observedAt, lastCalculated, categories, hold)
+	}
+}
+
 // A version 7 store gains the Live Photo pair ledger without widening scope:
 // every existing account stays still_only, and confirmed mappings, filters and
 // favorites are untouched.
@@ -485,9 +559,11 @@ func TestVersionSevenStoreAddsLivePhotoPairsWithoutWideningScope(t *testing.T) {
 	}
 	if _, err = db.Exec(`INSERT INTO accounts(id,source_identity,target_identity) VALUES('account','source','target');
 		INSERT INTO rules(account_id,scope,album_id,complete,expected) VALUES('account','album:album','album',1,1);
-		INSERT INTO assets(account_id,id,metadata,state,md5,sha1,size,node_id)
-		VALUES('account','still',?,'confirmed','5d41402abc4b2a76b9719d911017c592','qvTGHdzF6KLavt4PO0gs2a6pQ00=',5,'node');
-		INSERT INTO scope_assets(account_id,scope,asset_id,generation) VALUES('account','album:album','still',1)`,
+		INSERT INTO scope_assets(account_id,scope,asset_id,generation) VALUES('account','album:album','still',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO assets(account_id,id,metadata,state,md5,sha1,size,node_id)
+		VALUES('account','still',?,'confirmed','5d41402abc4b2a76b9719d911017c592','qvTGHdzF6KLavt4PO0gs2a6pQ00=',5,'node')`,
 		string(metadata)); err != nil {
 		t.Fatal(err)
 	}
@@ -514,7 +590,7 @@ func TestVersionSevenStoreAddsLivePhotoPairsWithoutWideningScope(t *testing.T) {
 	}
 	defer db.Close()
 	var version int
-	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 9 {
+	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 10 {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
 	var mode string

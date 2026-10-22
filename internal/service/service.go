@@ -348,6 +348,7 @@ func newEngine(store *syncer.Store, cfg config.Config, account config.Account, s
 		LivePhotoMode:            account.PairMode(),
 		Deletions:                account.Deletions,
 		Favorites:                account.Favorites,
+		FavoriteTakeover:         account.FavoritesTakeover,
 		DirectRoots:              account.Roots(),
 		VideoUsageThresholdBytes: account.VideoUsageThresholdBytes,
 		HoldVideosAtThreshold:    account.HoldVideosAtThreshold,

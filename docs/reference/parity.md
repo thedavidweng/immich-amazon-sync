@@ -56,8 +56,8 @@ Checked with `gh api repos/ImAleeexx/immich-gphotos/pulls/<n>`; `merged` was
 | Star new uploads and Existing Nodes | Yes | Yes, when `favorites: add_only`; verified by re-read | Offline contract | #18 |
 | Add-only mode that never unstars | Not offered | Yes (`off` is the default) | Offline contract | #18 |
 | Durable per-Node favorite outcome and independent retry | No | One row per node; a lost mutation is retried only after a fresh read | Offline contract | #18 |
-| Authoritative mirror/unstar with consent | PR #6 tree | No | Not yet tested | #19 |
-| Shared-Node conflict, drift repair, read-before-retry | No | No | Not yet tested | #19 |
+| Authoritative mirror/unstar with consent | PR #6 tree | Yes, `favorites: mirror`; only stars this service applied, plus recorded `favorites_takeover` for manual stars | Offline contract | #19 |
+| Shared-Node conflict, drift repair, read-before-retry | No | `shared_target_conflict` blocks both accounts; bounded 6h audit repairs drift | Offline contract | #19 |
 | Trusted read-only direct originals with API fallback | PR #5 tree (mtime re-date) | No | Not yet tested | #23 |
 | Explicit selected-album mirroring | Yes | Yes | Live evidence (one album) | #17 preserves |
 | All-accessible album discovery and mirroring | Yes | No | Not yet tested | #24 |
@@ -158,9 +158,16 @@ POST, the deletion guard (exactly 500 allowed, 501 refused, exactly 10% allowed,
 above 10% refused) and the owned-membership removal guard under deletion-on and
 deletion-off settings where deletion state is relevant.
 
-`internal/syncer/favorites_test.go` pins add-only behavior under deletion-on and
-deletion-off: new and Existing Nodes are starred once, an absent source field
-performs no write, an absent Amazon field is `favorite_unconfirmed`, a shared
-Node yields one write, and Trashed, Deleted and Unconfirmed Nodes are skipped.
-`TestVersionThreeStoreMigratesFavoritesWithoutWideningScope` proves the
-version-6 migration adds favorite state as unknown without authorizing writes.
+`internal/syncer/favorites_test.go` pins favorite behavior under deletion-on and
+deletion-off: new and Existing Nodes are starred once, add-only never unstars
+when the source clears the flag, mirror clears only a service-applied star after
+a fresh explicit read, a manual star is preserved until recorded takeover, an
+absent source field or absent Amazon field performs no write, a crash after an
+unstar converges without a second mutation or upload, a bounded audit repairs a
+manual unstar without a retry storm, two accounts with contradictory wishes
+report `shared_target_conflict` and write nothing, and Trashed, Deleted and
+Unconfirmed Nodes are never star or unstar targets.
+`TestVersionThreeStoreMigratesFavoritesWithoutWideningScope` and
+`TestVersionFiveStoreAddsFavoritesAndKeepsWorkflowOwnership` prove the favorite
+migrations add unknown source presence, the per-node outcome table and the
+drift-audit column without authorizing writes or moving schema versions back.

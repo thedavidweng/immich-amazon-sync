@@ -117,8 +117,8 @@ func (t *targetFake) ReadFavorite(ctx context.Context, c bridge.Content, id stri
 }
 
 // SetFavorite models one SDK mutation followed by the engine's re-read. The
-// engine never passes a value: add-only only stars.
-func (t *targetFake) SetFavorite(ctx context.Context, c bridge.Content, id string) error {
+// recorded write names the node; favorites holds the resulting remote value.
+func (t *targetFake) SetFavorite(ctx context.Context, c bridge.Content, id string, favorite bool) error {
 	if t.setFav != nil {
 		return t.setFav(ctx, c, id)
 	}
@@ -128,7 +128,7 @@ func (t *targetFake) SetFavorite(ctx context.Context, c bridge.Content, id strin
 		t.favorites = map[string]bool{}
 	}
 	t.favWrites = append(t.favWrites, id)
-	t.favorites[id] = true
+	t.favorites[id] = favorite
 	return nil
 }
 

@@ -36,6 +36,8 @@ See [config.example.json](config.example.json) for the minimal deployment shape.
 | `mirror_albums` | unset | Deprecated boolean form of `album_sync_mode`. `true` maps to `selected` and never to `all_accessible`; combining it with a different mode returns `album_sync_mode_conflict`. |
 | `favorites` | `off` | `off` or `add_only`. Add-only stars a verified Amazon Node when the source explicitly reports `isFavorite`; it never unstars. An absent source field is unknown and performs no write. |
 | `live_photo_mode` | `still_only` | `still_only` preserves the historical behaviour: a hidden Live Photo MOV is excluded as `hidden`. `original_pair` follows Immich's `livePhotoVideoId` link and backs up the still and its hidden MOV as two independent originals, tracked as one pair. No mux, conversion or Apple pairing is performed. |
+| `favorites` | `off` | `off`, `add_only` or `mirror`. Add-only stars a verified Amazon Node when the source explicitly reports `isFavorite`; it never unstars. Mirror also clears a star this service applied, but only after a fresh read proves an explicit remote `settings.favorite` value. An absent source field is unknown and performs no write. `mirror` is never enabled by a migration or a default. |
+| `favorites_takeover` | `false` | Only legal with `favorites: mirror` (otherwise `favorites_takeover_requires_mirror`). Records that the source is authoritative over stars applied manually on the Amazon side, so a cleared source favorite may clear them too. Without it, manual stars on `existing` nodes are preserved. |
 | `deletions` | `false` | Propagate an Immich trash to the Amazon trash for mapped assets. Off by default; never permanently deletes. |
 | `deletions_confirmation` | unset | Must be exactly `ENABLE DELETIONS` while `deletions` is true; a missing or different phrase rejects the config with `deletion_confirmation_required`. |
 | `managed_workflow` | `false` | Opt-in to creating one owned native Immich Workflow. Requires all three workflow fields below. Polling stays enabled; nothing is created on Immich v2 or without the required grants. |
@@ -198,7 +200,8 @@ admin-secret path or webhook-secret path require restart. See
 Without `--config`, the single-account environment mode uses `IMMICH_URL`,
 `IMMICH_API_KEY_FILE`, `AMAZON_REGION`, `AMAZON_COOKIE_FILE`, comma-separated
 `ALBUM_IDS`, `LIBRARY` (`true`/`false`), `ALBUM_SYNC_MODE` (`off`, `selected`,
-`all_accessible`) and `FAVORITES` (`off`/`add_only`). Filter variables are
+`all_accessible`), `FAVORITES` (`off`/`add_only`/`mirror`) and
+`FAVORITES_TAKEOVER` (`true`/`false`). Filter variables are
 `MEDIA_TYPES`, `MAX_ORIGINAL_BYTES`, `SKIP_RAW`, `INCLUDE_ARCHIVED` and
 comma-separated `EXCLUDED_TAGS`. The legacy `INCLUDE_VIDEOS` (`true`/`false`) is
 accepted instead of `MEDIA_TYPES`; supplying both returns `filter_conflict`.

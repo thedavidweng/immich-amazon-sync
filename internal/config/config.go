@@ -52,9 +52,9 @@ type Account struct {
 	// legacy boolean form: true maps to selected and never to all_accessible.
 	AlbumSyncMode string `json:"album_sync_mode,omitempty"`
 	MirrorAlbums  bool   `json:"mirror_albums,omitempty"`
-	// Favorites is "off" (default) or "add_only". Add-only stars a verified
-	// node when the source explicitly reports the asset favorite and never
-	// unstars.
+	// Favorites is "off" (default), "add_only" or "mirror". Add-only stars a
+	// verified node when the source explicitly reports the asset favorite and
+	// never unstars. Mirror also clears a star this service applied.
 	Favorites string `json:"favorites,omitempty"`
 	// LivePhotoMode is "still_only" (default) or "original_pair". OriginalPair
 	// backs up the hidden MOV companion of an included still as a second,
@@ -67,6 +67,11 @@ type Account struct {
 	// observed billable video usage is at or above the threshold. It never
 	// pauses photos and never deletes or rewrites a staged original.
 	HoldVideosAtThreshold bool `json:"hold_videos_at_threshold,omitempty"`
+	// FavoritesTakeover is only legal with Favorites "mirror". It records that
+	// the source is authoritative over stars applied manually on the Amazon
+	// side, so a cleared source favorite also clears those. It is never
+	// implied by a migration or a default.
+	FavoritesTakeover bool `json:"favorites_takeover,omitempty"`
 	// Deletions propagates a source trash to the Amazon node. Enabling it also
 	// requires DeletionConfirmation to equal DeletionConfirmationPhrase.
 	Deletions            bool   `json:"deletions"`
@@ -227,6 +232,14 @@ func Load(path string) (Config, error) {
 		if err != nil {
 			return cfg, errors.New("hold_videos_at_threshold_invalid")
 		}
+		favoritesTakeover := false
+		if value := os.Getenv("FAVORITES_TAKEOVER"); value != "" {
+			var err error
+			favoritesTakeover, err = strconv.ParseBool(value)
+			if err != nil {
+				return cfg, errors.New("favorites_takeover_invalid")
+			}
+		}
 		account := Account{
 			ID: "default", ImmichURL: os.Getenv("IMMICH_URL"),
 			APIKeyFile: os.Getenv("IMMICH_API_KEY_FILE"), apiKey: os.Getenv("IMMICH_API_KEY"),
@@ -237,6 +250,7 @@ func Load(path string) (Config, error) {
 			AlbumSyncMode:            os.Getenv("ALBUM_SYNC_MODE"),
 			Favorites:                os.Getenv("FAVORITES"),
 			LivePhotoMode:            os.Getenv("LIVE_PHOTO_MODE"),
+			FavoritesTakeover:        favoritesTakeover,
 			ManagedWorkflow:          managedWorkflow,
 			WorkflowAPIKeyFile:       os.Getenv("IMMICH_WORKFLOW_API_KEY_FILE"),
 			WorkflowCallbackURL:      os.Getenv("WORKFLOW_CALLBACK_URL"),
@@ -471,7 +485,7 @@ func (c Config) Validate() error {
 			}
 		}
 		switch account.Favorites {
-		case "", "off", "add_only":
+		case "", "off", "add_only", "mirror":
 		default:
 			return errors.New("favorites_invalid")
 		}
@@ -483,6 +497,9 @@ func (c Config) Validate() error {
 		}
 		if account.HoldVideosAtThreshold && account.VideoUsageThresholdBytes == 0 {
 			return errors.New("video_usage_threshold_required")
+		}
+		if account.FavoritesTakeover && account.Favorites != "mirror" {
+			return errors.New("favorites_takeover_requires_mirror")
 		}
 		if err := account.TransferWindow.validate(); err != nil {
 			return err

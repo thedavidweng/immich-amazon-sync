@@ -196,10 +196,13 @@ type Target interface {
 	// setting. The payload must contain an explicit settings.favorite boolean;
 	// otherwise the read fails with FavoriteUnconfirmed and is never false.
 	ReadFavorite(context.Context, Content, string) (bool, error)
-	// SetFavorite ensures one verified, owned node is starred. It reads the
-	// authoritative favorite field first, performs at most one SDK mutation,
-	// and re-reads the outcome; the mutation response is never proof.
-	SetFavorite(context.Context, Content, string) error
+	// SetFavorite ensures one verified, owned node carries the requested
+	// favorite value. It reads the authoritative favorite field first, performs
+	// at most one SDK mutation, and re-reads the outcome; the mutation response
+	// is never proof. An explicit remote value must be present before either
+	// direction is mutated, so a payload without the field never authorizes an
+	// unstar. Callers decide this service's authority to unstar.
+	SetFavorite(context.Context, Content, string, bool) error
 	CreateAlbum(context.Context, string) (string, error)
 	RenameAlbum(context.Context, string, string) error
 	AlbumMembers(context.Context, string) ([]string, error)
