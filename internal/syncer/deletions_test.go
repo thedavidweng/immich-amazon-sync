@@ -148,7 +148,32 @@ func TestDeletionGuardRefusesImplausiblePass(t *testing.T) {
 	}
 }
 
-func TestDeletionRetriesFailedRemoteTrash(t *testing.T) {
+func TestDeletionRetainsFailureAndSchedulesRetry(t *testing.T) {
+	e, s, d, done := deletionEngine(t, true)
+	defer done()
+	ctx := context.Background()
+	if err := e.Once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	d.trash = func(context.Context, bridge.Content, string) error {
+		return &bridge.Error{Code: bridge.Unavailable, RetryAfter: time.Minute}
+	}
+	trashed := photo("one")
+	trashed.ExcludedReason = "trashed"
+	s.pages[""] = bridge.Page{Assets: append([]bridge.Asset{trashed}, photos(11)[1:]...)}
+	if err := e.Once(ctx); err == nil || err.Error() != bridge.Unavailable {
+		t.Fatalf("trash failure: %v", err)
+	}
+	st := status(t, e)
+	if st.DeletePending != 1 || st.Deleted != 0 || st.Errors[bridge.Unavailable] == 0 {
+		t.Fatalf("failure not retained: %+v", st)
+	}
+	if st.NextAttempt == nil || st.NextAttempt.Before(time.Now().Add(30*time.Second)) {
+		t.Fatalf("retry not scheduled: %+v", st)
+	}
+}
+
+func TestDeletionRetrySettlesAfterTransientFailure(t *testing.T) {
 	e, s, d, done := deletionEngine(t, true)
 	defer done()
 	ctx := context.Background()
@@ -161,22 +186,15 @@ func TestDeletionRetriesFailedRemoteTrash(t *testing.T) {
 	trashed := photo("one")
 	trashed.ExcludedReason = "trashed"
 	s.pages[""] = bridge.Page{Assets: append([]bridge.Asset{trashed}, photos(11)[1:]...)}
-	if err := e.Once(ctx); err == nil || err.Error() != bridge.Unavailable {
-		t.Fatalf("trash failure: %v", err)
-	}
-	st := status(t, e)
-	if st.DeletePending != 1 || st.Deleted != 0 || st.Errors[bridge.Unavailable] == 0 {
-		t.Fatalf("failure not retained: %+v", st)
-	}
-	if st.NextAttempt == nil {
-		t.Fatalf("retry not scheduled: %+v", st)
+	if err := e.Once(ctx); err == nil {
+		t.Fatal("expected a trash failure")
 	}
 	time.Sleep(300 * time.Millisecond)
 	d.trash = nil
 	if err := e.Step(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if st = status(t, e); st.Deleted != 1 || st.DeletePending != 0 {
+	if st := status(t, e); st.Deleted != 1 || st.DeletePending != 0 {
 		t.Fatalf("retry did not settle: %+v", st)
 	}
 }
