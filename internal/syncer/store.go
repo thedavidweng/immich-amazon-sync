@@ -200,20 +200,21 @@ func (s *Store) migrate() error {
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 5 {
+	if version > 6 {
 		return errors.New("unsupported_schema")
 	}
-	if version == 5 {
+	if version == 6 {
 		return nil
 	}
-	if version == 4 {
-		return s.migrateP4()
+	if version == 5 || version == 4 {
+		// Favorites (P4) will chain before P5 once that migration lands.
+		return s.migrateP5()
 	}
 	if version == 3 {
 		if err := s.migrateP3(); err != nil {
 			return err
 		}
-		return s.migrateP4()
+		return s.migrateP5()
 	}
 	if version == 2 {
 		if err := s.migrateP2(); err != nil {
@@ -222,7 +223,7 @@ func (s *Store) migrate() error {
 		if err := s.migrateP3(); err != nil {
 			return err
 		}
-		return s.migrateP4()
+		return s.migrateP5()
 	}
 	if version == 1 {
 		if err := s.migrateP1(); err != nil {
@@ -234,7 +235,7 @@ func (s *Store) migrate() error {
 		if err := s.migrateP3(); err != nil {
 			return err
 		}
-		return s.migrateP4()
+		return s.migrateP5()
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -310,7 +311,7 @@ func (s *Store) migrate() error {
 	if err := s.migrateP3(); err != nil {
 		return err
 	}
-	return s.migrateP4()
+	return s.migrateP5()
 }
 
 // migrateP3 records how each album rule came into scope. Explicit rules are
@@ -332,11 +333,11 @@ func (s *Store) migrateP3() error {
 	return tx.Commit()
 }
 
-// migrateP4 stores only the normalized, categorized usage observation and the
+// migrateP5 stores only the normalized, categorized usage observation and the
 // provider's own calculation timestamp. No raw remote payload or inferred
 // capacity is retained. Existing mappings, cursors and deletion state are
 // untouched.
-func (s *Store) migrateP4() error {
+func (s *Store) migrateP5() error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -350,7 +351,7 @@ func (s *Store) migrateP4() error {
 		error_code TEXT NOT NULL DEFAULT '',
 		hold INTEGER NOT NULL DEFAULT 0
 	);
-	PRAGMA user_version=5;`)
+	PRAGMA user_version=6;`)
 	if err != nil {
 		return err
 	}
