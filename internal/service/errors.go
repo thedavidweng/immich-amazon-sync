@@ -42,6 +42,7 @@ func knownCode(code string) string {
 		"engine_busy", "account_paused", "identity_unavailable", "identity_mismatch",
 		"unsafe_filename", "size_mismatch", "checksum_mismatch", "staging_quota", "staging_corrupt",
 		"source_changed", "remote_error",
+		"direct_path_invalid", "direct_path_escape", "direct_path_not_regular", "direct_root_invalid",
 		"invalid_event", "album_unconfirmed", "membership_guard", "deletion_guard", "webhook_unauthorized", "webhook_unavailable",
 		"canceled", "deadline_exceeded", "restart_required",
 		"listen_unavailable", "http_unavailable", "output_unavailable",
@@ -53,7 +54,8 @@ func knownCode(code string) string {
 		"source_scope_conflict", "album_id_invalid", "secret_unreadable", "secret_invalid",
 		"invalid_options", "include_videos_invalid", "config_write_failed",
 		"video_usage_threshold_invalid", "video_usage_threshold_required",
-		"hold_videos_at_threshold_invalid":
+		"hold_videos_at_threshold_invalid",
+		"transfer_window_timezone_invalid", "transfer_window_time_invalid", "transfer_window_bounds_invalid":
 		return code
 	}
 	return "operation_failed"
@@ -85,9 +87,10 @@ func ExitCode(err error) int {
 		"log_level_invalid", "accounts_required", "account_required", "account_not_found",
 		"account_id_invalid", "immich_url_invalid", "amazon_region_required", "amazon_region_invalid",
 		"source_scope_required", "source_scope_conflict", "album_id_invalid", "invalid_options",
-		"include_videos_invalid", "invalid_event", "deletion_confirmation_required",
+		"include_videos_invalid", "invalid_event", "deletion_confirmation_required", "direct_root_invalid",
 		"video_usage_threshold_invalid", "video_usage_threshold_required",
-		"hold_videos_at_threshold_invalid":
+		"hold_videos_at_threshold_invalid",
+		"transfer_window_timezone_invalid", "transfer_window_time_invalid", "transfer_window_bounds_invalid":
 		return 2
 	}
 	return 1

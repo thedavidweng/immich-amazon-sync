@@ -11,7 +11,7 @@ immich-amazon-sync [--config PATH] [--account ID] [--json] COMMAND
 | `sync once` | Start/resume a bounded explicit full-scan pass; can write media, managed membership and -- only when explicitly enabled -- Amazon trashing. |
 | `deletions plan` | Read-only manifest of assets pending deletion propagation: count, synced total, blocked reason and asset IDs. Changes nothing. |
 | `albums list` | Read accessible source album IDs, names and counts. |
-| `doctor` | Read-only remote diagnostics and local storage checks; no upload or album creation. |
+| `doctor` | Read-only remote diagnostics and local storage checks; reports `direct_roots=<available>/<configured>` without printing a path; no upload or album creation. |
 | `version` | Print the build version without credentials or config. |
 | `--help`, `doctor --help`, `--version` | Work without configuration or network access. |
 
@@ -34,13 +34,16 @@ Every process accessing a state volume must respect the single-writer boundary.
 Stop `serve` before running a separate stateful CLI invocation.
 
 Human-readable account lines report `album_sync_mode`, `confirmed`, `existing`,
-`deleted`, `deletion_pending`, `pending`, `failed`, `unconfirmed`,
+`deleted`, `deletion_pending`, `pending`, `failed`, `unconfirmed`, `deferred`,
 `albums_active` and `albums_inaccessible`. `existing` means a verified copy was
 reused from elsewhere in the same Amazon account; it is backed up but not at the
-configured target parent. They also print observed usage state,
-`capacity=unknown`, `entitlement=unknown`, the provider calculation time and
-photo/video/other billable and total bytes. `--json` carries the full status
-object, including `usage`; see the [status reference](status.md).
+configured target parent. `deferred` means new upload dispatch waits for a
+transfer window; it is not a failure. When a window is configured the line also
+reports its timezone, bounds, open/closed state, `next_opening`,
+`deferral_reason` and the next scheduled wake. The line also prints observed
+usage state, `capacity=unknown`, `entitlement=unknown`, the provider calculation
+time and photo/video/other billable and total bytes. `--json` carries the full
+status object, including `usage`; see the [status reference](status.md).
 
 `doctor` adds a live `amazon_usage` read and prints the same usage block. It
 labels a missing provider timestamp as `stale` and a failed read as

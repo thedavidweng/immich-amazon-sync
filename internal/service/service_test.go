@@ -129,6 +129,28 @@ func TestDoctorProbesReadOnlyWithoutClaimingWritePermissions(t *testing.T) {
 	}
 }
 
+func TestDoctorReportsApprovedRootsWithoutLeakingPaths(t *testing.T) {
+	amazonReads(t)
+	cfg := remoteConfig(t, sourceRead)
+	present, absent := t.TempDir(), filepath.Join(t.TempDir(), "absent-root")
+	cfg.Accounts[0].DirectRoots = []config.DirectRoot{
+		{ImmichPath: "/immich/upload", HostPath: present},
+		{ImmichPath: "/immich/external", HostPath: absent},
+	}
+	report, err := service.Diagnose(t.Context(), cfg, "")
+	if err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	if report.Accounts[0].DirectRoots != (service.DirectRoots{Configured: 2, Available: 1}) {
+		t.Fatalf("direct roots: %+v", report.Accounts[0].DirectRoots)
+	}
+	data, _ := json.Marshal(report)
+	text := string(data)
+	if strings.Contains(text, present) || strings.Contains(text, absent) || strings.Contains(text, "/immich") {
+		t.Fatalf("doctor leaked a root path: %s", text)
+	}
+}
+
 func TestAuthPauseRecoversAfterSecretRotationAndRestartButManualPauseStays(t *testing.T) {
 	amazonReads(t)
 	var probes atomic.Int32
@@ -385,5 +407,94 @@ func TestSchedulingDoesNotCancelSlowOriginalOrBlockOtherAccounts(t *testing.T) {
 		if strings.Contains(text, private) {
 			t.Fatalf("logs leaked %q", private)
 		}
+	}
+}
+
+func clockOffset(offset time.Duration) string {
+	return time.Now().UTC().Add(offset).Format("15:04")
+}
+
+func TestWindowReloadAppliesWithoutRestartAndKeepsInFlightStreams(t *testing.T) {
+	amazonReads(t)
+	started, canceled := make(chan struct{}), make(chan struct{})
+	var startedOnce sync.Once
+	const assetID = "33333333-3333-4333-8333-333333333333"
+	const photo = `{"id":"` + assetID + `","type":"IMAGE","originalFileName":"private.jpg",
+		"originalMimeType":"image/jpeg","checksum":"qZk+NkcGgWq6PiVxeFDCbJzQ2J0=",
+		"libraryId":null,"visibility":"timeline","isOffline":false,"isTrashed":false,
+		"exifInfo":{"fileSizeInByte":3},"fileCreatedAt":"2026-10-01T12:00:00Z",
+		"updatedAt":"2026-10-02T12:00:00Z"}`
+	cfg := remoteConfig(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/albums/" + albumID:
+			fmt.Fprint(w, `{"id":"`+albumID+`","albumName":"private","assetCount":1}`)
+		case "/api/search/metadata":
+			fmt.Fprint(w, `{"assets":{"count":1,"items":[`+photo+`],"nextPage":null}}`)
+		case "/api/assets/" + assetID:
+			fmt.Fprint(w, photo)
+		case "/api/assets/" + assetID + "/original":
+			w.Header().Set("Content-Length", "3")
+			w.WriteHeader(200)
+			w.(http.Flusher).Flush()
+			startedOnce.Do(func() { close(started) })
+			<-r.Context().Done()
+			close(canceled)
+		default:
+			sourceRead(w, r)
+		}
+	})
+	cfg.ScanInterval = "1s"
+	open := &config.TransferWindow{Timezone: "UTC", Start: clockOffset(-time.Hour), End: clockOffset(time.Hour)}
+	cfg.Accounts[0].TransferWindow = open
+	var logs bytes.Buffer
+	s, err := service.Open(cfg, &logs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx, stop := context.WithCancel(t.Context())
+	defer stop()
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("transfer did not start inside the open window")
+	}
+
+	edited := cfg
+	edited.Accounts = append([]config.Account(nil), cfg.Accounts...)
+	edited.Accounts[0].TransferWindow = &config.TransferWindow{
+		Timezone: "UTC", Start: clockOffset(2 * time.Hour), End: clockOffset(3 * time.Hour),
+	}
+	if err := s.Reload(edited); err != nil {
+		t.Fatal(err)
+	}
+	status, err := s.Status(t.Context(), cfg.Accounts[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.TransferWindow == nil || status.TransferWindow.Open {
+		t.Fatalf("reloaded window did not apply without restart: %+v", status.TransferWindow)
+	}
+	select {
+	case <-canceled:
+		t.Fatal("a window-only reload cancelled the in-flight source stream")
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	stop()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("service did not stop")
+	}
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not cancel the in-flight stream")
 	}
 }

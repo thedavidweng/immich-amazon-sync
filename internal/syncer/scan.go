@@ -306,7 +306,7 @@ func (e *Engine) scanError(ctx context.Context, r rule, err error) error {
 	code := errorCode(err)
 	_, dbErr := e.store.db.ExecContext(context.WithoutCancel(ctx), `UPDATE rules SET error_code=?,attempts=attempts+1,
 		next_at=? WHERE account_id=? AND scope=?`, code,
-		time.Now().Add(retryDelay(4, err)).UnixMilli(), e.opts.AccountID, r.scope)
+		e.opts.Now().Add(retryDelay(4, err)).UnixMilli(), e.opts.AccountID, r.scope)
 	if dbErr != nil {
 		return dbErr
 	}

@@ -68,6 +68,15 @@ func formAccount(r *http.Request) config.Account {
 		}
 	}
 	threshold, _ := strconv.ParseInt(r.PostForm.Get("video_usage_threshold_bytes"), 10, 64)
+	window := config.TransferWindow{
+		Timezone: strings.TrimSpace(r.PostForm.Get("transfer_timezone")),
+		Start:    strings.TrimSpace(r.PostForm.Get("transfer_window_start")),
+		End:      strings.TrimSpace(r.PostForm.Get("transfer_window_end")),
+	}
+	var transferWindow *config.TransferWindow
+	if window != (config.TransferWindow{}) {
+		transferWindow = &window
+	}
 	return config.Account{
 		ID: r.PostForm.Get("id"), ImmichURL: r.PostForm.Get("immich_url"),
 		APIKeyFile: r.PostForm.Get("key_file"), CookieFile: r.PostForm.Get("cookie_file"),
@@ -79,6 +88,7 @@ func formAccount(r *http.Request) config.Account {
 		DeletionConfirmation:     r.PostForm.Get("deletions_confirmation"),
 		VideoUsageThresholdBytes: threshold,
 		HoldVideosAtThreshold:    r.PostForm.Get("hold_videos_at_threshold") == "on",
+		TransferWindow:           transferWindow,
 	}
 }
 
@@ -117,6 +127,16 @@ func (d *dashboard) saveAccount(w http.ResponseWriter, r *http.Request) {
 	account := formAccount(r)
 	cfg := d.backend.Config()
 	original := r.PostForm.Get("original_id")
+	// Direct roots are configuration-file only; an account edit must not drop
+	// an operator-approved read-only mapping.
+	if original != "" {
+		for _, existing := range cfg.Accounts {
+			if existing.ID == original {
+				account.DirectRoots = existing.DirectRoots
+				break
+			}
+		}
+	}
 	if original == "" {
 		for _, existing := range cfg.Accounts {
 			if existing.ID == account.ID {

@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"reflect"
 	"slices"
 	"sync"
 	"time"
@@ -43,6 +44,17 @@ type accountState struct {
 	pending       bool
 	continuation  bool
 	nextWork      *time.Time
+	window        *syncer.WindowState
+}
+
+// setWindow keeps one shared window holder per account so a reload applies to
+// an engine that is already running.
+func (s *accountState) setWindow(window *syncer.Window) {
+	if s.window == nil {
+		s.window = syncer.NewWindowState(window)
+		return
+	}
+	s.window.Set(window)
 }
 
 type AccountResult struct {
@@ -70,6 +82,14 @@ func Open(cfg config.Config, logOut io.Writer) (*Service, error) {
 		cfg: cfg, store: store, mux: http.NewServeMux(),
 		log:      slog.New(slog.NewJSONHandler(logOut, &slog.HandlerOptions{Level: level})),
 		accounts: make(map[string]*accountState), wake: make(chan struct{}, 1),
+	}
+	for _, account := range cfg.Accounts {
+		window, err := accountWindow(account)
+		if err != nil {
+			store.Close()
+			return nil, err
+		}
+		s.stateLocked(account.ID).setWindow(window)
 	}
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeHealth(w, http.StatusOK, "ok")
@@ -101,7 +121,8 @@ func (s *Service) Close() error {
 }
 
 // Reload replaces account configuration for subsequent cycles. A different
-// Store directory or listener requires restarting the process.
+// Store directory or listener requires restarting the process. A transfer-window
+// change applies to the next dispatch and never cancels an in-flight stream.
 func (s *Service) Reload(cfg config.Config) error {
 	if err := cfg.Validate(); err != nil {
 		return err
@@ -111,7 +132,29 @@ func (s *Service) Reload(cfg config.Config) error {
 	if cfg.DataDir != s.cfg.DataDir || cfg.Listen != s.cfg.Listen {
 		return errors.New("restart_required")
 	}
-	for _, state := range s.accounts {
+	previous := make(map[string]config.Account, len(s.cfg.Accounts))
+	for _, account := range s.cfg.Accounts {
+		previous[account.ID] = account
+	}
+	current := make(map[string]config.Account, len(cfg.Accounts))
+	for _, account := range cfg.Accounts {
+		window, err := accountWindow(account)
+		if err != nil {
+			return err
+		}
+		current[account.ID] = account
+		s.stateLocked(account.ID).setWindow(window)
+	}
+	for id, state := range s.accounts {
+		replacement, configured := current[id]
+		if configured {
+			if old, had := previous[id]; had && sameRuntimeConfig(old, replacement) {
+				// Only scheduling settings changed; keep the running cycle and
+				// let its next dispatch observe the new window.
+				state.pending = true
+				continue
+			}
+		}
 		if state.cancel != nil {
 			state.cancel()
 		}
@@ -123,6 +166,21 @@ func (s *Service) Reload(cfg config.Config) error {
 	default:
 	}
 	return nil
+}
+
+// sameRuntimeConfig reports whether two accounts are identical apart from the
+// transfer window, which is applied in place without cancelling a cycle.
+func sameRuntimeConfig(a, b config.Account) bool {
+	a.TransferWindow, b.TransferWindow = nil, nil
+	return reflect.DeepEqual(a, b)
+}
+
+// accountWindow parses the configured window; nil means continuous transfers.
+func accountWindow(account config.Account) (*syncer.Window, error) {
+	if account.TransferWindow == nil {
+		return nil, nil
+	}
+	return syncer.NewWindow(account.TransferWindow.Timezone, account.TransferWindow.Start, account.TransferWindow.End)
 }
 
 // Run binds cfg.Listen and schedules accounts independently. All in-flight HTTP
@@ -250,7 +308,7 @@ func Accounts(cfg config.Config, id string) ([]config.Account, error) {
 	return matches, nil
 }
 
-func newEngine(store *syncer.Store, cfg config.Config, account config.Account, logger *slog.Logger) (*syncer.Engine, [32]byte, error) {
+func newEngine(store *syncer.Store, cfg config.Config, account config.Account, state *accountState, logger *slog.Logger) (*syncer.Engine, [32]byte, error) {
 	secrets, err := account.Secrets()
 	if err != nil {
 		return nil, [32]byte{}, err
@@ -266,12 +324,12 @@ func newEngine(store *syncer.Store, cfg config.Config, account config.Account, l
 	engine, err := syncer.New(store, source, target, syncer.Options{
 		AccountID: account.ID, AlbumIDs: account.AlbumIDs, Library: account.Library,
 		IncludeVideos: account.IncludeVideos, AlbumSyncMode: account.AlbumMode(),
-		Deletions:                account.Deletions,
+		Deletions: account.Deletions, DirectRoots: account.Roots(),
 		VideoUsageThresholdBytes: account.VideoUsageThresholdBytes,
 		HoldVideosAtThreshold:    account.HoldVideosAtThreshold,
 		Workers:                  cfg.Workers, MaxStagingBytes: cfg.MaxStagingBytes,
 		MaxStagingFiles: cfg.MaxStagingFiles, BytesPerSecond: cfg.BytesPerSecond,
-		Logger: logger,
+		Window: state.window, Logger: logger,
 	})
 	digest := sha256.Sum256([]byte(secrets.APIKey + "\x00" + secrets.Cookie))
 	return engine, digest, err
@@ -280,7 +338,7 @@ func newEngine(store *syncer.Store, cfg config.Config, account config.Account, l
 func (s *Service) cycle(ctx context.Context, cfg config.Config, account config.Account, state *accountState, mode string) (AccountResult, error) {
 	started := time.Now()
 	result := AccountResult{Account: AccountHash(account.ID)}
-	engine, digest, err := newEngine(s.store, cfg, account, s.log)
+	engine, digest, err := newEngine(s.store, cfg, account, state, s.log)
 	if err == nil {
 		result.Status, err = engine.Status(ctx)
 	}
@@ -377,8 +435,15 @@ func (s *Service) engine(id string) (*syncer.Engine, error) {
 	if id == "" || len(accounts) != 1 {
 		return nil, errors.New("account_required")
 	}
-	engine, _, err := newEngine(s.store, cfg, accounts[0], s.log)
+	engine, _, err := newEngine(s.store, cfg, accounts[0], s.accountState(accounts[0].ID), s.log)
 	return engine, err
+}
+
+// accountState returns the shared scheduling state for one configured account.
+func (s *Service) accountState(id string) *accountState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stateLocked(id)
 }
 
 func (s *Service) Status(ctx context.Context, id string) (syncer.Status, error) {
@@ -411,7 +476,7 @@ func (s *Service) DeletionPlan(ctx context.Context, id string) ([]DeletionReport
 		jobs.Add(1)
 		go func() {
 			defer jobs.Done()
-			engine, _, err := newEngine(s.store, cfg, account, s.log)
+			engine, _, err := newEngine(s.store, cfg, account, s.accountState(account.ID), s.log)
 			if err != nil {
 				reports[i] = DeletionReport{Account: AccountHash(account.ID)}
 				errs[i] = err

@@ -28,7 +28,7 @@ func (e *Engine) mirror(ctx context.Context) error {
 	rows, err := e.store.db.QueryContext(ctx, `SELECT a.scope,target_id,a.name,applied_name,state,r.generation,baseline,a.attempts,r.complete
 		FROM albums a JOIN rules r ON r.account_id=a.account_id AND r.scope=a.scope
 		WHERE a.account_id=? AND r.active=1 AND r.error_code=''
-		AND a.attempts<5 AND a.next_at<=unixepoch('subsec')*1000`, e.opts.AccountID)
+		AND a.attempts<5 AND a.next_at<=?`, e.opts.AccountID, e.opts.Now().UnixMilli())
 	if err != nil {
 		return errors.New("storage_unavailable")
 	}
@@ -50,7 +50,7 @@ func (e *Engine) mirror(ctx context.Context) error {
 			j.attempts++
 			_, dbErr := e.store.db.ExecContext(context.WithoutCancel(ctx), `UPDATE albums SET state=?,error_code=?,attempts=?,next_at=?
 				WHERE account_id=? AND scope=?`, j.state, code, j.attempts,
-				time.Now().Add(retryDelay(j.attempts-1, err)).UnixMilli(), e.opts.AccountID, j.scope)
+				e.opts.Now().Add(retryDelay(j.attempts-1, err)).UnixMilli(), e.opts.AccountID, j.scope)
 			if dbErr != nil {
 				return errors.New("storage_unavailable")
 			}

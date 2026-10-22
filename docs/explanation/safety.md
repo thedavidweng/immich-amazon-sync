@@ -84,6 +84,16 @@ the [event/membership decision](../adr/0005-durable-hints-and-owned-membership.m
 Read [contract decisions](../adr/0003-upstream-contract-boundaries.md) for the
 researched checksum, media-pair and pagination limits.
 
+Read-only mounts are optional input only. An approved `direct_roots` mapping lets
+an eligible original be staged from disk instead of downloaded, but the service
+never writes to, creates in or retimes that mount. The staged bytes are verified
+against the recorded size and checksum, the file is re-stated after the read, and
+a mutation yields `source_changed` rather than a recorded digest. Paths are
+confined with `os.Root`, so traversal and symlink escapes fail closed instead of
+falling back. Absent, out-of-root, missing or unreadable paths use the Immich API
+stream, so a broken mount degrades to the previous behaviour. See
+[direct originals](../how-to/direct-originals.md).
+
 Local health is deliberately independent of remote service availability.
 Restarting a healthy local database because Amazon is offline does not fix
 credentials or uncertain writes. Credential files remain outside the image,
