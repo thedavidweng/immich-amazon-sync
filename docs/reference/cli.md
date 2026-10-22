@@ -41,7 +41,10 @@ configured target parent. `deferred` means new upload dispatch waits for a
 transfer window; it is not a failure. When a window is configured the line also
 reports its timezone, bounds, open/closed state, `next_opening`,
 `deferral_reason` and the next scheduled wake. `--json` carries the full status
-object.
+object, including the finite `capture_date` capability. `doctor` reports the same
+capability per account as `capture_date=metadata_not_supported` or
+`capture_date=supported`; it is a static property of the pinned SDK, not a write
+test.
 
 For each selected account, one `sync once` invocation attempts at most 64 distinct
 media jobs and advances full discovery by at most eight page steps; an already

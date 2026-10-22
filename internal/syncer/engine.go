@@ -23,6 +23,10 @@ type Options struct {
 	MaxStagingBytes int64
 	MaxStagingFiles int
 	BytesPerSecond  int64
+	// CaptureDate is the finite capture-date write capability declared by the
+	// target adapter. Empty is treated as metadata_not_supported: absent proof
+	// must never imply success.
+	CaptureDate string
 	// Window is the live optional transfer window shared with the service. A
 	// nil holder or nil current window allows continuous transfers.
 	Window *WindowState
@@ -76,6 +80,7 @@ type Status struct {
 	LastIncremental         *time.Time     `json:"last_incremental"`
 	WorkRemaining           bool           `json:"work_remaining"`
 	NextAttempt             *time.Time     `json:"next_attempt,omitempty"`
+	CaptureDate             string         `json:"capture_date"`
 	DeferralReason          string         `json:"deferral_reason,omitempty"`
 	TransferWindow          *WindowStatus  `json:"transfer_window,omitempty"`
 	BytesPerSecond          int64          `json:"bytes_per_second"`
@@ -111,6 +116,15 @@ func New(store *Store, source bridge.Source, target bridge.Target, opts Options)
 		if id == "" {
 			return nil, errors.New("invalid_options")
 		}
+	}
+	// Absent a declared capability the honest answer is that the target cannot
+	// set a capture date. Anything outside the finite vocabulary is refused
+	// rather than rendered as success.
+	if opts.CaptureDate == "" {
+		opts.CaptureDate = bridge.MetadataNotSupported
+	}
+	if opts.CaptureDate != bridge.MetadataSupported && opts.CaptureDate != bridge.MetadataNotSupported {
+		return nil, errors.New("invalid_options")
 	}
 	if opts.Workers == 0 {
 		opts.Workers = 2
@@ -280,6 +294,7 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		return st, err
 	}
+	st.CaptureDate = e.opts.CaptureDate
 	st.Direct = e.store.directCounters(e.opts.AccountID)
 	err = e.store.db.QueryRowContext(ctx, "SELECT count(*) FROM rules WHERE account_id=? AND active=1 AND complete=0",
 		e.opts.AccountID).Scan(&st.Scanning)
