@@ -75,6 +75,8 @@ func (s *sourceFake) Original(ctx context.Context, id string) (io.ReadCloser, er
 type targetFake struct {
 	bridge.Target
 	identity  string
+	usage     bridge.Usage
+	usageErr  error
 	mu        sync.Mutex
 	nodes     []bridge.Node
 	bodies    []string
@@ -90,6 +92,10 @@ type targetFake struct {
 
 func (t *targetFake) Probe(context.Context) (bridge.Capabilities, error) {
 	return bridge.Capabilities{Identity: t.identity}, t.authErr
+}
+
+func (t *targetFake) Usage(context.Context) (bridge.Usage, error) {
+	return t.usage, t.usageErr
 }
 
 // fakeFind models the strict target lookup: only nodes at the requested parent.

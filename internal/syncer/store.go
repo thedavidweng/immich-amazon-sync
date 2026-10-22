@@ -142,20 +142,29 @@ func (s *Store) migrate() error {
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 4 {
+	if version > 5 {
 		return errors.New("unsupported_schema")
 	}
-	if version == 4 {
+	if version == 5 {
 		return nil
 	}
+	if version == 4 {
+		return s.migrateP4()
+	}
 	if version == 3 {
-		return s.migrateP3()
+		if err := s.migrateP3(); err != nil {
+			return err
+		}
+		return s.migrateP4()
 	}
 	if version == 2 {
 		if err := s.migrateP2(); err != nil {
 			return err
 		}
-		return s.migrateP3()
+		if err := s.migrateP3(); err != nil {
+			return err
+		}
+		return s.migrateP4()
 	}
 	if version == 1 {
 		if err := s.migrateP1(); err != nil {
@@ -164,7 +173,10 @@ func (s *Store) migrate() error {
 		if err := s.migrateP2(); err != nil {
 			return err
 		}
-		return s.migrateP3()
+		if err := s.migrateP3(); err != nil {
+			return err
+		}
+		return s.migrateP4()
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -237,7 +249,10 @@ func (s *Store) migrate() error {
 	if err := s.migrateP2(); err != nil {
 		return err
 	}
-	return s.migrateP3()
+	if err := s.migrateP3(); err != nil {
+		return err
+	}
+	return s.migrateP4()
 }
 
 // migrateP3 records how each album rule came into scope. Explicit rules are
@@ -253,6 +268,31 @@ func (s *Store) migrateP3() error {
 	ALTER TABLE rules ADD COLUMN discovered INTEGER NOT NULL DEFAULT 1;
 	ALTER TABLE rules ADD COLUMN discovered_at TEXT NOT NULL DEFAULT '';
 	PRAGMA user_version=4;`)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// migrateP4 stores only the normalized, categorized usage observation and the
+// provider's own calculation timestamp. No raw remote payload or inferred
+// capacity is retained. Existing mappings, cursors and deletion state are
+// untouched.
+func (s *Store) migrateP4() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(`CREATE TABLE usage (
+		account_id TEXT PRIMARY KEY REFERENCES accounts(id),
+		observed_at TEXT NOT NULL DEFAULT '',
+		last_calculated TEXT NOT NULL DEFAULT '',
+		categories TEXT NOT NULL DEFAULT '',
+		error_code TEXT NOT NULL DEFAULT '',
+		hold INTEGER NOT NULL DEFAULT 0
+	);
+	PRAGMA user_version=5;`)
 	if err != nil {
 		return err
 	}

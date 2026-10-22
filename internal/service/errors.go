@@ -36,7 +36,7 @@ func Code(err error) string {
 
 func knownCode(code string) string {
 	switch code {
-	case bridge.Authentication, bridge.Permission, bridge.RateLimit, bridge.Unavailable,
+	case bridge.Authentication, bridge.Permission, bridge.RateLimit, bridge.Quota, bridge.Unavailable,
 		bridge.NotFound, bridge.Conflict, bridge.Unconfirmed, bridge.Protocol, bridge.Unsupported,
 		"storage_unavailable", "writer_locked", "locking_unsupported", "unsupported_schema",
 		"engine_busy", "account_paused", "identity_unavailable", "identity_mismatch",
@@ -51,7 +51,9 @@ func knownCode(code string) string {
 		"account_id_invalid", "immich_url_invalid", "amazon_region_required", "amazon_region_invalid",
 		"credentials_required", "credential_sources_conflict", "source_scope_required",
 		"source_scope_conflict", "album_id_invalid", "secret_unreadable", "secret_invalid",
-		"invalid_options", "include_videos_invalid", "config_write_failed":
+		"invalid_options", "include_videos_invalid", "config_write_failed",
+		"video_usage_threshold_invalid", "video_usage_threshold_required",
+		"hold_videos_at_threshold_invalid":
 		return code
 	}
 	return "operation_failed"
@@ -83,7 +85,9 @@ func ExitCode(err error) int {
 		"log_level_invalid", "accounts_required", "account_required", "account_not_found",
 		"account_id_invalid", "immich_url_invalid", "amazon_region_required", "amazon_region_invalid",
 		"source_scope_required", "source_scope_conflict", "album_id_invalid", "invalid_options",
-		"include_videos_invalid", "invalid_event", "deletion_confirmation_required":
+		"include_videos_invalid", "invalid_event", "deletion_confirmation_required",
+		"video_usage_threshold_invalid", "video_usage_threshold_required",
+		"hold_videos_at_threshold_invalid":
 		return 2
 	}
 	return 1

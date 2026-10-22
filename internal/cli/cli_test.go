@@ -171,12 +171,15 @@ func TestSyncOnceContinuesAfterAccountFailureAndReportsAggregateExit(t *testing.
 		if r.URL.Hostname() == "127.0.0.1" {
 			return original.RoundTrip(r)
 		}
-		if r.Method != http.MethodGet || !strings.HasSuffix(r.URL.Path, "/nodes") {
+		body := `{"data":[{"id":"root","kind":"FOLDER","status":"AVAILABLE","isRoot":true,"ownerId":"owner"}],"count":1}`
+		if strings.HasSuffix(r.URL.Path, "/account/usage") {
+			body = `{"lastCalculated":"2026-10-20T08:30:00.000Z","photo":{"billable":{"bytes":1,"count":1},"total":{"bytes":1,"count":1}},"video":{"billable":{"bytes":0,"count":0},"total":{"bytes":0,"count":0}},"other":{"billable":{"bytes":0,"count":0},"total":{"bytes":0,"count":0}}}`
+		} else if r.Method != http.MethodGet || !strings.HasSuffix(r.URL.Path, "/nodes") {
 			t.Errorf("unexpected Amazon request: %s %s", r.Method, r.URL.Path)
 		}
 		return &http.Response{
 			StatusCode: 200, Request: r, Header: make(http.Header),
-			Body: io.NopCloser(strings.NewReader(`{"data":[{"id":"root","kind":"FOLDER","status":"AVAILABLE","isRoot":true,"ownerId":"owner"}],"count":1}`)),
+			Body: io.NopCloser(strings.NewReader(body)),
 		}, nil
 	})
 	defer func() { http.DefaultTransport = original }()

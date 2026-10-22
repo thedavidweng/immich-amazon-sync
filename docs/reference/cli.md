@@ -37,7 +37,15 @@ Human-readable account lines report `album_sync_mode`, `confirmed`, `existing`,
 `deleted`, `deletion_pending`, `pending`, `failed`, `unconfirmed`,
 `albums_active` and `albums_inaccessible`. `existing` means a verified copy was
 reused from elsewhere in the same Amazon account; it is backed up but not at the
-configured target parent. `--json` carries the full status object.
+configured target parent. They also print observed usage state,
+`capacity=unknown`, `entitlement=unknown`, the provider calculation time and
+photo/video/other billable and total bytes. `--json` carries the full status
+object, including `usage`; see the [status reference](status.md).
+
+`doctor` adds a live `amazon_usage` read and prints the same usage block. It
+labels a missing provider timestamp as `stale` and a failed read as
+`unavailable`; it never substitutes zero or an inferred subscription cap.
+Original bytes are the backup contract and no quality mode is offered.
 
 For each selected account, one `sync once` invocation attempts at most 64 distinct
 media jobs and advances full discovery by at most eight page steps; an already

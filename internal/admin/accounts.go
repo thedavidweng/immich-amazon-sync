@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -66,15 +67,18 @@ func formAccount(r *http.Request) config.Account {
 			ids = append(ids, id)
 		}
 	}
+	threshold, _ := strconv.ParseInt(r.PostForm.Get("video_usage_threshold_bytes"), 10, 64)
 	return config.Account{
 		ID: r.PostForm.Get("id"), ImmichURL: r.PostForm.Get("immich_url"),
 		APIKeyFile: r.PostForm.Get("key_file"), CookieFile: r.PostForm.Get("cookie_file"),
 		AmazonRegion: r.PostForm.Get("region"),
 		AlbumIDs:     ids,
 		Library:      r.PostForm.Get("library") == "on", IncludeVideos: r.PostForm.Get("include_videos") == "on",
-		AlbumSyncMode:        r.PostForm.Get("album_sync_mode"),
-		Deletions:            r.PostForm.Get("deletions") == "on",
-		DeletionConfirmation: r.PostForm.Get("deletions_confirmation"),
+		AlbumSyncMode:            r.PostForm.Get("album_sync_mode"),
+		Deletions:                r.PostForm.Get("deletions") == "on",
+		DeletionConfirmation:     r.PostForm.Get("deletions_confirmation"),
+		VideoUsageThresholdBytes: threshold,
+		HoldVideosAtThreshold:    r.PostForm.Get("hold_videos_at_threshold") == "on",
 	}
 }
 

@@ -13,7 +13,7 @@ when an admin passphrase file is configured. They share the normal listener;
 | `GET /accounts/new` | Source and Destination editor for a new account. |
 | `GET /accounts/{id}/edit` | Existing account editor. |
 | `POST /accounts/discover` | `csrf`, source URL/key file and editor fields; source-only album lookup without save or scope selection. |
-| `POST /accounts/save` | `csrf`, `original_id`, `id`, `immich_url`, `key_file`, `region`, `cookie_file`, `album_ids`, repeated `album_id`, and optional `library`, `include_videos`, `album_sync_mode`, `deletions`, `deletions_confirmation`. |
+| `POST /accounts/save` | `csrf`, `original_id`, `id`, `immich_url`, `key_file`, `region`, `cookie_file`, `album_ids`, repeated `album_id`, and optional `library`, `include_videos`, `video_usage_threshold_bytes`, `hold_videos_at_threshold`, `album_sync_mode`, `deletions`, `deletions_confirmation`. |
 | `POST /accounts/{id}/pause`, `/resume`, `/retry`, `/doctor` | `csrf`; account control or read-only diagnostics, not a cloud-write probe. |
 | `POST /accounts/{id}/remove` | `csrf`; configuration removal, not local-history or cloud-media deletion. |
 
@@ -21,12 +21,16 @@ when an admin passphrase file is configured. They share the normal listener;
 separation; repeated `album_id` values come from discovery checkboxes. Boolean
 checkboxes are `on` or absent. Scope must be explicit: album IDs or whole library.
 All credentials are mounted file paths, never form secret values.
+`album_sync_mode` is `off`, `selected` (explicit album IDs, library off) or
+`all_accessible` (every readable album; allowed with whole-library backup).
+Disabling mirroring stops managed writes and preserves cloud media, album
+mappings and memberships.
 The overview's durable progress fields are described in the
 [status reference](status.md), including separate media, album and association
-completion. `album_sync_mode` is `off`, `selected` (explicit album IDs, library
-off) or `all_accessible` (every readable album; allowed with whole-library
-backup). Disabling mirroring stops managed writes and preserves cloud media,
-album mappings and memberships.
+completion. It also shows observed photo/video/other usage, its `state` and
+calculation time, an explicit `subscription capacity: unknown` and
+`Prime entitlement: unknown`, plus the configured video threshold and any
+video/quota hold. Doctor shows the same usage observation and unknowns.
 
 Login without a valid pre-auth cookie/token and authenticated mutations without
 CSRF are rejected. See [local management](../how-to/local-management.md) for

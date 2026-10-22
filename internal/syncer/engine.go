@@ -6,23 +6,30 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/thedavidweng/immich-amazon-sync/internal/bridge"
 )
 
 type Options struct {
-	AccountID       string
-	AlbumIDs        []string
-	Library         bool
-	IncludeVideos   bool
-	AlbumSyncMode   bridge.AlbumSyncMode
-	Deletions       bool
-	Workers         int
-	MaxStagingBytes int64
-	MaxStagingFiles int
-	BytesPerSecond  int64
-	Logger          *slog.Logger
+	AccountID     string
+	AlbumIDs      []string
+	Library       bool
+	IncludeVideos bool
+	AlbumSyncMode bridge.AlbumSyncMode
+	Deletions     bool
+	// VideoUsageThresholdBytes is an explicit user budget for observed
+	// billable video bytes. Zero disables the advisory.
+	VideoUsageThresholdBytes int64
+	// HoldVideosAtThreshold holds new video uploads at or above the observed
+	// threshold. Photos and metadata work continue.
+	HoldVideosAtThreshold bool
+	Workers               int
+	MaxStagingBytes       int64
+	MaxStagingFiles       int
+	BytesPerSecond        int64
+	Logger                *slog.Logger
 }
 
 type Status struct {
@@ -57,6 +64,7 @@ type Status struct {
 	LastIncremental         *time.Time     `json:"last_incremental"`
 	WorkRemaining           bool           `json:"work_remaining"`
 	NextAttempt             *time.Time     `json:"next_attempt,omitempty"`
+	Usage                   UsageStatus    `json:"usage"`
 }
 
 type Engine struct {
@@ -68,6 +76,8 @@ type Engine struct {
 	rateAt    time.Time
 	contentMu sync.Mutex
 	contents  map[string]*contentLock
+	videoHold atomic.Bool
+	quotaHold atomic.Bool
 }
 
 func New(store *Store, source bridge.Source, target bridge.Target, opts Options) (*Engine, error) {
@@ -79,7 +89,9 @@ func New(store *Store, source bridge.Source, target bridge.Target, opts Options)
 		(!opts.Library && len(opts.AlbumIDs) == 0) || (opts.Library && len(opts.AlbumIDs) != 0) ||
 		!mode.Valid() || (mode == bridge.AlbumSyncSelected && (opts.Library || len(opts.AlbumIDs) == 0)) ||
 		opts.Workers < 0 || opts.Workers > 32 || opts.MaxStagingBytes < 0 ||
-		opts.MaxStagingFiles < 0 || opts.BytesPerSecond < 0 {
+		opts.MaxStagingFiles < 0 || opts.BytesPerSecond < 0 ||
+		opts.VideoUsageThresholdBytes < 0 ||
+		(opts.HoldVideosAtThreshold && opts.VideoUsageThresholdBytes == 0) {
 		return nil, errors.New("invalid_options")
 	}
 	opts.AlbumSyncMode = mode
@@ -155,6 +167,9 @@ func (e *Engine) Retry(ctx context.Context) error {
 	if err == nil {
 		_, err = tx.ExecContext(ctx, `UPDATE accounts SET pause_reason=CASE WHEN pause_reason='auth' THEN '' ELSE pause_reason END,
 			error_code='' WHERE id=?`, e.opts.AccountID)
+	}
+	if err == nil {
+		_, err = tx.ExecContext(ctx, `UPDATE usage SET hold=0 WHERE account_id=?`, e.opts.AccountID)
 	}
 	if err == nil {
 		err = tx.Commit()
@@ -247,6 +262,11 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		return st, err
 	}
+	usage, err := e.usageStatus(ctx)
+	if err != nil {
+		return st, err
+	}
+	videoHold := usage.VideoHold
 	err = e.store.db.QueryRowContext(ctx, "SELECT count(*) FROM rules WHERE account_id=? AND active=1 AND complete=0",
 		e.opts.AccountID).Scan(&st.Scanning)
 	if err != nil {
@@ -330,14 +350,15 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 		(SELECT count(*) FROM hints WHERE account_id=? AND attempts<5 AND next_at<=unixepoch('subsec')*1000)+
 		(SELECT count(*) FROM incremental WHERE account_id=? AND active=1 AND error_code='')+
 		(SELECT count(*) FROM assets a WHERE account_id=? AND state IN ('pending','staged','failed','unconfirmed')
-		 AND attempts<5 AND next_at<=unixepoch('subsec')*1000 AND error_code!='source_changed' AND `+eligibleSQL+`)+
+		 AND attempts<5 AND next_at<=unixepoch('subsec')*1000 AND error_code!='source_changed'
+		 AND (?=0 OR coalesce(json_extract(a.metadata,'$.kind'),'')!='VIDEO') AND `+eligibleSQL+`)+
 		(SELECT count(*) FROM assets WHERE account_id=? AND state='delete_pending'
 		 AND next_at<=unixepoch('subsec')*1000)+
 		(SELECT count(*) FROM albums a JOIN rules r ON r.account_id=a.account_id AND r.scope=a.scope
 		 WHERE a.account_id=? AND ? AND r.active=1 AND r.complete=1 AND a.state NOT IN ('creating','unconfirmed')
 		 AND a.error_code!='' AND a.attempts<5 AND a.next_at<=unixepoch('subsec')*1000)`,
-		e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID,
-		e.opts.AccountID, e.mirrorsAlbums()).Scan(&due)
+		e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, videoHold,
+		e.opts.AccountID, e.opts.AccountID, e.mirrorsAlbums()).Scan(&due)
 	if err != nil {
 		return st, errors.New("storage_unavailable")
 	}
@@ -345,21 +366,28 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 	var next *int64
 	err = e.store.db.QueryRowContext(ctx, `SELECT min(next_at) FROM (
 		SELECT next_at FROM assets a WHERE account_id=? AND state IN ('failed','unconfirmed')
-			AND attempts<5 AND error_code!='source_changed' AND `+eligibleSQL+`
+			AND attempts<5 AND error_code!='source_changed'
+			AND (?=0 OR coalesce(json_extract(a.metadata,'$.kind'),'')!='VIDEO') AND `+eligibleSQL+`
 		UNION ALL SELECT next_at FROM hints WHERE account_id=? AND attempts<5
 		UNION ALL SELECT next_at FROM assets WHERE account_id=? AND state='delete_pending'
 		UNION ALL SELECT next_at FROM rules WHERE account_id=? AND active=1 AND complete=0 AND attempts<5
 		UNION ALL SELECT a.next_at FROM albums a JOIN rules r ON r.account_id=a.account_id AND r.scope=a.scope
 			WHERE a.account_id=? AND ? AND r.active=1 AND a.attempts<5 AND a.error_code!=''
 			AND a.state NOT IN ('creating','unconfirmed')) WHERE next_at>unixepoch('subsec')*1000`,
-		e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID,
-		e.mirrorsAlbums()).Scan(&next)
+		e.opts.AccountID, videoHold, e.opts.AccountID, e.opts.AccountID, e.opts.AccountID,
+		e.opts.AccountID, e.mirrorsAlbums()).Scan(&next)
 	if err != nil {
 		return st, errors.New("storage_unavailable")
 	}
 	if next != nil && !st.Paused {
 		t := time.UnixMilli(*next)
 		st.NextAttempt = &t
+	}
+	st.Usage = usage
+	if usage.QuotaHold {
+		// No upload can dispatch until a later full pass clears the hold.
+		st.WorkRemaining = false
+		st.NextAttempt = nil
 	}
 	return st, nil
 }
@@ -394,6 +422,24 @@ func (e *Engine) run(ctx context.Context, full, incremental bool) error {
 	if err = e.identify(ctx); err != nil {
 		return e.accountError(ctx, err)
 	}
+	// Observed usage gates only the video advisory hold; a failed usage read is
+	// recorded as stale/unavailable and never blocks other media work.
+	if err = e.refreshUsage(ctx); err != nil {
+		return err
+	}
+	// A quota hold survives continuation steps. Only an explicit full pass or
+	// periodic reconcile clears it and re-attempts the durable original.
+	if full || incremental {
+		if err = e.clearUsageHold(ctx); err != nil {
+			return err
+		}
+	}
+	usage, err := e.usageStatus(ctx)
+	if err != nil {
+		return err
+	}
+	e.videoHold.Store(usage.VideoHold)
+	e.quotaHold.Store(usage.QuotaHold)
 	// A full pass or a periodic reconcile reads the authoritative accessible
 	// album listing; bounded continuations keep the discovered set stable so an
 	// in-flight album scan is not interrupted. A failed listing changes nothing.
@@ -535,7 +581,7 @@ func errorCode(err error) string {
 		return "canceled"
 	}
 	switch code {
-	case bridge.Authentication, bridge.Permission, bridge.RateLimit, bridge.Unavailable,
+	case bridge.Authentication, bridge.Permission, bridge.RateLimit, bridge.Quota, bridge.Unavailable,
 		bridge.NotFound, bridge.Conflict, bridge.Unconfirmed, bridge.Protocol, bridge.Unsupported,
 		"identity_unavailable", "identity_mismatch", "storage_unavailable", "staging_quota",
 		"checksum_mismatch", "size_mismatch", "staging_corrupt", "unsafe_filename", "source_changed", "canceled",

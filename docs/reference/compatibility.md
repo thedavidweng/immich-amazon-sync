@@ -63,6 +63,34 @@ Original downloads and SDK uploads retain the caller context without a fixed
 whole-media deadline. Each post-upload metadata verification gets a fresh
 30-second deadline; a long media transfer does not consume that allowance.
 
+## Storage usage and quota
+
+`aphotos v0.1.4` exposes `GetUsage`, whose categorized `billable`/`total`
+observations and `lastCalculated` are pinned by the offline fixture. It does not
+expose a subscription cap, remaining bytes or Prime eligibility. This service
+therefore reports observed `photo`, `video` and `other` usage (plus any
+additional provider category) next to `capacity: unknown` and
+`entitlement: unknown`. A zero billable photo count, a marketplace code or low
+usage never proves Prime.
+
+The optional per-account `video_usage_threshold_bytes` compares a user-provided
+budget with fresh observed billable video bytes. `hold_videos_at_threshold`
+stops dispatching new video uploads at or above it; photos and metadata work
+continue, and staged originals stay durable. A stale or unavailable usage read
+cannot activate the hold.
+
+A quota rejection is classified as `storage_quota_exceeded` only from an
+explicit typed non-429 response: HTTP 400, 403 or 409 carrying a capacity
+marker, or HTTP 507. HTTP 429 remains `rate_limited`; 401 and a 403 without a
+capacity marker remain authentication/permission errors. The rejected upload
+keeps its staged original. A later run re-reads the target before uploading, so
+an uncertain write is never replayed and capacity restoration is accepted only
+when new work succeeds. Real-account quota behavior is not yet tested; this is
+an offline contract.
+
+Original bytes are the backup contract. There is no quality selector, Storage
+Saver simulation or recompression path.
+
 ## Immich contract
 
 Polling uses `/api/server/version`, `/api/users/me`, `/api/albums`,

@@ -29,6 +29,8 @@ See [config.example.json](config.example.json) for the minimal deployment shape.
 | `album_ids` | empty | Explicit source album UUID allowlist. |
 | `library` | `false` | Deliberate whole-accessible-library choice, mutually exclusive with `album_ids`. |
 | `include_videos` | `false` | Include eligible standalone originals classified as video. |
+| `video_usage_threshold_bytes` | `0` | Optional user budget compared with observed billable video bytes. Zero disables it. It is not a provider quota or remaining-capacity estimate. |
+| `hold_videos_at_threshold` | `false` | Hold new video uploads while fresh observed billable video usage is at or above the threshold. Requires a positive threshold. Photos and metadata work continue; staged originals stay durable. |
 | `album_sync_mode` | `off` | Album mirroring scope: `off`, `selected` (requires `album_ids` and `library: false`) or `all_accessible` (discovers every album the API key can read, including with `library: true`). |
 | `mirror_albums` | unset | Deprecated boolean form of `album_sync_mode`. `true` maps to `selected` and never to `all_accessible`; combining it with a different mode returns `album_sync_mode_conflict`. |
 | `deletions` | `false` | Propagate an Immich trash to the Amazon trash for mapped assets. Off by default; never permanently deletes. |
@@ -75,8 +77,10 @@ admin-secret path or webhook-secret path require restart. See
 Without `--config`, the single-account environment mode uses `IMMICH_URL`,
 `IMMICH_API_KEY_FILE`, `AMAZON_REGION`, `AMAZON_COOKIE_FILE`, comma-separated
 `ALBUM_IDS`, `LIBRARY` (`true`/`false`), `ALBUM_SYNC_MODE` (`off`, `selected`,
-`all_accessible`) and `INCLUDE_VIDEOS` (`true`/`false`). Its account ID is
-`default`. Use JSON for multiple accounts.
+`all_accessible`), `INCLUDE_VIDEOS` (`true`/`false`),
+`VIDEO_USAGE_THRESHOLD_BYTES` (nonnegative integer) and
+`HOLD_VIDEOS_AT_THRESHOLD` (`true`/`false`). Its account ID is `default`. Use
+JSON for multiple accounts.
 `DATA_DIR`, `LISTEN`, `ADMIN_PASSWORD_FILE` and `WEBHOOK_SECRET_FILE` override
 their corresponding values even with a JSON file.
 

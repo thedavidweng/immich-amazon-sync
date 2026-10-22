@@ -27,6 +27,21 @@ overview. There is no public JSON status endpoint.
 | `last_incremental` | Completed library discovery watermark, or `null`; this is the scan-start boundary, not proof of transfer completion. |
 | `work_remaining` | Unpaused work is eligible for continuation now. False does not mean every job succeeded. |
 | `next_attempt` | Optional earliest scheduled retry timestamp; omitted when none is scheduled or the account is paused. |
+| `usage.state` | `observed`, `stale` or `unavailable`. `observed` requires the provider's calculation timestamp; `stale` keeps existing values but labels a missing timestamp or a failed latest refresh; `unavailable` means no observation exists. |
+| `usage.capacity`, `usage.entitlement` | Always `unknown`. Subscription cap, remaining bytes and Prime entitlement are never inferred from usage, region or zero photo counts. |
+| `usage.categories` | Observed `photo`, `video`, `other` and any additional provider category, each with `billable`/`total` bytes and counts. Omitted when unavailable; never replaced with zeros. |
+| `usage.last_calculated`, `usage.observed_at` | Provider calculation time and local observation time; omitted when unknown. |
+| `usage.error_code` | Finite code from the latest usage refresh attempt; omitted when none. |
+| `usage.video_threshold_bytes`, `usage.video_threshold_exceeded` | Configured per-account advisory budget and whether fresh observed billable video bytes reach it. |
+| `usage.video_hold`, `usage.quota_hold` | New video uploads held at the advisory threshold; uploads held after a real quota rejection. A hold preserves staged originals and never confirms a write. |
+
+Usage is an observation, not a capacity promise. Original bytes are the backup
+contract: there is no quality selector, Storage Saver mode or recompression
+path. `rate_limited` and `storage_quota_exceeded` are separate finite codes; a
+quota rejection keeps the staged original durable and is re-attempted only
+after a fresh target read on a later run, so an uncertain write is never
+replayed. Usage is refreshed by a sync run; `stale` and `unavailable` are
+normal labels for old or failed reads, not zero usage.
 
 Counts such as pending, failed and unconfirmed album work overlap; do not add
 them to infer a total. Disabling album mirroring reports zero album/association

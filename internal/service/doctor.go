@@ -13,6 +13,7 @@ import (
 	"github.com/thedavidweng/immich-amazon-sync/internal/bridge"
 	"github.com/thedavidweng/immich-amazon-sync/internal/config"
 	"github.com/thedavidweng/immich-amazon-sync/internal/immich"
+	"github.com/thedavidweng/immich-amazon-sync/internal/syncer"
 )
 
 type Check struct {
@@ -21,13 +22,14 @@ type Check struct {
 }
 
 type AccountDiagnosis struct {
-	Account      string  `json:"account"`
-	Version      string  `json:"version,omitempty"`
-	Region       string  `json:"region,omitempty"`
-	Evidence     string  `json:"evidence,omitempty"`
-	TargetWrites string  `json:"target_writes"`
-	OriginalRead string  `json:"original_read"`
-	Checks       []Check `json:"checks"`
+	Account      string             `json:"account"`
+	Version      string             `json:"version,omitempty"`
+	Region       string             `json:"region,omitempty"`
+	Evidence     string             `json:"evidence,omitempty"`
+	TargetWrites string             `json:"target_writes"`
+	OriginalRead string             `json:"original_read"`
+	Usage        syncer.UsageStatus `json:"usage"`
+	Checks       []Check            `json:"checks"`
 }
 
 type DoctorReport struct {
@@ -134,6 +136,16 @@ func diagnoseAccount(ctx context.Context, account config.Account) (AccountDiagno
 			}
 		}
 		record("amazon_read", err)
+		if err == nil {
+			var usage bridge.Usage
+			usage, err = target.Usage(ctx)
+			report.Usage = syncer.DescribeUsage(usage, err, account.VideoUsageThresholdBytes,
+				account.HoldVideosAtThreshold, time.Now())
+			record("amazon_usage", err)
+		} else {
+			report.Usage = syncer.DescribeUsage(bridge.Usage{}, err, account.VideoUsageThresholdBytes,
+				account.HoldVideosAtThreshold, time.Now())
+		}
 	}
 	return report, errors.Join(errs...)
 }

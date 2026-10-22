@@ -67,9 +67,13 @@ restore the matching backup/image together rather than editing SQLite by hand.
 
 The P1 upgrade migrates SQLite schema 1 to 2 in place, preserving confirmed media
 and account history while adding durable hints, incremental progress and album
-relationships. Take the stopped complete-volume backup before first startup
-with the new binary. To roll back, restore that pre-upgrade volume together with
-its matching binary/config; an older binary cannot read the newer schema.
+relationships. Later steps add album scope/origin columns and a normalized
+categorized usage snapshot (schema 5), also in place; historical mappings,
+cursors, confirmed/existing state and deletion state are preserved, and no
+migration widens scope or enables a new write. Take the stopped complete-volume
+backup before first startup with the new binary. To roll back, restore that
+pre-upgrade volume together with its matching binary/config; an older binary
+cannot read the newer schema.
 Do not delete migration state, queues or album intents to force a downgrade.
 
 When migrating hosts, move the stopped complete data archive, config and secrets.

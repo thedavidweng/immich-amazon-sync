@@ -77,6 +77,27 @@ type Content struct {
 	ParentID string // Empty identifies the authenticated root.
 }
 
+// UsageBucket is one observed byte and item count. It is measured usage, never
+// a subscription cap or remaining capacity.
+type UsageBucket struct {
+	Bytes int64 `json:"bytes"`
+	Count int64 `json:"count"`
+}
+
+// UsageCategory is the billable and total observation for one media category.
+type UsageCategory struct {
+	Billable UsageBucket `json:"billable"`
+	Total    UsageBucket `json:"total"`
+}
+
+// Usage is the provider's categorized storage observation. LastCalculated is
+// the provider's own timestamp; zero means the provider did not report one.
+// Neither field establishes an entitlement, quota or remaining capacity.
+type Usage struct {
+	LastCalculated time.Time                `json:"last_calculated"`
+	Categories     map[string]UsageCategory `json:"categories"`
+}
+
 // Placement is the verified location of a media node relative to the requested
 // target parent. It is derived by re-reading the node and its parents, never
 // from a lookup hit, filename or HTTP status.
@@ -139,6 +160,9 @@ type Target interface {
 	AlbumMembers(context.Context, string) ([]string, error)
 	AddMembers(context.Context, string, []string) error
 	RemoveMembers(context.Context, string, []string) error
+	// Usage reads observed categorized storage. It must not infer a
+	// subscription entitlement, cap or remaining capacity.
+	Usage(context.Context) (Usage, error)
 }
 
 type Capabilities struct {
@@ -159,6 +183,7 @@ const (
 	Authentication = "authentication_required"
 	Permission     = "permission_denied"
 	RateLimit      = "rate_limited"
+	Quota          = "storage_quota_exceeded"
 	Unavailable    = "remote_unavailable"
 	NotFound       = "not_found"
 	Conflict       = "content_conflict"

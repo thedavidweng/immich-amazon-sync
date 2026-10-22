@@ -45,6 +45,13 @@ type Account struct {
 	// legacy boolean form: true maps to selected and never to all_accessible.
 	AlbumSyncMode string `json:"album_sync_mode,omitempty"`
 	MirrorAlbums  bool   `json:"mirror_albums,omitempty"`
+	// VideoUsageThresholdBytes is an explicit user budget for observed
+	// billable video bytes. Zero disables the advisory.
+	VideoUsageThresholdBytes int64 `json:"video_usage_threshold_bytes,omitempty"`
+	// HoldVideosAtThreshold stops dispatching new video uploads while fresh
+	// observed billable video usage is at or above the threshold. It never
+	// pauses photos and never deletes or rewrites a staged original.
+	HoldVideosAtThreshold bool `json:"hold_videos_at_threshold,omitempty"`
 	// Deletions propagates a source trash to the Amazon node. Enabling it also
 	// requires DeletionConfirmation to equal DeletionConfirmationPhrase.
 	Deletions            bool   `json:"deletions"`
@@ -97,15 +104,29 @@ func Load(path string) (Config, error) {
 		if err != nil {
 			return cfg, errors.New("library_invalid")
 		}
+		threshold := int64(0)
+		if value := os.Getenv("VIDEO_USAGE_THRESHOLD_BYTES"); value != "" {
+			var err error
+			threshold, err = strconv.ParseInt(value, 10, 64)
+			if err != nil || threshold < 0 {
+				return cfg, errors.New("video_usage_threshold_invalid")
+			}
+		}
+		hold, err := envBool("HOLD_VIDEOS_AT_THRESHOLD")
+		if err != nil {
+			return cfg, errors.New("hold_videos_at_threshold_invalid")
+		}
 		cfg.Accounts = []Account{{
 			ID: "default", ImmichURL: os.Getenv("IMMICH_URL"),
 			APIKeyFile: os.Getenv("IMMICH_API_KEY_FILE"), apiKey: os.Getenv("IMMICH_API_KEY"),
 			AmazonRegion: os.Getenv("AMAZON_REGION"),
 			CookieFile:   os.Getenv("AMAZON_COOKIE_FILE"), cookie: os.Getenv("AMAZON_COOKIE"),
-			AlbumIDs:      splitIDs(os.Getenv("ALBUM_IDS")),
-			Library:       library,
-			AlbumSyncMode: os.Getenv("ALBUM_SYNC_MODE"),
-			IncludeVideos: includeVideos,
+			AlbumIDs:                 splitIDs(os.Getenv("ALBUM_IDS")),
+			Library:                  library,
+			AlbumSyncMode:            os.Getenv("ALBUM_SYNC_MODE"),
+			IncludeVideos:            includeVideos,
+			VideoUsageThresholdBytes: threshold,
+			HoldVideosAtThreshold:    hold,
 		}}
 	}
 	if value := os.Getenv("DATA_DIR"); value != "" {
@@ -199,6 +220,12 @@ func (c Config) Validate() error {
 		}
 		if account.Deletions && account.DeletionConfirmation != DeletionConfirmationPhrase {
 			return errors.New("deletion_confirmation_required")
+		}
+		if account.VideoUsageThresholdBytes < 0 {
+			return errors.New("video_usage_threshold_invalid")
+		}
+		if account.HoldVideosAtThreshold && account.VideoUsageThresholdBytes == 0 {
+			return errors.New("video_usage_threshold_required")
 		}
 		for _, id := range account.AlbumIDs {
 			if !identifier.MatchString(id) {
