@@ -195,6 +195,9 @@ func (c *Client) assetsPage(ctx context.Context, scope bridge.Scope, cursor, vis
 		page = n
 	}
 	payload := map[string]any{"page": page, "size": 250, "withExif": true, "order": "asc"}
+	if scope.IncludeTrashed {
+		payload["withDeleted"] = true
+	}
 	if visibility != "" {
 		payload["visibility"] = visibility
 	}

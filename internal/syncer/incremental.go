@@ -84,7 +84,7 @@ func (e *Engine) incrementalPage(ctx context.Context) (result error) {
 		return errors.New("storage_unavailable")
 	}
 	p, err := readRetry(ctx, func() (bridge.Page, error) {
-		return e.source.Assets(ctx, bridge.Scope{Library: true, UpdatedAfter: updated}, cursor)
+		return e.source.Assets(ctx, bridge.Scope{Library: true, UpdatedAfter: updated, IncludeTrashed: e.opts.Deletions}, cursor)
 	})
 	if err != nil {
 		return err

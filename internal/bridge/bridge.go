@@ -31,6 +31,10 @@ type Scope struct {
 	AssetID      string
 	Library      bool
 	UpdatedAfter time.Time
+	// IncludeTrashed asks the source to return trashed assets as well, so the
+	// caller can observe a source deletion. Off unless deletion propagation is
+	// explicitly enabled.
+	IncludeTrashed bool
 }
 
 type Page struct {
@@ -109,6 +113,11 @@ type Target interface {
 	// GetNode re-reads one known node and verifies its content, ownership and
 	// placement. It never adopts a node by name.
 	GetNode(context.Context, string) (Node, error)
+	// Trash moves one verified, owned node to the remote trash. It re-reads the
+	// node and its ownership first and must never permanently delete. Callers
+	// supply the durable node mapping and the content evidence it was verified
+	// with; a mismatch is an error, not a best-effort delete.
+	Trash(context.Context, Content, string) error
 	CreateAlbum(context.Context, string) (string, error)
 	RenameAlbum(context.Context, string, string) error
 	AlbumMembers(context.Context, string) ([]string, error)

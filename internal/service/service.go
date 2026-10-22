@@ -266,7 +266,8 @@ func newEngine(store *syncer.Store, cfg config.Config, account config.Account, l
 	engine, err := syncer.New(store, source, target, syncer.Options{
 		AccountID: account.ID, AlbumIDs: account.AlbumIDs, Library: account.Library,
 		IncludeVideos: account.IncludeVideos, MirrorAlbums: account.MirrorAlbums,
-		Workers: cfg.Workers, MaxStagingBytes: cfg.MaxStagingBytes,
+		Deletions: account.Deletions,
+		Workers:   cfg.Workers, MaxStagingBytes: cfg.MaxStagingBytes,
 		MaxStagingFiles: cfg.MaxStagingFiles, BytesPerSecond: cfg.BytesPerSecond,
 		Logger: logger,
 	})
@@ -384,6 +385,43 @@ func (s *Service) Status(ctx context.Context, id string) (syncer.Status, error) 
 		return syncer.Status{}, err
 	}
 	return engine.Status(ctx)
+}
+
+type DeletionReport struct {
+	Account string              `json:"account"`
+	Plan    syncer.DeletionPlan `json:"plan"`
+}
+
+// DeletionPlan is the read-only manifest for the next deletion pass of each
+// selected account. It never contacts the remote target and never mutates state.
+func (s *Service) DeletionPlan(ctx context.Context, id string) ([]DeletionReport, error) {
+	s.mu.Lock()
+	cfg := s.cfg
+	s.mu.Unlock()
+	accounts, err := Accounts(cfg, id)
+	if err != nil {
+		return nil, err
+	}
+	reports := make([]DeletionReport, len(accounts))
+	errs := make([]error, len(accounts))
+	var jobs sync.WaitGroup
+	for i, account := range accounts {
+		jobs.Add(1)
+		go func() {
+			defer jobs.Done()
+			engine, _, err := newEngine(s.store, cfg, account, s.log)
+			if err != nil {
+				reports[i] = DeletionReport{Account: AccountHash(account.ID)}
+				errs[i] = err
+				return
+			}
+			plan, err := engine.PlanDeletions(ctx)
+			reports[i] = DeletionReport{Account: AccountHash(account.ID), Plan: plan}
+			errs[i] = err
+		}()
+	}
+	jobs.Wait()
+	return reports, errors.Join(errs...)
 }
 
 func (s *Service) Pause(ctx context.Context, id string, paused bool) error {

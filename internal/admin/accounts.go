@@ -72,7 +72,9 @@ func formAccount(r *http.Request) config.Account {
 		AmazonRegion: r.PostForm.Get("region"),
 		AlbumIDs:     ids,
 		Library:      r.PostForm.Get("library") == "on", IncludeVideos: r.PostForm.Get("include_videos") == "on",
-		MirrorAlbums: r.PostForm.Get("mirror_albums") == "on",
+		MirrorAlbums:         r.PostForm.Get("mirror_albums") == "on",
+		Deletions:            r.PostForm.Get("deletions") == "on",
+		DeletionConfirmation: r.PostForm.Get("deletions_confirmation"),
 	}
 }
 

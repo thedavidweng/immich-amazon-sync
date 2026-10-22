@@ -69,6 +69,8 @@ type targetFake struct {
 	find      func(context.Context, bridge.Content) ([]bridge.Node, error)
 	findAll   func(context.Context, bridge.Content) (bridge.Node, error)
 	get       func(context.Context, string) (bridge.Node, error)
+	trash     func(context.Context, bridge.Content, string) error
+	trashed   []string
 	authErr   error
 	lookedAll int
 }
@@ -130,6 +132,25 @@ func (t *targetFake) GetNode(ctx context.Context, id string) (bridge.Node, error
 	}
 	return bridge.Node{}, &bridge.Error{Code: bridge.NotFound}
 }
+func (t *targetFake) Trash(ctx context.Context, c bridge.Content, id string) error {
+	if t.trash != nil {
+		return t.trash(ctx, c, id)
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for i := range t.nodes {
+		if t.nodes[i].ID == id {
+			if t.nodes[i].MD5 != c.MD5 || t.nodes[i].Size != c.Size {
+				return &bridge.Error{Code: bridge.Unconfirmed}
+			}
+			t.trashed = append(t.trashed, id)
+			t.nodes[i].MD5 = ""
+			return nil
+		}
+	}
+	return &bridge.Error{Code: bridge.NotFound}
+}
+
 func (t *targetFake) Upload(ctx context.Context, c bridge.Content, r io.Reader) (bridge.Node, error) {
 	if t.upload != nil {
 		return t.upload(ctx, c, r)

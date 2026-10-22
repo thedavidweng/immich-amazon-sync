@@ -122,3 +122,32 @@ func TestAdminSecretFileConfiguration(t *testing.T) {
 		t.Fatalf("admin configuration round trip: %v", err)
 	}
 }
+
+func deletionConfig(withPhrase string) config.Config {
+	return config.Config{
+		DataDir: "data", Listen: "127.0.0.1:8080", ScanInterval: "1m", Workers: 1,
+		MaxStagingBytes: 1, MaxStagingFiles: 1, LogLevel: "info",
+		Accounts: []config.Account{{
+			ID: "account", ImmichURL: "http://immich.local", APIKeyFile: "key",
+			AmazonRegion: "ca", CookieFile: "cookie", AlbumIDs: []string{"album"},
+			Deletions: true, DeletionConfirmation: withPhrase,
+		}},
+	}
+}
+
+func TestDeletionPropagationRequiresTypedConfirmation(t *testing.T) {
+	if err := deletionConfig("").Validate(); err == nil || err.Error() != "deletion_confirmation_required" {
+		t.Fatalf("missing phrase: %v", err)
+	}
+	if err := deletionConfig("enable deletions").Validate(); err == nil || err.Error() != "deletion_confirmation_required" {
+		t.Fatalf("wrong phrase: %v", err)
+	}
+	if err := deletionConfig(config.DeletionConfirmationPhrase).Validate(); err != nil {
+		t.Fatalf("exact phrase rejected: %v", err)
+	}
+	off := deletionConfig("")
+	off.Accounts[0].Deletions = false
+	if err := off.Validate(); err != nil {
+		t.Fatalf("disabled deletion was gated: %v", err)
+	}
+}

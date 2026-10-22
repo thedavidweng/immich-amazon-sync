@@ -38,10 +38,34 @@ Safe additions can proceed during backfill, but removals require a completed
 baseline, nonempty desired set and the
 [fixed membership guard](../how-to/managed-albums.md#understand-removal-guards).
 
-The Amazon boundary has no media deletion operation. Empty source results,
-source outages, old source snapshots, rule removal and account removal cannot
-trash backups. Optional media deletion is deferred to ticket #8 and would
-require separate policy, confirmation and audit tests.
+## Deletion propagation
+
+Deletion propagation is opt-in per account and off by default. The service
+detects an asset that Immich reports as trashed, requires a durable node mapping
+recorded when the media was confirmed or reused, and re-reads that node to prove
+kind, ownership, content and that it is still the mapped copy before moving it
+to the Amazon trash. A node that is unavailable, owned by someone else, no
+longer matches the recorded MD5 and byte size, or cannot be re-read is never
+trashed. The service never permanently deletes media and never empties the
+Amazon trash; restoring a node is a manual action in Amazon Photos.
+
+Enabling requires both `deletions: true` and the exact confirmation phrase in
+`deletions_confirmation`; turning it off is never gated and withdraws every
+pending intent on the next pass without touching remote media. Before each pass the
+service re-reads the source state: an asset restored in Immich before its sweep
+withdraws the pending intent instead of being trashed later. One pass is refused
+when it would trash more than 500 assets or more than 10% of the account's
+mapped library, whichever comes first; the guard cannot be disabled, and the
+refusal is reported as `deletion_guard` while the assets stay `deletion_pending`.
+
+A hard delete in Immich that never passes through the trash state while the
+service is watching is not detected. Restoring an asset in Immich after its
+Amazon node was trashed does not restore or re-upload it automatically, and a
+`deleted` asset is terminal.
+
+The Amazon boundary otherwise has no media deletion operation outside this
+explicit propagation path. Empty source results, source outages, old source
+snapshots, rule removal and account removal cannot trash backups.
 
 Events improve latency; periodic source reads repair missed events. Neither an
 unreliable webhook nor offset-like pagination is a completeness proof. A failed

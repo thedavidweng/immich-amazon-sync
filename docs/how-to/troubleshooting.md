@@ -23,6 +23,8 @@ issue. Stop the daemon before running another CLI process on the same volume.
 | `webhook_unauthorized` | Check the configured account ID and bearer header against the mounted shared secret. |
 | `webhook_unavailable` | Check the secret path/readability, minimum 32 trimmed bytes and maximum 4 KiB file size. |
 | `source_changed` | Source content evidence (SHA-1, size, or filesystem modification time) no longer agrees with the recorded original. Preserve confirmed/uncertain mappings; retry does not clear this conflict. A metadata-only Immich edit does not trigger it. |
+| `deletion_guard` | The pending pass exceeds 500 assets or 10% of the mapped library, so nothing was trashed. Inspect `deletions plan`; restore Immich assets or accept a smaller trash before retrying. Disable propagation to withdraw all pending intents. |
+| Deletion trash failure | The asset stays `deletion_pending` with a finite error and retries with backoff. The Amazon node was not confirmed trashed; inspect credentials, ownership and connectivity. |
 | Local storage/lock failure | Stop the competing writer, fix volume ownership/capacity, and retry. Never remove a live process's lock. |
 
 A photo whose only Amazon copy already lives in another folder or only inside

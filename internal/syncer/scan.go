@@ -45,8 +45,15 @@ func (e *Engine) validateScopes(ctx context.Context) error {
 			}
 		}
 		if err == nil {
+			// Immich album counts exclude trashed assets, but a scan that
+			// includes them returns both. Do not pin an expected count that
+			// cannot be met while deletion propagation is enabled.
+			expected := a.Count
+			if e.opts.Deletions {
+				expected = -1
+			}
 			_, err = tx.ExecContext(ctx, `UPDATE rules SET name=?,expected=? WHERE account_id=? AND scope=?`,
-				a.Name, a.Count, e.opts.AccountID, scope)
+				a.Name, expected, e.opts.AccountID, scope)
 		}
 		if err == nil {
 			err = tx.Commit()
@@ -137,11 +144,15 @@ func (e *Engine) scanPage(ctx context.Context) (bool, error) {
 		if album.ID != r.album || album.Count < 0 {
 			return false, e.scanError(ctx, r, errors.New(bridge.Protocol))
 		}
-		r.expected = album.Count
+		if !e.opts.Deletions {
+			r.expected = album.Count
+		}
 		r.name = album.Name
 	}
 	p, err := readRetry(ctx, func() (bridge.Page, error) {
-		return e.source.Assets(ctx, bridge.Scope{AlbumID: r.album, Library: r.album == ""}, r.cursor)
+		return e.source.Assets(ctx, bridge.Scope{
+			AlbumID: r.album, Library: r.album == "", IncludeTrashed: e.opts.Deletions,
+		}, r.cursor)
 	})
 	if err != nil {
 		return false, e.scanError(ctx, r, err)
@@ -223,16 +234,39 @@ func (e *Engine) scanPage(ctx context.Context) (bool, error) {
 }
 
 func (e *Engine) discover(ctx context.Context, tx *sql.Tx, a bridge.Asset, metadata string) error {
-	var oldMetadata, digest, checksum, state string
+	var oldMetadata, digest, checksum, node, state, prior string
 	var size int64
-	err := tx.QueryRowContext(ctx, "SELECT metadata,md5,sha1,size,state FROM assets WHERE account_id=? AND id=?",
-		e.opts.AccountID, a.ID).Scan(&oldMetadata, &digest, &checksum, &size, &state)
+	err := tx.QueryRowContext(ctx, "SELECT metadata,md5,sha1,size,state,node_id,prior_state FROM assets WHERE account_id=? AND id=?",
+		e.opts.AccountID, a.ID).Scan(&oldMetadata, &digest, &checksum, &size, &state, &node, &prior)
 	if errors.Is(err, sql.ErrNoRows) {
 		_, err = tx.ExecContext(ctx, "INSERT INTO assets(account_id,id,metadata) VALUES(?,?,?)", e.opts.AccountID, a.ID, metadata)
 		return err
 	}
 	if err != nil {
 		return err
+	}
+	if e.opts.Deletions {
+		trashed := a.ExcludedReason == "trashed"
+		switch {
+		case trashed && node != "" && (state == "confirmed" || state == "existing"):
+			// Record a durable intent; the sweep re-verifies the remote node
+			// before moving it to trash.
+			_, err = tx.ExecContext(ctx, `UPDATE assets SET prior_state=?,state='delete_pending',error_code='',
+				attempts=0,next_at=0 WHERE account_id=? AND id=?`, state, e.opts.AccountID, a.ID)
+			if err != nil {
+				return err
+			}
+			prior, state = state, "delete_pending"
+		case !trashed && state == "delete_pending":
+			// The source was restored before the sweep ran; withdraw the intent
+			// instead of trashing a live asset.
+			_, err = tx.ExecContext(ctx, `UPDATE assets SET state=?,prior_state='',error_code='',
+				attempts=0,next_at=0 WHERE account_id=? AND id=?`, prior, e.opts.AccountID, a.ID)
+			if err != nil {
+				return err
+			}
+			state = prior
+		}
 	}
 	var old bridge.Asset
 	if err := json.Unmarshal([]byte(oldMetadata), &old); err != nil {
@@ -241,7 +275,8 @@ func (e *Engine) discover(ctx context.Context, tx *sql.Tx, a bridge.Asset, metad
 	changed := digest != "" && ((a.SHA1 != "" && checksum != a.SHA1) ||
 		(a.Size >= 0 && a.Size != size) ||
 		(a.SHA1 == "" && !old.FileModifiedAt.Equal(a.FileModifiedAt)))
-	safeSkip := a.ExcludedReason != "" && state != "confirmed" && state != "existing" && state != "running" && state != "unconfirmed"
+	safeSkip := a.ExcludedReason != "" && state != "confirmed" && state != "existing" &&
+		state != "running" && state != "unconfirmed" && state != "delete_pending" && state != "deleted"
 	if changed && !safeSkip {
 		// Preserve the original metadata and confirmed/uncertain content evidence.
 		_, err = tx.ExecContext(ctx, "UPDATE assets SET error_code='source_changed' WHERE account_id=? AND id=?",
@@ -275,7 +310,7 @@ func (e *Engine) finishScan(ctx context.Context) error {
 		return err
 	}
 	err = e.store.db.QueryRowContext(ctx, `SELECT count(*) FROM assets a WHERE account_id=?
-		AND (state NOT IN ('confirmed','existing','skipped') OR error_code='source_changed') AND `+eligibleSQL,
+		AND (state NOT IN ('confirmed','existing','skipped','deleted') OR error_code='source_changed') AND `+eligibleSQL,
 		e.opts.AccountID).Scan(&outstanding)
 	if err != nil || unfinished != 0 || outstanding != 0 {
 		return err
