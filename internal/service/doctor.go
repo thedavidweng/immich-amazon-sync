@@ -27,6 +27,7 @@ type AccountDiagnosis struct {
 	Evidence     string  `json:"evidence,omitempty"`
 	TargetWrites string  `json:"target_writes"`
 	OriginalRead string  `json:"original_read"`
+	CaptureDate  string  `json:"capture_date"`
 	Checks       []Check `json:"checks"`
 }
 
@@ -71,7 +72,8 @@ func Diagnose(ctx context.Context, cfg config.Config, id string) (DoctorReport, 
 func diagnoseAccount(ctx context.Context, account config.Account) (AccountDiagnosis, error) {
 	report := AccountDiagnosis{
 		Account: AccountHash(account.ID), TargetWrites: "untested", OriginalRead: "untested",
-		Checks: []Check{},
+		CaptureDate: amazon.CaptureDateCapability,
+		Checks:      []Check{},
 	}
 	var errs []error
 	record := func(name string, err error) {
@@ -131,6 +133,9 @@ func diagnoseAccount(ctx context.Context, account config.Account) (AccountDiagno
 			capabilities, err = target.Probe(ctx)
 			if err == nil {
 				report.Region, report.Evidence = capabilities.Region, capabilities.Evidence
+				if capabilities.CaptureDate != "" {
+					report.CaptureDate = capabilities.CaptureDate
+				}
 			}
 		}
 		record("amazon_read", err)

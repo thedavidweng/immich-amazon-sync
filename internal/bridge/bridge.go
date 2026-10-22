@@ -129,6 +129,9 @@ type Capabilities struct {
 	Region   string `json:"region"`
 	Evidence string `json:"evidence"`
 	Identity string `json:"identity"`
+	// CaptureDate is the finite capture-date write capability of the target.
+	// It is a static property of the released SDK, not a remote discovery.
+	CaptureDate string `json:"capture_date"`
 }
 
 type Error struct {
@@ -149,4 +152,12 @@ const (
 	Unconfirmed    = "upload_unconfirmed"
 	Protocol       = "remote_protocol"
 	Unsupported    = "unsupported_media"
+)
+
+// Capture-date capability codes. Supported is only legal for an operation
+// proven by the released SDK and verified by an authoritative read-back; an
+// absent operation is MetadataNotSupported, never an implied success.
+const (
+	MetadataSupported    = "supported"
+	MetadataNotSupported = "metadata_not_supported"
 )

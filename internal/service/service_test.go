@@ -108,7 +108,8 @@ func TestDoctorProbesReadOnlyWithoutClaimingWritePermissions(t *testing.T) {
 	}
 	data, _ := json.Marshal(report)
 	text := string(data)
-	if !strings.Contains(text, `"version":"3.3.4"`) || !strings.Contains(text, `"target_writes":"untested"`) || !strings.Contains(text, `"code":"ok"`) {
+	if !strings.Contains(text, `"version":"3.3.4"`) || !strings.Contains(text, `"target_writes":"untested"`) ||
+		!strings.Contains(text, `"capture_date":"metadata_not_supported"`) || !strings.Contains(text, `"code":"ok"`) {
 		t.Fatalf("missing read/write evidence: %s", text)
 	}
 	for _, private := range []string{"private-account", "source-secret", "Private album", cfg.Accounts[0].ImmichURL, "source-user", `"identity"`} {

@@ -22,7 +22,11 @@ type Options struct {
 	MaxStagingBytes int64
 	MaxStagingFiles int
 	BytesPerSecond  int64
-	Logger          *slog.Logger
+	// CaptureDate is the finite capture-date write capability declared by the
+	// target adapter. Empty is treated as metadata_not_supported: absent proof
+	// must never imply success.
+	CaptureDate string
+	Logger      *slog.Logger
 }
 
 type Status struct {
@@ -54,6 +58,7 @@ type Status struct {
 	LastIncremental         *time.Time     `json:"last_incremental"`
 	WorkRemaining           bool           `json:"work_remaining"`
 	NextAttempt             *time.Time     `json:"next_attempt,omitempty"`
+	CaptureDate             string         `json:"capture_date"`
 }
 
 type Engine struct {
@@ -79,6 +84,15 @@ func New(store *Store, source bridge.Source, target bridge.Target, opts Options)
 		if id == "" {
 			return nil, errors.New("invalid_options")
 		}
+	}
+	// Absent a declared capability the honest answer is that the target cannot
+	// set a capture date. Anything outside the finite vocabulary is refused
+	// rather than rendered as success.
+	if opts.CaptureDate == "" {
+		opts.CaptureDate = bridge.MetadataNotSupported
+	}
+	if opts.CaptureDate != bridge.MetadataSupported && opts.CaptureDate != bridge.MetadataNotSupported {
+		return nil, errors.New("invalid_options")
 	}
 	if opts.Workers == 0 {
 		opts.Workers = 2
@@ -235,6 +249,7 @@ func (e *Engine) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		return st, err
 	}
+	st.CaptureDate = e.opts.CaptureDate
 	err = e.store.db.QueryRowContext(ctx, "SELECT count(*) FROM rules WHERE account_id=? AND active=1 AND complete=0",
 		e.opts.AccountID).Scan(&st.Scanning)
 	if err != nil {

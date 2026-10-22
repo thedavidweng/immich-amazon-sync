@@ -269,7 +269,8 @@ func newEngine(store *syncer.Store, cfg config.Config, account config.Account, l
 		Deletions: account.Deletions,
 		Workers:   cfg.Workers, MaxStagingBytes: cfg.MaxStagingBytes,
 		MaxStagingFiles: cfg.MaxStagingFiles, BytesPerSecond: cfg.BytesPerSecond,
-		Logger: logger,
+		CaptureDate: amazon.CaptureDateCapability,
+		Logger:      logger,
 	})
 	digest := sha256.Sum256([]byte(secrets.APIKey + "\x00" + secrets.Cookie))
 	return engine, digest, err

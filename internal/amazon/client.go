@@ -121,13 +121,22 @@ func NewWithClient(sdk *aphotos.Client) (*Client, error) {
 	return &Client{sdk: metadataSDK{sdk}}, nil
 }
 
+// CaptureDateCapability is the capture-date write support proven by the pinned
+// aphotos release. v0.1.4 exposes ContentDate and EXIF date fields only as
+// response data and has no capture-date setter, so the finite answer is
+// metadata_not_supported. Reporting supported requires a released SDK
+// operation plus an authoritative read-back verification; rewriting original
+// bytes or timestamps is never an acceptable substitute.
+const CaptureDateCapability = bridge.MetadataNotSupported
+
 func (c *Client) Probe(ctx context.Context) (bridge.Capabilities, error) {
 	root, err := c.root(ctx)
 	if err != nil {
 		return bridge.Capabilities{}, err
 	}
 	rc := c.sdk.RegionConfig()
-	return bridge.Capabilities{Region: string(rc.Region), Evidence: string(rc.Evidence), Identity: root.ID}, nil
+	return bridge.Capabilities{Region: string(rc.Region), Evidence: string(rc.Evidence), Identity: root.ID,
+		CaptureDate: CaptureDateCapability}, nil
 }
 
 func (c *Client) root(ctx context.Context) (*aphotos.Node, error) {
