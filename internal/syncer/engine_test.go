@@ -22,14 +22,16 @@ import (
 
 type sourceFake struct {
 	bridge.Source
-	identity string
-	pages    map[string]bridge.Page
-	assets   map[string]bridge.Asset
-	data     map[string]string
-	original func(context.Context, string) (io.ReadCloser, error)
-	page     func(context.Context, bridge.Scope, string) (bridge.Page, error)
-	album    func(context.Context, string) (bridge.Album, error)
-	authErr  error
+	identity   string
+	pages      map[string]bridge.Page
+	assets     map[string]bridge.Asset
+	data       map[string]string
+	original   func(context.Context, string) (io.ReadCloser, error)
+	page       func(context.Context, bridge.Scope, string) (bridge.Page, error)
+	album      func(context.Context, string) (bridge.Album, error)
+	authErr    error
+	pageCalls  int
+	assetCalls int
 }
 
 func (s *sourceFake) Identity(context.Context) (string, error) { return s.identity, s.authErr }
@@ -44,12 +46,14 @@ func (s *sourceFake) Album(ctx context.Context, id string) (bridge.Album, error)
 	return bridge.Album{ID: id, Count: count}, nil
 }
 func (s *sourceFake) Assets(ctx context.Context, scope bridge.Scope, cursor string) (bridge.Page, error) {
+	s.pageCalls++
 	if s.page != nil {
 		return s.page(ctx, scope, cursor)
 	}
 	return s.pages[cursor], nil
 }
 func (s *sourceFake) Asset(_ context.Context, id string) (bridge.Asset, error) {
+	s.assetCalls++
 	return s.assets[id], nil
 }
 func (s *sourceFake) Original(ctx context.Context, id string) (io.ReadCloser, error) {

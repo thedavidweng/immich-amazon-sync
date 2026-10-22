@@ -234,12 +234,19 @@ func (e *Engine) scanPage(ctx context.Context) (bool, error) {
 }
 
 func (e *Engine) discover(ctx context.Context, tx *sql.Tx, a bridge.Asset, metadata string) error {
-	var oldMetadata, digest, checksum, node, state, prior string
+	var oldMetadata, digest, checksum, node, state, prior, code, stage string
 	var size int64
-	err := tx.QueryRowContext(ctx, "SELECT metadata,md5,sha1,size,state,node_id,prior_state FROM assets WHERE account_id=? AND id=?",
-		e.opts.AccountID, a.ID).Scan(&oldMetadata, &digest, &checksum, &size, &state, &node, &prior)
+	var attempts int
+	err := tx.QueryRowContext(ctx, "SELECT metadata,md5,sha1,size,state,node_id,prior_state,error_code,attempts,stage_name FROM assets WHERE account_id=? AND id=?",
+		e.opts.AccountID, a.ID).Scan(&oldMetadata, &digest, &checksum, &size, &state, &node, &prior, &code, &attempts, &stage)
 	if errors.Is(err, sql.ErrNoRows) {
-		_, err = tx.ExecContext(ctx, "INSERT INTO assets(account_id,id,metadata) VALUES(?,?,?)", e.opts.AccountID, a.ID, metadata)
+		exclusion := e.exclusion(a)
+		target := "pending"
+		if exclusion != "" {
+			target = "skipped"
+		}
+		_, err = tx.ExecContext(ctx, "INSERT INTO assets(account_id,id,metadata,state,exclusion) VALUES(?,?,?,?,?)",
+			e.opts.AccountID, a.ID, metadata, target, exclusion)
 		return err
 	}
 	if err != nil {
@@ -283,12 +290,52 @@ func (e *Engine) discover(ctx context.Context, tx *sql.Tx, a bridge.Asset, metad
 			e.opts.AccountID, a.ID)
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE assets SET metadata=?,
-		state=CASE WHEN state='skipped' OR (md5='' AND metadata!=?) THEN 'pending' ELSE state END,
-		error_code=CASE WHEN state='skipped' OR error_code='source_changed' OR (md5='' AND metadata!=?) THEN '' ELSE error_code END,
-		attempts=CASE WHEN state='skipped' OR (md5='' AND metadata!=?) THEN 0 ELSE attempts END
-		WHERE account_id=? AND id=?`, metadata, metadata, metadata, metadata, e.opts.AccountID, a.ID)
+	// Filters only manage unsettled work. A confirmed or Existing mapping is
+	// never downgraded, so a policy change cannot remove media or Membership.
+	protected := state == "confirmed" || state == "existing" || state == "running" ||
+		state == "unconfirmed" || state == "delete_pending" || state == "deleted"
+	exclusion, target := "", state
+	metadataChanged := false
+	if !protected {
+		exclusion = e.exclusion(a)
+		metadataChanged = metadata != oldMetadata && digest == ""
+		switch {
+		case exclusion != "":
+			// A staged original is released by transfer's skip path, which owns
+			// the staging file. Marking it skipped here would orphan that file.
+			if stage == "" {
+				target = "skipped"
+			}
+		case state == "skipped" || metadataChanged:
+			target = "pending"
+		}
+	}
+	reset := !protected && (exclusion != "" || state == "skipped" || metadataChanged)
+	if reset {
+		code, attempts = "", 0
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE assets SET metadata=?,state=?,exclusion=?,error_code=?,attempts=?,
+		next_at=CASE WHEN ? THEN 0 ELSE next_at END WHERE account_id=? AND id=?`,
+		metadata, target, exclusion, code, attempts, reset, e.opts.AccountID, a.ID)
 	return err
+}
+
+// exclusion classifies an Asset for durable, non-destructive exclusion. Source
+// conditions win over policy rules so counts name the actual reason.
+func (e *Engine) exclusion(a bridge.Asset) string {
+	if a.ExcludedReason != "" {
+		return sourceExclusion(a.ExcludedReason)
+	}
+	return e.opts.Filters.Exclude(a)
+}
+
+func sourceExclusion(reason string) string {
+	switch reason {
+	case "hidden", "locked", "offline", "trashed", "unsupported_type",
+		"external_library_checksum", "unknown_checksum_provenance":
+		return reason
+	}
+	return "source_excluded"
 }
 
 func (e *Engine) scanError(ctx context.Context, r rule, err error) error {

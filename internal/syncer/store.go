@@ -142,20 +142,27 @@ func (s *Store) migrate() error {
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 3 {
+	if version > 4 {
 		return errors.New("unsupported_schema")
 	}
-	if version == 3 {
+	switch version {
+	case 4:
 		return nil
-	}
-	if version == 2 {
-		return s.migrateP2()
-	}
-	if version == 1 {
+	case 3:
+		return s.migrateP3()
+	case 2:
+		if err := s.migrateP2(); err != nil {
+			return err
+		}
+		return s.migrateP3()
+	case 1:
 		if err := s.migrateP1(); err != nil {
 			return err
 		}
-		return s.migrateP2()
+		if err := s.migrateP2(); err != nil {
+			return err
+		}
+		return s.migrateP3()
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -225,7 +232,10 @@ func (s *Store) migrate() error {
 	if err := s.migrateP1(); err != nil {
 		return err
 	}
-	return s.migrateP2()
+	if err := s.migrateP2(); err != nil {
+		return err
+	}
+	return s.migrateP3()
 }
 
 func (s *Store) migrateP1() error {
@@ -288,6 +298,26 @@ func (s *Store) migrateP2() error {
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.Exec(`ALTER TABLE assets ADD COLUMN prior_state TEXT NOT NULL DEFAULT '';
 	PRAGMA user_version=3;`)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// migrateP3 makes filter exclusions explicit and reevaluable instead of
+// overloading transient error codes. Legacy video-toggle skips adopt the new
+// media-type reason so a later policy can requeue them.
+func (s *Store) migrateP3() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(`ALTER TABLE assets ADD COLUMN exclusion TEXT NOT NULL DEFAULT '';
+	ALTER TABLE accounts ADD COLUMN filter_fingerprint TEXT NOT NULL DEFAULT '';
+	UPDATE assets SET exclusion=error_code,error_code='' WHERE state='skipped' AND error_code!='';
+	UPDATE assets SET exclusion='media_type_excluded' WHERE exclusion='video_disabled';
+	PRAGMA user_version=4;`)
 	if err != nil {
 		return err
 	}

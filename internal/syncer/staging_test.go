@@ -36,12 +36,12 @@ func TestSkippedStagedVideoReleasesQuotaButUncertainUploadKeepsEvidence(t *testi
 					return bridge.Node{}, &bridge.Error{Code: code}
 				}
 				opts := options()
-				opts.IncludeVideos, opts.MaxStagingFiles = true, 1
+				opts.Filters.MediaTypes, opts.MaxStagingFiles = []string{"image", "video"}, 1
 				e := engine(t, store, s, d, opts)
 				if err := e.Once(t.Context()); err == nil {
 					t.Fatal("upload fault was hidden")
 				}
-				opts.IncludeVideos = false
+				opts.Filters.MediaTypes = []string{"image"}
 				if excluded {
 					a.ExcludedReason, a.SHA1, a.FileModifiedAt = "offline", "", time.Now()
 					s.pages[""] = bridge.Page{Assets: []bridge.Asset{a}}

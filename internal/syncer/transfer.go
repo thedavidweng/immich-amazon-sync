@@ -134,13 +134,7 @@ func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
 	}()
 	if j.state != "unconfirmed" {
 		if j.asset.ExcludedReason != "" {
-			code := j.asset.ExcludedReason
-			switch code {
-			case "hidden", "locked", "offline", "trashed", "unsupported_type", "external_library_checksum", "unknown_checksum_provenance":
-			default:
-				code = "source_excluded"
-			}
-			return e.skip(ctx, j, code)
+			return e.skip(ctx, j, sourceExclusion(j.asset.ExcludedReason))
 		}
 		if !safeName(j.asset.Name) {
 			return errors.New("unsafe_filename")
@@ -157,11 +151,13 @@ func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
 		if j.asset.LivePhotoVideo {
 			return e.skip(ctx, j, "live_photo_companion")
 		}
-		if kind == "VIDEO" && !e.opts.IncludeVideos {
-			return e.skip(ctx, j, "video_disabled")
-		}
 		if kind != "IMAGE" && kind != "VIDEO" {
 			return e.skip(ctx, j, "unsupported_type")
+		}
+		// The policy is authoritative at the write boundary: a stale pending
+		// row or a policy change cannot authorize an excluded upload.
+		if reason := e.opts.Filters.Exclude(j.asset); reason != "" {
+			return e.skip(ctx, j, reason)
 		}
 		if j.asset.MIME == "" {
 			j.asset.MIME = mime.TypeByExtension(filepath.Ext(j.asset.Name))
@@ -273,7 +269,7 @@ func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
 		return errors.New("storage_unavailable")
 	}
 	// This commit is the point after which a crash requires remote reconciliation.
-	if err := e.setState(ctx, j, "running", ""); err != nil {
+	if err := e.setState(ctx, j, "running", "", ""); err != nil {
 		return err
 	}
 	node, uploadErr := e.target.Upload(ctx, content, &rateReader{e: e, ctx: ctx, reader: f})
@@ -295,7 +291,7 @@ func (e *Engine) transfer(ctx context.Context, j *job) (result error) {
 		return uploadErr
 	}
 	j.node = node.ID
-	if err := e.setState(context.WithoutCancel(ctx), j, "unconfirmed", bridge.Unconfirmed); err != nil {
+	if err := e.setState(context.WithoutCancel(ctx), j, "unconfirmed", bridge.Unconfirmed, ""); err != nil {
 		return err
 	}
 	if !sameContent(node, content) || node.Placement(content.ParentID) != bridge.PlacementTarget {
@@ -376,9 +372,9 @@ func sameContent(n bridge.Node, c bridge.Content) bool {
 	return n.ID != "" && n.MD5 != "" && strings.EqualFold(n.MD5, c.MD5) && n.Size == c.Size
 }
 
-func (e *Engine) setState(ctx context.Context, j *job, state, code string) error {
-	_, err := e.store.db.ExecContext(ctx, `UPDATE assets SET state=?,error_code=?,stage_name=?,md5=?,sha1=?,size=?,node_id=?,attempts=?,next_at=?
-		WHERE account_id=? AND id=?`, state, code, j.stage, j.md5, j.sha1, j.size, j.node,
+func (e *Engine) setState(ctx context.Context, j *job, state, code, exclusion string) error {
+	_, err := e.store.db.ExecContext(ctx, `UPDATE assets SET state=?,error_code=?,exclusion=?,stage_name=?,md5=?,sha1=?,size=?,node_id=?,attempts=?,next_at=?
+		WHERE account_id=? AND id=?`, state, code, exclusion, j.stage, j.md5, j.sha1, j.size, j.node,
 		j.attempts, j.next, e.opts.AccountID, j.id)
 	if err != nil {
 		return errors.New("storage_unavailable")
@@ -391,7 +387,7 @@ func (e *Engine) confirm(ctx context.Context, j *job) error {
 	stage := j.stage
 	j.stage = ""
 	j.attempts, j.next = 0, 0
-	if err := e.setState(ctx, j, "confirmed", ""); err != nil {
+	if err := e.setState(ctx, j, "confirmed", "", ""); err != nil {
 		return err
 	}
 	e.cleanupStage(ctx, stage)
@@ -434,7 +430,7 @@ func (e *Engine) reuse(ctx context.Context, j *job, n bridge.Node, target string
 	if n.Placement(target) != bridge.PlacementTarget {
 		state = "existing"
 	}
-	if err := e.setState(ctx, j, state, ""); err != nil {
+	if err := e.setState(ctx, j, state, "", ""); err != nil {
 		// Restore the job so the failure path persists the original staging
 		// reference and backoff instead of orphaning the staged file.
 		j.node, j.stage, j.attempts, j.next = node, stage, attempts, next
@@ -447,7 +443,7 @@ func (e *Engine) reuse(ctx context.Context, j *job, n bridge.Node, target string
 func (e *Engine) skip(ctx context.Context, j *job, code string) error {
 	stage := j.stage
 	j.stage, j.md5, j.sha1, j.size = "", "", "", 0
-	if err := e.setState(ctx, j, "skipped", code); err != nil {
+	if err := e.setState(ctx, j, "skipped", "", code); err != nil {
 		return err
 	}
 	e.cleanupStage(ctx, stage)
@@ -478,7 +474,7 @@ func (e *Engine) fail(ctx context.Context, j job, err error) error {
 	if state == "failed" && j.attempts >= maxAttempts {
 		state = "blocked"
 	}
-	if dbErr := e.setState(ctx, &j, state, code); dbErr != nil {
+	if dbErr := e.setState(ctx, &j, state, code, ""); dbErr != nil {
 		return dbErr
 	}
 	if code == bridge.Authentication || code == bridge.Permission {
@@ -542,7 +538,7 @@ func (e *Engine) stage(ctx context.Context, j *job) (result error) {
 	}
 	j.stage, j.md5, j.size = filepath.Base(path), hex.EncodeToString(m.Sum(nil)), n
 	j.sha1 = base64.StdEncoding.EncodeToString(s.Sum(nil))
-	if err := e.setState(ctx, j, "staged", ""); err != nil {
+	if err := e.setState(ctx, j, "staged", "", ""); err != nil {
 		j.stage = ""
 		return err
 	}
