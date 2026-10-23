@@ -1,30 +1,30 @@
 # immich-amazon-sync
 
-A self-hosted, one-way backup service that continuously syncs original photos and videos from [Immich](https://github.com/immich-app/immich) to Amazon Photos.
+One-way backup from [Immich](https://github.com/immich-app/immich) to Amazon Photos — original bytes, zero duplicates, single container.
 
-The service runs as a single container backed by a durable local SQLite ledger. It preserves original byte streams without transcoding or quality reduction, queries remote checksums before dispatching uploads to avoid duplicate storage, and enforces non-destructive defaults.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/dashboard-dark.webp">
+  <img alt="Local dashboard showing backup state, queue distribution and schedule" src="docs/images/dashboard-light.webp" width="960">
+</picture>
 
-## Related projects
+<sub>Screenshot uses sample data.</sub>
 
-Three sibling projects share one Amazon Photos foundation:
+## Highlights
 
-| Project | What it is | Relation |
-| --- | --- | --- |
-| [`amazon-photos`](https://github.com/thedavidweng/amazon-photos) | Go SDK (`pkg/aphotos`) and `aphotos` CLI | Foundation: this service and Rainforest both import this SDK |
-| [`rainforest`](https://github.com/thedavidweng/rainforest) | Cross-platform desktop app for one-time upload, one-way folder backup, and recovery download | End-user client on the same SDK |
-| [`immich-amazon-sync`](https://github.com/thedavidweng/immich-amazon-sync) | Self-hosted container service | This project; server-side Immich → Amazon Photos backup on the SDK |
+- **Original preservation** — exact byte streams, no transcoding or EXIF modification
+- **Deduplication** — matches size + MD5 against remote before uploading
+- **Album sync** — whole library, selected albums, or remote album mirroring
+- **Deletion safety** — remote deletes disabled by default; opt-in requires explicit confirmation
+- **Direct disk access** — optional read-only host mount to skip network downloads
+- **Transfer windows · Live Photos · Favorites sync** — [full capabilities →](docs/explanation/architecture.md)
 
 ## Quick start
 
 ### Prerequisites
 
-- Docker Engine with Compose v2+
-- Immich instance and API key
-- Amazon Photos session cookie
+Docker Engine with Compose v2+ · Immich instance & API key · Amazon Photos session cookie ([how to obtain](docs/how-to/credentials.md))
 
-### 1. Preparation
-
-Clone the repository and prepare configuration and secrets directories:
+### 1. Clone & configure
 
 ```bash
 git clone https://github.com/thedavidweng/immich-amazon-sync.git
@@ -33,21 +33,17 @@ cp docs/reference/config.example.json config.json
 mkdir -m 700 secrets
 ```
 
-### 2. Credentials
-
-Save your Immich API key and Amazon Photos session cookie to secret files:
+### 2. Add credentials
 
 ```bash
-echo "YOUR_IMMICH_API_KEY" > secrets/immich-api-key
-echo "YOUR_AMAZON_COOKIE_HEADER" > secrets/amazon-cookie
+echo "YOUR_IMMICH_API_KEY"        > secrets/immich-api-key
+echo "YOUR_AMAZON_COOKIE_HEADER"  > secrets/amazon-cookie
 chmod 600 secrets/*
 ```
 
-For instructions on obtaining the session cookie, see the [Credentials guide](docs/how-to/credentials.md). On Linux hosts, verify that files are readable by container UID 10001 (or set permissions to `0644`).
+On Linux, verify files are readable by container UID 10001 (or `chmod 644`).
 
-### 3. Configuration
-
-Edit `config.json` to specify your Immich server URL, Amazon marketplace region (`us`, `ca`, `de`, `uk`, `jp`, etc.), and backup scope (whole library or specific album IDs):
+### 3. Edit config.json
 
 ```json
 {
@@ -66,85 +62,54 @@ Edit `config.json` to specify your Immich server URL, Amazon marketplace region 
 }
 ```
 
-### 4. Verification and startup
-
-Build the container image and run read-only diagnostic checks:
+### 4. Start
 
 ```bash
 docker compose build
-docker compose run --rm sync --config /etc/immich-amazon-sync/config.json doctor --json
-```
-
-Start the synchronization daemon in the background:
-
-```bash
+docker compose run --rm sync --config /etc/immich-amazon-sync/config.json doctor --json  # verify connectivity
 docker compose up -d
-docker compose exec sync wget -q -O - http://127.0.0.1:8080/readyz
 ```
-
-## CLI operations
-
-The container provides diagnostic and inspection commands:
-
-```bash
-# Test connectivity and credentials
-docker compose run --rm sync --config /etc/immich-amazon-sync/config.json doctor --json
-
-# List available albums and IDs from Immich
-docker compose run --rm sync --config /etc/immich-amazon-sync/config.json albums list
-
-# Run a single synchronization pass and exit
-docker compose run --rm sync --config /etc/immich-amazon-sync/config.json sync once --json
-```
-
-An optional local web dashboard can be enabled by providing an admin passphrase file. See [Local management](docs/how-to/local-management.md).
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/dashboard-dark.webp">
-  <img alt="Local dashboard showing one account's backup state, queue distribution and schedule, with detailed counters collapsed" src="docs/images/dashboard-light.webp" width="960">
-</picture>
-
-<sub>Screenshot uses sample data.</sub>
-
-## Capabilities
-
-- **Original preservation**: Transfers exact byte streams; never transcodes, compresses, or modifies EXIF data.
-- **Deduplication**: Matches byte size and MD5 before dispatch to reuse existing remote files and prevent duplicate uploads.
-- **Album synchronization**: Supports selected album IDs, whole-library backups, and remote album mirroring.
-- **Deletion safety**: Remote deletions are disabled by default. Optional trash propagation requires explicit typed confirmation and strictly guards against mass deletion.
-- **Direct disk access**: Optionally reads asset files directly from read-only host mounts to eliminate network overhead.
-- **Transfer windows**: Configurable IANA timezone schedules to restrict uploads to off-peak hours.
-- **Apple Live Photos**: Optional preservation of still and companion MOV pairs as independent originals.
-- **Favorites synchronization**: Opt-in one-way or two-way mirroring of favorite status.
-
-Internal guarantees, recovery handling, and pipeline details are documented in [Architecture and design principles](docs/explanation/architecture.md).
 
 ## Documentation
 
-| Guide | Description |
+| Guide | |
 | --- | --- |
-| [First backup tutorial](docs/tutorials/first-backup.md) | Guided walkthrough for initial setup and verification |
-| [Credentials](docs/how-to/credentials.md) | Extracting and renewing Amazon session cookies and Immich API keys |
-| [Local management](docs/how-to/local-management.md) | Enabling and using the optional local web dashboard |
-| [Direct originals](docs/how-to/direct-originals.md) | Mounting local Immich storage to bypass network downloads |
-| [Managed albums](docs/how-to/managed-albums.md) | Album sync modes, ID resolution, and membership guards |
-| [Operations](docs/how-to/operations.md) | Backup, restore, migrations, and transfer window scheduling |
-| [Event hints and workflows](docs/how-to/event-hints.md) | Webhook triggers and [managed Immich workflows](docs/how-to/managed-workflows.md) |
-| [Troubleshooting](docs/how-to/troubleshooting.md) | Resolving uncertain writes, auth failures, and error states |
-| [Configuration reference](docs/reference/configuration.md) | Complete JSON schema options and defaults ([example config](docs/reference/config.example.json)) |
-| [CLI reference](docs/reference/cli.md) | Command syntax, subcommands, flags, and exit codes |
-| [Status and metrics](docs/reference/status.md) | Health endpoints, progress counters, and Prometheus metrics |
-| [Compatibility](docs/reference/compatibility.md) | Upstream pins, quota handling, and [feature parity](docs/reference/parity.md) |
-| [Architecture](docs/explanation/architecture.md) | Service pipeline, deduplication, and operational guarantees |
-| [Safety model](docs/explanation/safety.md) | Idempotency, uncertainty tracking, and deletion guards |
-| [Architecture decisions](docs/adr/) | Historical record of design choices (ADRs) |
+| [First backup tutorial](docs/tutorials/first-backup.md) | Guided walkthrough for initial setup |
+| [Credentials](docs/how-to/credentials.md) | Amazon cookie & Immich API key management |
+| [Configuration reference](docs/reference/configuration.md) | Full JSON schema ([example](docs/reference/config.example.json)) |
+| [CLI reference](docs/reference/cli.md) | Commands, flags, exit codes |
+| [Architecture](docs/explanation/architecture.md) | Pipeline, deduplication, guarantees |
+| [Safety model](docs/explanation/safety.md) | Idempotency & deletion guards |
 
-## Acknowledgements
+<details>
+<summary>More guides</summary>
 
-- [immich-gphotos](https://github.com/ImAleeexx/immich-gphotos) for the workflow patterns, reconciler model, and user scenarios.
-- [aphotos](https://github.com/thedavidweng/amazon-photos) for the Amazon Photos Go SDK.
-- [Rainforest](https://github.com/thedavidweng/rainforest) for local desktop backup patterns and protocol research.
-- [vanessa/immich-amazon-sync](https://github.com/vanessa/immich-amazon-sync) for early integration scenarios.
+- [Local management](docs/how-to/local-management.md) — optional web dashboard
+- [Direct originals](docs/how-to/direct-originals.md) — mount local Immich storage
+- [Managed albums](docs/how-to/managed-albums.md) — album sync modes & membership guards
+- [Operations](docs/how-to/operations.md) — backup, restore, migrations, transfer windows
+- [Event hints](docs/how-to/event-hints.md) — webhooks & [managed workflows](docs/how-to/managed-workflows.md)
+- [Troubleshooting](docs/how-to/troubleshooting.md) — uncertain writes, auth failures
+- [Status & metrics](docs/reference/status.md) — health endpoints & Prometheus
+- [Compatibility](docs/reference/compatibility.md) — upstream pins, quotas, [feature parity](docs/reference/parity.md)
+- [ADRs](docs/adr/) — architecture decision records
+
+</details>
+
+## Related projects
+
+| Project | Description |
+| --- | --- |
+| [`amazon-photos`](https://github.com/thedavidweng/amazon-photos) | Go SDK & `aphotos` CLI — shared foundation |
+| [`rainforest`](https://github.com/thedavidweng/rainforest) | Desktop app for upload, folder backup & recovery |
+
+<details>
+<summary>Acknowledgements</summary>
+
+- [immich-gphotos](https://github.com/ImAleeexx/immich-gphotos) — workflow patterns and reconciler model
+- [vanessa/immich-amazon-sync](https://github.com/vanessa/immich-amazon-sync) — early integration scenarios
+
+</details>
 
 ## Disclaimer
 
@@ -152,4 +117,4 @@ Amazon Photos has no official public API. This service uses an unofficial SDK; s
 
 ## License
 
-Licensed under [AGPL-3.0-only](LICENSE). Third-party software notices and licenses are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+[AGPL-3.0-only](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
