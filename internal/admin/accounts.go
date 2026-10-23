@@ -22,6 +22,63 @@ type accountView struct {
 	Code    string
 }
 
+// Health is the one-line answer to "is this account backing up normally?".
+type Health struct {
+	Label, Tone string
+}
+
+func (v accountView) Health() Health {
+	s := v.Status
+	switch {
+	case s.Paused:
+		return Health{"Paused / " + s.PauseReason, "warn"}
+	case v.Code != "ok":
+		return Health{v.Code, "bad"}
+	case s.Failed+s.Blocked > 0 || len(s.Errors) > 0:
+		return Health{"Needs attention", "bad"}
+	case s.Unconfirmed > 0:
+		return Health{"Verifying uploads", "info"}
+	case s.TransferWindow != nil && !s.TransferWindow.Open && s.Deferred > 0:
+		return Health{"Waiting for transfer window", "info"}
+	case s.WorkRemaining || s.Running > 0:
+		return Health{"Backing up", "info"}
+	}
+	return Health{"Up to date", "ok"}
+}
+
+// Segment is one share of the media queue in the overview bar. Offset and
+// Width are percentages of all queued media, for SVG attributes.
+type Segment struct {
+	Label, Tone   string
+	Count         int
+	Offset, Width string
+}
+
+func (v accountView) Segments() []Segment {
+	s := v.Status
+	segments := []Segment{
+		{Label: "uploaded", Tone: "done", Count: s.Confirmed},
+		{Label: "already in Amazon", Tone: "existing", Count: s.Existing},
+		{Label: "queued", Tone: "queued", Count: s.Pending + s.Staged + s.Running + s.Deferred},
+		{Label: "verifying", Tone: "verifying", Count: s.Unconfirmed},
+		{Label: "need attention", Tone: "attention", Count: s.Failed + s.Blocked},
+	}
+	total := 0
+	for _, segment := range segments {
+		total += segment.Count
+	}
+	if total == 0 {
+		return nil
+	}
+	offset := 0
+	for i := range segments {
+		segments[i].Offset = strconv.FormatFloat(float64(offset)*100/float64(total), 'f', 3, 64) + "%"
+		segments[i].Width = strconv.FormatFloat(float64(segments[i].Count)*100/float64(total), 'f', 3, 64) + "%"
+		offset += segments[i].Count
+	}
+	return segments
+}
+
 type overview struct {
 	CSRF     string
 	Writable bool

@@ -642,9 +642,9 @@ func TestDashboardShowsAccountIsolatedBacklogsAndReadyWork(t *testing.T) {
 			"<dt>Associations pending</dt><dd>0</dd>",
 			"<dt>Associations failed</dt><dd>0</dd>",
 			"<dt>Associations unconfirmed</dt><dd>0</dd>",
-			"Incremental scan: idle.",
-			"Last incremental reconcile: not yet completed.",
-			"Work remaining: " + work + ".",
+			"<dt>Incremental scan</dt><dd>idle</dd>",
+			"<dt>Last incremental reconcile</dt><dd>not yet completed</dd>",
+			"<dt>Work remaining</dt><dd>" + work + "</dd>",
 		} {
 			if !strings.Contains(section, text) {
 				t.Errorf("account %s missing %q: %s", id, text, section)
@@ -790,7 +790,7 @@ func TestTransferWindowIsEditableAndShownWithoutSecrets(t *testing.T) {
 		t.Fatalf("window not persisted: %+v", window)
 	}
 	_, overview := d.get(t, "/")
-	for _, want := range []string{"Transfer window: America/New_York 23:00–06:00", "Deferred", "Transfer rate cap"} {
+	for _, want := range []string{"<dt>Transfer window</dt><dd>America/New_York 23:00–06:00", "Deferred", "Transfer rate cap"} {
 		if !strings.Contains(overview, want) {
 			t.Fatalf("overview missing %q", want)
 		}

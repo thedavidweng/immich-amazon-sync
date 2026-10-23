@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	_ "embed"
 	"encoding/hex"
 	"errors"
 	"html/template"
@@ -83,6 +84,9 @@ type dashboard struct {
 
 const cookieName = "immich_admin"
 
+//go:embed calsans-latin.woff2
+var displayFont []byte
+
 func New(backend Backend, options Options) (http.Handler, error) {
 	credential, err := config.ReadSecret(options.CredentialFile)
 	if err != nil {
@@ -93,7 +97,7 @@ func New(backend Backend, options Options) (http.Handler, error) {
 	}
 	d := &dashboard{
 		backend: backend, options: options, mux: http.NewServeMux(),
-		pages:    template.Must(template.New("pages").Parse(pageTemplates)),
+		pages:    parsePages(),
 		sessions: make(map[string]session), attempts: make(map[string]attempt),
 		issuance: make(map[string]attempt),
 	}
@@ -104,6 +108,11 @@ func New(backend Backend, options Options) (http.Handler, error) {
 	d.mux.HandleFunc("GET /admin.css", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 		_, _ = w.Write([]byte(stylesheet))
+	})
+	d.mux.HandleFunc("GET /calsans.woff2", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "font/woff2")
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		_, _ = w.Write(displayFont)
 	})
 	d.mux.HandleFunc("GET /accounts/new", d.accountPage)
 	d.mux.HandleFunc("GET /accounts/{id}/edit", d.accountPage)
@@ -123,7 +132,7 @@ func (d *dashboard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "same-origin")
 	d.mux.ServeHTTP(w, r)
