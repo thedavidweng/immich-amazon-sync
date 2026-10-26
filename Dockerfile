@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM --platform=$BUILDPLATFORM golang:1.27.2-alpine3.24 AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine3.24 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
@@ -13,7 +13,7 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
     -o /out/immich-amazon-sync . \
     && mkdir /out/data && chmod 0700 /out/data
 
-FROM alpine:3.24.2
+FROM alpine:3.24.3
 ARG VERSION=dev
 ARG COMMIT=unknown
 LABEL org.opencontainers.image.title="immich-amazon-sync" \

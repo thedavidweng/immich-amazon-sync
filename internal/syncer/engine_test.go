@@ -991,7 +991,9 @@ func TestStalledAccountDoesNotBlockAnotherAccountAndReadinessNeedsNoAccount(t *t
 	go func() { done <- e.Once(ctx) }()
 	defer func() {
 		cancel()
-		<-done
+		if err := <-done; err == nil || err.Error() != "canceled" {
+			t.Errorf("stalled account cancellation = %v", err)
+		}
 		store.Close()
 	}()
 	<-entered
