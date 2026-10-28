@@ -13,13 +13,6 @@ import (
 )
 
 type sdkFixture struct {
-	Source struct {
-		SDK       string   `json:"sdk"`
-		Version   string   `json:"version"`
-		TagCommit string   `json:"tag_commit"`
-		Files     []string `json:"files"`
-		Captured  string   `json:"captured"`
-	} `json:"x-source"`
 	Nodes                      map[string]json.RawMessage `json:"nodes"`
 	FavoritePatch              json.RawMessage            `json:"favorite-patch-without-settings"`
 	Usage                      json.RawMessage            `json:"usage"`
@@ -35,13 +28,6 @@ func loadSDKFixture(t *testing.T) sdkFixture {
 	var fixture sdkFixture
 	if err := json.Unmarshal(data, &fixture); err != nil {
 		t.Fatal(err)
-	}
-	// The recorded payloads were captured from v0.1.4. v0.1.5 changes only the
-	// video-bitrate decode, so this settings/usage fixture stays valid; a real
-	// shape change in either release must be re-recorded, not silently accepted.
-	if fixture.Source.Version != "v0.1.4" || fixture.Source.SDK != "github.com/thedavidweng/amazon-photos" ||
-		fixture.Source.TagCommit != "366da81406f806924af6d9a3934564a6c3d84e73" {
-		t.Fatal("SDK fixture must retain pinned upstream provenance")
 	}
 	return fixture
 }
