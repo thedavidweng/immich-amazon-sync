@@ -14,7 +14,7 @@ offline contracts into live claims; dated provider evidence stays in
 | User-maintained Google fork, combined #5/#6/#7 tree | `thedavidweng/immich-gphotos` `3c2ec7925436e9eddea6c001253ede7cba3aaed4` (2026-10-17T05:04:31Z) | The integrated head shared by PRs #5, #6 and #7. This, not the fork's current `main`, is the comparison baseline. |
 | Same fork, separate #9 fix | `da17f7c024932027065d664ebe5b7c65ae67e4ba` (2026-10-20T01:57:52Z) | Must be applied on top of the combined tree for a complete comparison. |
 | `aphotos` SDK | `v0.1.5`, tag commit `f4dc20fdec464e7e6f5294c36bf7068643ad73f0` (released 2026-10-22T21:22:48Z) | `SetFavorite`, `GetUsage`, `NodeSettings`, tolerant video-bitrate decoding. |
-| Immich contract | `v3.3.4`, `69e0cb8606137c4f8dc0e7207a672ff8be39f358` | Pinned OpenAPI extraction and asset fixtures. |
+| Immich contract | `v3.3.4`, `69e0cb8606137c4f8dc0e7207a672ff8be39f358` | Pinned upstream OpenAPI references and asset fixtures. |
 
 The four user-authored fork PRs were **open and unmerged** when the spec was
 written, and are still open at this comparison. The fork's current `main` does
@@ -106,19 +106,13 @@ shapes.
 
 ### Immich v3.3.4
 
-- `internal/immich/testdata/immich-v3.3.4.openapi.json` — the consumed
-  operations and unchanged transitive schemas, with upstream version, commit,
-  URL and full-document SHA-256 in `x-source`.
 - `internal/immich/testdata/immich-v3.3.4-assets.json` — schema-conforming asset
   examples for favorite true/false/absent, archive visibility, tags
   present/empty/absent, Live Photo still and hidden companion, explicit
   `livePhotoVideoId: null` versus a missing field, and internal versus external
   `libraryId`/`originalPath`.
-- `TestPinnedOfficialOpenAPIContract` and `TestPinnedAssetPresenceSemantics`
-  prove `isFavorite`, `isArchived`, `visibility` and `originalPath` are required
-  and non-nullable; `tags` and `livePhotoVideoId` are optional, with
-  `livePhotoVideoId` nullable. `TestPinnedAssetFieldPresence` proves an absent
-  `isFavorite` decodes as unknown, not as `false`.
+- `TestPinnedAssetFavoritePresence` exercises the adapter with these examples,
+  including the distinction between an absent favorite and explicit false.
 
 ### aphotos SDK fixtures
 

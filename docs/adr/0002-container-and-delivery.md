@@ -30,3 +30,7 @@ commit image tags after checking they do not exist. Do not create Git tags,
 GitHub releases, mutable latest tags or automatic production deployments.
 GHCR tags are not intrinsically immutable; digests are the deployment identity.
 Publish no image or release as part of implementing this ticket.
+
+**2026-10-28 update:** Static OpenAPI snapshot assertions were removed; adapter
+tests exercise the supported request and response behavior instead. Upstream
+contract changes still require review against the documented source pins.

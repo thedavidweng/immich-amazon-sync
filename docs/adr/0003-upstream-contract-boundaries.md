@@ -93,3 +93,7 @@ cannot promote write evidence.
 
 Pinned primary-source links and the evidence matrix are in
 [compatibility](../reference/compatibility.md).
+
+**2026-10-28 update:** Static OpenAPI snapshot assertions were removed; adapter
+tests exercise the supported request and response behavior instead. Upstream
+contract changes still require review against the documented source pins.
