@@ -25,8 +25,7 @@ func backoffDelay(attempt int, err error, ceiling time.Duration) time.Duration {
 	}
 	base := min(100*time.Millisecond*time.Duration(1<<min(attempt, 8)), ceiling)
 	delay := base/2 + time.Duration(rand.Int64N(int64(base/2)+1))
-	var remote *bridge.Error
-	if errors.As(err, &remote) {
+	if remote, ok := errors.AsType[*bridge.Error](err); ok {
 		delay = max(delay, remote.RetryAfter)
 	}
 	return delay

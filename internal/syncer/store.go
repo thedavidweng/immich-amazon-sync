@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -83,12 +84,8 @@ func (s *Store) directCounters(account string) DirectCounters {
 		APIBytes:  recorded.APIBytes,
 		Fallbacks: make(map[string]int, len(recorded.Fallbacks)),
 		Failures:  make(map[string]int, len(recorded.Failures))}
-	for outcome, count := range recorded.Fallbacks {
-		counters.Fallbacks[outcome] = count
-	}
-	for outcome, count := range recorded.Failures {
-		counters.Failures[outcome] = count
-	}
+	maps.Copy(counters.Fallbacks, recorded.Fallbacks)
+	maps.Copy(counters.Failures, recorded.Failures)
 	return counters
 }
 

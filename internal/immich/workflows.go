@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -148,11 +149,9 @@ func (w *Workflows) Capability(ctx context.Context) (workflow.Capability, error)
 		if declared.Trigger != workflow.Trigger {
 			continue
 		}
-		for _, kind := range declared.Types {
-			if kind == "AssetV1" {
-				capability.Supported = true
-				return capability, nil
-			}
+		if slices.Contains(declared.Types, "AssetV1") {
+			capability.Supported = true
+			return capability, nil
 		}
 	}
 	capability.Reason = workflow.ReasonTrigger

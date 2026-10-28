@@ -394,7 +394,7 @@ func TestLoginRateLimitBodyLimitAndPublicHealth(t *testing.T) {
 	d := openDashboard(t)
 	_, body := d.get(t, "/login")
 	csrf := token(t, body)
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		status, body := d.post(t, "/login", url.Values{"csrf": {csrf}, "password": {"incorrect"}})
 		want := http.StatusUnauthorized
 		if i == 5 {

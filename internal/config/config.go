@@ -643,7 +643,7 @@ func validateCallback(value, accountID string) error {
 		u.RawFragment != "" || u.RawPath != "" || !strings.HasSuffix(u.Path, "/events/"+accountID) {
 		return errors.New("workflow_callback_url_invalid")
 	}
-	for _, segment := range strings.Split(u.Path, "/") {
+	for segment := range strings.SplitSeq(u.Path, "/") {
 		if segment == "." || segment == ".." {
 			return errors.New("workflow_callback_url_invalid")
 		}

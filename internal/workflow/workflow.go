@@ -550,8 +550,7 @@ func (m *Manager) desiredHash() string {
 }
 
 func code(err error) string {
-	var remote *bridge.Error
-	if errors.As(err, &remote) {
+	if remote, ok := errors.AsType[*bridge.Error](err); ok {
 		return remote.Code
 	}
 	if errors.Is(err, context.Canceled) {

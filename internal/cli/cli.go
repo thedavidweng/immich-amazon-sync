@@ -211,8 +211,7 @@ func Execute(ctx context.Context, args []string, out, errOut io.Writer, version 
 			return 0
 		}
 		result := usage
-		var known *failure
-		if errors.As(err, &known) {
+		if known, ok := errors.AsType[*failure](err); ok {
 			result = known
 		}
 		if asJSON {

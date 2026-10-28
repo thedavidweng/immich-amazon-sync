@@ -193,8 +193,7 @@ func classify(err error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return context.DeadlineExceeded
 	}
-	var remote *bridge.Error
-	if errors.As(err, &remote) {
+	if remote, ok := errors.AsType[*bridge.Error](err); ok {
 		return remote
 	}
 	var auth *aphotos.AuthenticationError

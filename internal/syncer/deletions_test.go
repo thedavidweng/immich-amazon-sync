@@ -12,7 +12,7 @@ import (
 func photos(n int) []bridge.Asset {
 	assets := make([]bridge.Asset, 0, n)
 	names := []string{"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven"}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		assets = append(assets, photo(names[i]))
 	}
 	return assets
