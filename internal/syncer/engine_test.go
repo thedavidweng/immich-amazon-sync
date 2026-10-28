@@ -243,7 +243,7 @@ func TestOriginalIsConfirmedOnceAcrossAlbumsAndRestart(t *testing.T) {
 	d := &targetFake{identity: "target"}
 	opts := options()
 	opts.AlbumIDs = []string{"album", "second"}
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		store, err := syncer.Open(dir)
 		if err != nil {
 			t.Fatal(err)
@@ -527,7 +527,7 @@ func TestAmbiguousUploadNeverRepostsEvenAfterRetryAndRestart(t *testing.T) {
 		posts++
 		return bridge.Node{}, &bridge.Error{Code: bridge.Unavailable}
 	}}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		store, err := syncer.Open(dir)
 		if err != nil {
 			t.Fatal(err)
@@ -868,7 +868,7 @@ func TestDiscoveryYieldsAndResumesItsPageCursorAfterRestart(t *testing.T) {
 	d := &targetFake{identity: "target"}
 	opts := options()
 	opts.AlbumIDs, opts.Library = nil, true
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		store, err := syncer.Open(dir)
 		if err != nil {
 			t.Fatal(err)

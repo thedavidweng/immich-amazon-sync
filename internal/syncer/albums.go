@@ -312,7 +312,7 @@ func (e *Engine) applyMembers(ctx context.Context, j *albumJob, actual map[strin
 // poll so one accepted member does not take one whole sync run to settle.
 func (e *Engine) membershipSettled(ctx context.Context, album, node string, want bool) error {
 	var last error
-	for attempt := 0; attempt < 5; attempt++ {
+	for attempt := range 5 {
 		members, err := e.target.AlbumMembers(ctx, album)
 		if err == nil && slices.Contains(members, node) == want {
 			return nil

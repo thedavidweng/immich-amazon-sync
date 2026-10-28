@@ -30,7 +30,10 @@ jobs:
           online: "false"
           strict-exit: "true"
       - name: Install lint
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
+        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        with:
+          install_args: golangci-lint
+          cache: "false"
       - name: Quality gate
         env:
           JACTIONLINT: ${{ steps.workflows.outputs.executable }}

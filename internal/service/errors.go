@@ -27,8 +27,7 @@ func Code(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "deadline_exceeded"
 	}
-	var remote *bridge.Error
-	if errors.As(err, &remote) {
+	if remote, ok := errors.AsType[*bridge.Error](err); ok {
 		return knownCode(remote.Code)
 	}
 	return knownCode(err.Error())

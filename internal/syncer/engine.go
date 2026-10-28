@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -177,10 +178,8 @@ func New(store *Store, source bridge.Source, target bridge.Target, opts Options)
 		return nil, errors.New("invalid_options")
 	}
 	opts.AlbumSyncMode = mode
-	for _, id := range opts.AlbumIDs {
-		if id == "" {
-			return nil, errors.New("invalid_options")
-		}
+	if slices.Contains(opts.AlbumIDs, "") {
+		return nil, errors.New("invalid_options")
 	}
 	// Absent a declared capability the honest answer is that the target cannot
 	// set a capture date. Anything outside the finite vocabulary is refused
@@ -788,7 +787,7 @@ func (e *Engine) run(ctx context.Context, full, incremental bool) error {
 	if err := e.drain(ctx, attempted); err != nil {
 		workErr = err
 	}
-	for page := 0; page < 8; page++ {
+	for range 8 {
 		if ctx.Err() != nil {
 			return errors.New("canceled")
 		}
@@ -885,9 +884,8 @@ func (e *Engine) identify(ctx context.Context) error {
 }
 
 func errorCode(err error) string {
-	var external *bridge.Error
 	code := err.Error()
-	if errors.As(err, &external) {
+	if external, ok := errors.AsType[*bridge.Error](err); ok {
 		code = external.Code
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {

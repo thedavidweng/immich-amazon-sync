@@ -263,9 +263,7 @@ func (s *Service) Run(ctx context.Context) error {
 			state.nextWork = nil
 			cycleCtx, stop := context.WithCancel(runCtx)
 			state.cancel = stop
-			jobs.Add(1)
-			go func() {
-				defer jobs.Done()
+			jobs.Go(func() {
 				defer stop()
 				defer state.cycle.Unlock()
 				result, _ := s.cycle(cycleCtx, cfg, account, state, mode)
@@ -274,7 +272,7 @@ func (s *Service) Run(ctx context.Context) error {
 				state.nextWork = result.Status.NextAttempt
 				s.mu.Unlock()
 				s.notify()
-			}()
+			})
 		}
 	}
 	start()
@@ -479,9 +477,7 @@ func (s *Service) Once(ctx context.Context, id string) (Report, error) {
 		s.mu.Lock()
 		state := s.stateLocked(account.ID)
 		s.mu.Unlock()
-		jobs.Add(1)
-		go func() {
-			defer jobs.Done()
+		jobs.Go(func() {
 			if !state.cycle.TryLock() {
 				report.Accounts[i] = AccountResult{Account: AccountHash(account.ID), Code: "engine_busy"}
 				errs[i] = errors.New("engine_busy")
@@ -489,7 +485,7 @@ func (s *Service) Once(ctx context.Context, id string) (Report, error) {
 			}
 			defer state.cycle.Unlock()
 			report.Accounts[i], errs[i] = s.cycle(ctx, cfg, account, state, "once")
-		}()
+		})
 	}
 	jobs.Wait()
 	return report, errors.Join(errs...)
@@ -554,9 +550,7 @@ func (s *Service) DeletionPlan(ctx context.Context, id string) ([]DeletionReport
 	errs := make([]error, len(accounts))
 	var jobs sync.WaitGroup
 	for i, account := range accounts {
-		jobs.Add(1)
-		go func() {
-			defer jobs.Done()
+		jobs.Go(func() {
 			engine, _, err := newEngine(s.store, cfg, account, s.accountState(account.ID), s.log)
 			if err != nil {
 				reports[i] = DeletionReport{Account: AccountHash(account.ID)}
@@ -566,7 +560,7 @@ func (s *Service) DeletionPlan(ctx context.Context, id string) ([]DeletionReport
 			plan, err := engine.PlanDeletions(ctx)
 			reports[i] = DeletionReport{Account: AccountHash(account.ID), Plan: plan}
 			errs[i] = err
-		}()
+		})
 	}
 	jobs.Wait()
 	return reports, errors.Join(errs...)

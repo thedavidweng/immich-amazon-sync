@@ -31,7 +31,7 @@ func New(baseURL, apiKey string) (*Client, error) {
 		u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawPath != "" {
 		return nil, &bridge.Error{Code: bridge.Protocol}
 	}
-	for _, segment := range strings.Split(u.Path, "/") {
+	for segment := range strings.SplitSeq(u.Path, "/") {
 		if segment == "." || segment == ".." {
 			return nil, &bridge.Error{Code: bridge.Protocol}
 		}
