@@ -1,0 +1,14 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "enabledManagers": ["mise"],
+  "minimumReleaseAge": "7 days",
+  "packageRules": [
+    {
+      "description": "Toolchain patch and minor bumps merge once required checks pass",
+      "matchManagers": ["mise"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "automerge": true
+    }
+  ]
+}
