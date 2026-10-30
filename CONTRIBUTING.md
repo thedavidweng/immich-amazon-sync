@@ -16,6 +16,14 @@ workflow safety/syntax checks. Without mise, install the versions in `mise.toml`
 and run `sh scripts/check.sh`. Use `mise run fmt` to format intentionally.
 Race tests need a host C compiler; shipped binaries use `CGO_ENABLED=0`.
 
+The Go compiler is pinned once, in `mise.toml`; CI installs it through mise and
+runs with `GOTOOLCHAIN=local` so it cannot silently fetch another toolchain. The
+Docker builder reads the same file and downloads the matching official Go
+distribution, checking it against the published `.sha256`, so an image cannot
+lag behind a toolchain bump. `go.mod`'s `go` directive is the minimum supported
+Go version, not the compiler pin: it may trail `mise.toml` but must never exceed
+it, and `GOTOOLCHAIN=local` makes Go itself reject that case.
+
 Tests exercise public sync use cases, adapter HTTP contracts, the CLI and
 containers. Use fake external systems with real temporary SQLite/filesystems.
 Write a failing behavior test before implementation, then the smallest passing
@@ -60,11 +68,12 @@ its provenance with that fixture rather than adding another downloaded contract
 to CI. Test fixture updates separately from upstream monitoring. PR checks
 must remain deterministic.
 
-CI uses SHA-pinned official checkout/setup-go/buildx actions and the upstream
-jactionlint action. Maintainers publish only by deliberately pushing a new
-`vMAJOR.MINOR.PATCH` tag. The publication workflow reruns CI, refuses existing
-version/commit image tags, then publishes `ghcr.io/thedavidweng/immich-amazon-sync`
-for both Linux architectures, tagged with that version and `sha-<full commit>`.
+CI uses SHA-pinned official checkout and buildx actions, the SHA-pinned mise
+action for Go and golangci-lint, and the upstream jactionlint action. Maintainers
+publish only by deliberately pushing a new `vMAJOR.MINOR.PATCH` tag. The
+publication workflow reruns CI, refuses existing version/commit image tags, then
+publishes `ghcr.io/thedavidweng/immich-amazon-sync` for both Linux architectures,
+tagged with that version and `sha-<full commit>`.
 Publication jobs are serialized so two release tags cannot race to write the
 same commit image tag.
 It creates neither a Git tag nor a GitHub Release, and publishes no `latest` tag.
