@@ -8,3 +8,6 @@
 !cmd/**
 !LICENSE
 !THIRD_PARTY_NOTICES.md
+!mise.toml
+!scripts/
+!scripts/go-version.sh
