@@ -1,5 +1,29 @@
 # syntax=docker/dockerfile:1
-FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine3.24 AS build
+FROM --platform=$BUILDPLATFORM alpine:3.24.3 AS build
+# mise.toml is the only Go compiler pin. Mirror the official golang:alpine
+# build stage, but take the release from the project instead of an image tag.
+# The alpine base already provides CA certificates and busybox wget/tar/sha256sum.
+COPY mise.toml scripts/go-version.sh /tmp/
+RUN --mount=type=cache,target=/go-download \
+    set -eux; \
+    go_version=$(sh /tmp/go-version.sh /tmp/mise.toml); \
+    case "$(apk --print-arch)" in \
+        x86_64) go_arch=amd64 ;; \
+        aarch64) go_arch=arm64 ;; \
+        *) printf 'unsupported build architecture: %s\n' "$(apk --print-arch)" >&2; exit 1 ;; \
+    esac; \
+    file="go${go_version}.linux-${go_arch}.tar.gz"; \
+    wget -q -O "/go-download/$file.sha256" "https://dl.google.com/go/$file.sha256"; \
+    if [ ! -f "/go-download/$file" ]; then \
+        wget -q -O "/go-download/$file.part" "https://dl.google.com/go/$file"; \
+        mv "/go-download/$file.part" "/go-download/$file"; \
+    fi; \
+    hash=$(awk '{print $1}' "/go-download/$file.sha256"); \
+    (cd /go-download && echo "$hash *$file" | sha256sum -c -); \
+    tar -C /usr/local -xzf "/go-download/$file"
+ENV PATH=/usr/local/go/bin:$PATH \
+    GOPATH=/go \
+    GOTOOLCHAIN=local
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download

@@ -34,3 +34,16 @@ Publish no image or release as part of implementing this ticket.
 **2026-10-28 update:** Static OpenAPI snapshot assertions were removed; adapter
 tests exercise the supported request and response behavior instead. Upstream
 contract changes still require review against the documented source pins.
+
+**2026-10-30 update:** `mise.toml` is the single Go compiler pin. The CI check
+job installs that toolchain through mise and sets `GOTOOLCHAIN=local`, so it
+fails rather than fetching a different compiler. The Docker builder reads
+`mise.toml`, downloads the matching official Go distribution from
+`dl.google.com`, verifies the published SHA-256, and sets `GOTOOLCHAIN=local`;
+there is no second Go image pin. The archive and its `.sha256` come from the same
+upstream host, so verification catches corrupt or substituted downloads in
+transit but not a compromised origin; a committed checksum would reintroduce the
+second pin this decision removes. `go.mod` retains the minimum supported Go
+version; it may trail the compiler pin but must never exceed it, and
+`GOTOOLCHAIN=local` makes Go reject that case. The build version still reaches
+the CLI through the existing `-X main.version` linker flag.
