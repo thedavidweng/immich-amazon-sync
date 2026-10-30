@@ -1,6 +1,12 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:recommended"
+  "enabledManagers": ["mise"],
+  "minimumReleaseAge": "7 days",
+  "packageRules": [
+    {
+      "description": "Patch and minor mise updates merge after the Dependabot gate passes",
+      "matchUpdateTypes": ["patch", "minor"],
+      "automerge": true
+    }
   ]
 }
