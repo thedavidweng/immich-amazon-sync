@@ -7,11 +7,6 @@
       "description": "Patch and minor mise updates merge after the Dependabot gate passes",
       "matchUpdateTypes": ["patch", "minor"],
       "automerge": true
-    },
-    {
-      "description": "TEMP (issue #22): bypass 7-day cooldown for jdx/jactionlint 2.4.0 only; revert after the Renovate PR merges",
-      "matchPackageNames": ["jdx/jactionlint"],
-      "minimumReleaseAge": "0 days"
     }
   ]
 }
