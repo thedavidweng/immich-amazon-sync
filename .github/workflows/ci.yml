@@ -24,13 +24,13 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Go and lint toolchains
-        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
         with:
           install_args: go golangci-lint
           cache: "false"
       - name: Workflow safety and syntax
         id: workflows
-        uses: jdx/jactionlint@a65ab044e916760429068fe5794b8306abdfcbb9 # v2.3.0
+        uses: jdx/jactionlint@baa8d685e2b27ff5821558c9eeabb2051c1da61b # v2.4.0
         with:
           online: "false"
           strict-exit: "true"
