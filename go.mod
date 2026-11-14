@@ -5,7 +5,7 @@ go 1.27.3
 require (
 	github.com/spf13/cobra v1.10.2
 	github.com/thedavidweng/amazon-photos v0.1.5
-	modernc.org/sqlite v1.61.0
+	modernc.org/sqlite v1.61.1
 )
 
 require (
