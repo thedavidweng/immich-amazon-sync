@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM --platform=$BUILDPLATFORM alpine:3.24.3 AS build
+FROM --platform=$BUILDPLATFORM alpine:3.24.4 AS build
 # mise.toml is the only Go compiler pin. Mirror the official golang:alpine
 # build stage, but take the release from the project instead of an image tag.
 # The alpine base already provides CA certificates and busybox wget/tar/sha256sum.
@@ -37,7 +37,7 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
     -o /out/immich-amazon-sync . \
     && mkdir /out/data && chmod 0700 /out/data
 
-FROM alpine:3.24.3
+FROM alpine:3.24.4
 ARG VERSION=dev
 ARG COMMIT=unknown
 LABEL org.opencontainers.image.title="immich-amazon-sync" \
